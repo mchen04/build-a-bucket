@@ -69,8 +69,9 @@ export async function submitBuild(input: {
 }): Promise<Outcome> {
   try {
     const data = await catalog();
-    const lobbyRows = await db().query<{ settings: unknown; phase: LobbyPhase; name: string | null }>(
-      `select l.settings, l.phase, (select p.name from participants p where p.lobby_id = l.id and p.token_hash = $2) as name
+    const lobbyRows = await db().query<{ settings: unknown; phase: LobbyPhase; name: string | null; season_secret: string }>(
+      `select l.settings, l.phase, l.season_secret,
+              (select p.name from participants p where p.lobby_id = l.id and p.token_hash = $2) as name
        from lobbies l where l.code = $1`,
       [input.code, await hashSecret(input.secret)],
     );
@@ -83,7 +84,7 @@ export async function submitBuild(input: {
     }
     const problem = validateDraft(input.draft, parseSettings(lobby.settings), data);
     if (problem) return { ok: false, status: 400, error: { error: problem, reason: 'invalid' } };
-    const seed = `${input.code}:${input.draft.position}:${input.draft.picks.jumpShot?.playerName ?? 'x'}:${input.actionId}`;
+    const seed = `${lobby.season_secret}:${input.actionId}`;
     const season = runSeason(input.draft, lobby.name, seed);
     const status: ParticipantStatus = season.madePlayoffs ? 'qualified' : 'eliminated';
     const written = await writeBuild({ ...input, status, season });

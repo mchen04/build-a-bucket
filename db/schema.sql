@@ -6,6 +6,7 @@ create table if not exists lobbies (
   settings jsonb not null default '{}'::jsonb,
   version bigint not null default 1,
   playoffs_started_at timestamptz,
+  season_secret text not null default gen_random_uuid()::text,
   create_action uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -14,6 +15,7 @@ create table if not exists lobbies (
 
 alter table lobbies add column if not exists settings jsonb not null default '{}'::jsonb;
 alter table lobbies add column if not exists playoffs_started_at timestamptz;
+alter table lobbies add column if not exists season_secret text not null default gen_random_uuid()::text;
 alter table lobbies add column if not exists create_action uuid;
 
 create table if not exists participants (

@@ -11,7 +11,9 @@ import { loadLocalEnv } from '../scripts/lib.ts';
 import { db } from '../src/server/db';
 import { loadCatalog, poolFor } from '../src/shared/data/loader';
 import { BIG_ATTRS, GUARD_ATTRS } from '../src/shared/engine/rules';
-import type { Era, Pick, Position } from '../src/shared/engine/types';
+import { seededRng } from '../src/shared/engine/rng';
+import { simulateSeason } from '../src/shared/engine/season';
+import type { Build, Era, Pick, Position, SeasonResult } from '../src/shared/engine/types';
 import { generateSecret, newActionId } from '../src/shared/mp/codes';
 import { progressToken } from '../src/shared/mp/progress';
 import type { BuildDraft, LobbyDelta, LobbySettings, LobbyView } from '../src/shared/mp/types';
@@ -157,6 +159,10 @@ async function eventCount(code: string, kind: string): Promise<number> {
   return Number(rows[0]?.count ?? '0');
 }
 
+function jsonClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 describe('lobby lifecycle', () => {
   it('creates a lobby, joins by code and rejects unknown codes', async () => {
     const lobby = await newLobby('Host');
@@ -285,6 +291,50 @@ describe('lobby lifecycle', () => {
     expect(playoffView.phase).toBe('playoffs');
     expect(['playoffs', 'done']).toContain(playoffView.me.status);
     expect(playoffView.me.season?.wins).toBe(stored.me.season?.wins);
+  });
+
+  it('runs the season on a server seed instead of client inputs', async () => {
+    const lobby = await newLobby('Host');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const actionId = newActionId();
+    expect((await submit(lobby.code, lobby.host.secret, draft, actionId)).status).toBe(200);
+
+    const rows = await db().query<{ season: SeasonResult; season_secret: string }>(
+      `select p.season, l.season_secret from participants p join lobbies l on l.id = p.lobby_id
+       where l.code = $1 and p.seat = 1`,
+      [lobby.code],
+    );
+    const row = rows[0] as { season: SeasonResult; season_secret: string };
+    expect(row.season_secret).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+    const other = await newLobby('Second');
+    const otherSecrets = await db().query<{ season_secret: string }>('select season_secret from lobbies where code = $1', [
+      other.code,
+    ]);
+    expect(otherSecrets[0]?.season_secret).not.toBe(row.season_secret);
+
+    const build: Build = { position: draft.position, era: draft.era, picks: draft.picks };
+    const team = draft.team as string;
+    const serverSeed = `${row.season_secret}:${actionId}`;
+    const fromServerSeed = simulateSeason({
+      build,
+      team,
+      playerName: 'Host',
+      rng: seededRng(serverSeed),
+      displayRng: seededRng(`${serverSeed}:display`),
+    });
+    expect(row.season).toEqual(jsonClone(fromServerSeed));
+
+    const clientSeed = `${lobby.code}:${draft.position}:${draft.picks.jumpShot?.playerName ?? 'x'}:${actionId}`;
+    const fromClientSeed = simulateSeason({
+      build,
+      team,
+      playerName: 'Host',
+      rng: seededRng(clientSeed),
+      displayRng: seededRng(`${clientSeed}:display`),
+    });
+    expect(row.season).not.toEqual(jsonClone(fromClientSeed));
   });
 
   it('resumes a seat and an unfinished draft after a reconnect', async () => {
