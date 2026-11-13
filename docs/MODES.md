@@ -50,15 +50,50 @@ the same runtime catalog as the classic run (pinned data, kept in the Cache API 
 
 ## Parity harness
 
-Golden tests live in `tests/daily.test.ts`, `tests/salary.test.ts` and `tests/squad.test.ts`. They pin the daily
-mapping and spins, the cap per date, two daily boards, the team pick, and a squad's strength, record, seed,
-playoff run and honours for a fixed squad. Expected values were transcribed from the original's own algorithms
-read at commit `92cb2a155bb2261cd68038ac366b994ad5dbb873`; the original's code is never executed.
+`node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 50` executes the original's own code as
+an oracle and compares it with our engine on the same seeds and inputs. The harness downloads the original's
+public source at `92cb2a155bb2261cd68038ac366b994ad5dbb873` into a cache outside the repo
+(`~/.cache/bab-parity`, `BAB_PARITY_CACHE` to move it) and runs it unmodified in a child process through
+`.claude/skills/verify-build-a-bucket/scripts/parity/hooks.mjs`; component-inline logic (spin targets, the salary
+score line and build, the shuffle derangements, the cap table) is cut from the original's source text by
+`oracle-batch.mjs` and evaluated with a seeded `Math.random`. Nothing of the original is vendored into the repo.
+
+Areas compared, and the fields that decide them:
+
+| Area | Compared |
+|---|---|
+| `spin` | 10 spins per seed: team, dealt player, player respin, the team reel, pool size |
+| `ovr` | OVR and archetype for a fixed guard and a fixed big build |
+| `daily` | the day's plan (sport, position, mode, seed), the day's spins, and the OVR of the dealt build |
+| `season` | record, conference seed, win-probability table (`teamWP`), stat line, MVP/DPOY flags, play-in and playoff rounds |
+| `salary` | board generator (including the four fixed boards), budgets, yesterday seed, infinite board, team pick, score line and the build the picks produce |
+| `powers` | column shuffle, row shuffle and scout grades, all on a seeded draw |
+| `squad` | strength, record, seed, rounds, finals and champion |
+
+Last full run (2026-11-13, `--seeds 50`): 14,265 fields compared across the seven areas, 0 mismatches.
+
+`tests/parity-oracle.test.ts` enforces the same comparison offline in CI against the recorded oracle outputs in
+`tests/fixtures/oracle/*.json` (8 seeds per area, plus a pooled data snapshot). Regenerate them with
+`--write-fixtures`.
+
+Not compared, or intentionally different:
+
+- Per-player squad honours. The original rolls squad stat lines inside `runSquadSeason`; our app derives the
+  honour chips from a fixed-seed stat roll, so per-player honours differ. Team results (record, seed, rounds,
+  finals, champion) are compared and match.
+- The original's server-side salary check (`verifyCore.checkSalaryCap`) computes a different "overall" from the
+  screen's score line; only the screen's score line and the build the picks produce are compared.
+- Season win probability itself: the original's result object does not expose it, so `teamWP` for all thirty
+  teams plus the simulated record and rounds stand in for it.
+- Season moments, and the shared-league adaptation, are covered in `docs/MULTIPLAYER.md`, not here.
+
+The comparison is a sample, not a proof: `--seeds N` covers N seeds per area.
 
 ## Known limits
 
 - Football (NFL) daily days are not rebuilt, so a football day shows a visible limitation.
-- Salary Cap powers (column shuffle, row shuffle, scout) are not rebuilt; they only rearrange local views.
+- Salary Cap powers (column shuffle, row shuffle, scout) are rebuilt and match the original's derangements and
+  grades for a seeded draw; the shuffle is spent once per board, as in the original.
 - The original's posting and boards need login and its own service; results stay on the device.
 - Squad Builder box scores come from our engine's stat model; the strength, record, seed, playoff run and the
   honour composite and thresholds follow the original's algorithm.

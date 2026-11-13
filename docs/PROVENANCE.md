@@ -61,8 +61,9 @@ The constants and generators of the three rebuilt offline modes were traced from
 
 - `src/shared/engine/daily.ts` — the day key, the 2026-10-23 rotation, the `bap-daily-<date>` seed
   (`src/lib/progress.js` and the daily helpers in `src/components/BucketApp.jsx`).
-- `src/shared/engine/salary.ts` — columns, prices, rank bands, the cap table and its three fixed dates, the
-  hash RNG, the legend shuffle constant `0xBADC0FFE`, the yesterday penalty and the board generator
+- `src/shared/engine/salary.ts` — columns, prices, rank bands, the cap table and its three fixed budgets plus the
+  four fixed boards for 2026-07-15..2026-07-18 (`src/shared/engine/salaryFixed.json`, taken from the original's
+  `HARDCODED_GRIDS`), the hash RNG, the legend shuffle constant `0xBADC0FFE`, the yesterday penalty and the board generator
   (`src/lib/salaryCore.js`, `src/data/nba-salary.js`, `src/components/BucketSalaryCap.jsx`).
 - `src/shared/engine/squad.ts` — caps, the strength moves (guard `.45/.15`, big `.25/.35`), the replacement
   rating 64, the seeded record/playoff simulation, the all-time league offset and the honour composite and
@@ -70,6 +71,18 @@ The constants and generators of the three rebuilt offline modes were traced from
 - The team-pick hash (`0x45d9f3b`) and the hash RNG (`0x45d9f3b`/`0x119de1f3`) live in
   `src/shared/engine/rng.ts` beside the mulberry32 and string-hash RNGs used elsewhere.
 
-Expected values for the golden tests were transcribed from those algorithms; the original's code is never
-executed. See `docs/MODES.md` for what matches, and where a limitation is recorded.
+Expected values for the golden tests were transcribed from those algorithms. Since the parity round, the
+original's code is also executed as an oracle by
+`.claude/skills/verify-build-a-bucket/scripts/parity/run.mjs` (downloaded at run time, never vendored) and
+compared field by field with our engine; the recorded outputs of that comparison live in
+`tests/fixtures/oracle/*.json` and are checked offline by `tests/parity-oracle.test.ts`. See `docs/MODES.md` for
+the areas, the result counts, and the differences that are intended or not compared.
+
+## What parity does and does not mean here
+
+- The comparison is a sample of seeds and dates, not an exhaustive proof of equality.
+- Shared-league play, season moments and the app shell are rebuild work with no counterpart to compare against;
+  `docs/MULTIPLAYER.md` records those adaptations.
+- Where the original has two answers for the same thing (its component serves the four fixed boards while its own
+  server check regenerates the board), we follow the one a player sees, and say so in `docs/MODES.md`.
 

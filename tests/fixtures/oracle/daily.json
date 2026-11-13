@@ -1,0 +1,349 @@
+{
+  "sha": "92cb2a155bb2261cd68038ac366b994ad5dbb873",
+  "args": {
+    "dates": [
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+      "2026-07-18",
+      "2026-11-13",
+      "2026-11-12",
+      "2026-11-11",
+      "2026-11-10",
+      "2026-11-09",
+      "2026-11-08",
+      "2026-11-07",
+      "2026-11-06"
+    ]
+  },
+  "types": {
+    "guard": [
+      "jumpShot",
+      "finishing",
+      "passing",
+      "handles",
+      "perimeterDefense",
+      "speed",
+      "bounce",
+      "size",
+      "basketballIQ",
+      "clutch"
+    ],
+    "big": [
+      "jumpShot",
+      "finishing",
+      "rebounding",
+      "playmaking",
+      "interiorDefense",
+      "speed",
+      "bounce",
+      "size",
+      "basketballIQ",
+      "clutch"
+    ]
+  },
+  "oracle": {
+    "rows": [
+      {
+        "key": "2026-07-15",
+        "dc": {
+          "key": "2026-07-15",
+          "sport": "nfl",
+          "pos": "te",
+          "mode": "all-time",
+          "seed": "bap-daily-2026-07-15"
+        }
+      },
+      {
+        "key": "2026-07-16",
+        "dc": {
+          "key": "2026-07-16",
+          "sport": "nfl",
+          "pos": "qb",
+          "mode": "classic",
+          "seed": "bap-daily-2026-07-16"
+        }
+      },
+      {
+        "key": "2026-07-17",
+        "dc": {
+          "key": "2026-07-17",
+          "sport": "nfl",
+          "pos": "wr",
+          "mode": "classic",
+          "seed": "bap-daily-2026-07-17"
+        }
+      },
+      {
+        "key": "2026-07-18",
+        "dc": {
+          "key": "2026-07-18",
+          "sport": "nfl",
+          "pos": "rb",
+          "mode": "classic",
+          "seed": "bap-daily-2026-07-18"
+        }
+      },
+      {
+        "key": "2026-11-13",
+        "dc": {
+          "key": "2026-11-13",
+          "sport": "bucket",
+          "pos": "guard",
+          "mode": "all-time",
+          "seed": "bap-daily-2026-11-13"
+        },
+        "spins": [
+          [
+            "DAL",
+            "Monta Ellis"
+          ],
+          [
+            "DET",
+            "Joe Dumars"
+          ],
+          [
+            "IND",
+            "Jalen Rose"
+          ],
+          [
+            "BOS",
+            "Paul Pierce"
+          ],
+          [
+            "OKC",
+            "Gus Williams"
+          ],
+          [
+            "WAS",
+            "Earl Monroe"
+          ],
+          [
+            "CLE",
+            "LeBron James"
+          ],
+          [
+            "PHI",
+            "Mo Cheeks"
+          ],
+          [
+            "ATL",
+            "Pete Maravich"
+          ],
+          [
+            "UTA",
+            "Jeff Hornacek"
+          ]
+        ],
+        "check": {
+          "ovr": 85
+        }
+      },
+      {
+        "key": "2026-11-12",
+        "dc": {
+          "key": "2026-11-12",
+          "sport": "nfl",
+          "pos": "qb",
+          "mode": "classic",
+          "seed": "bap-daily-2026-11-12"
+        }
+      },
+      {
+        "key": "2026-11-11",
+        "dc": {
+          "key": "2026-11-11",
+          "sport": "bucket",
+          "pos": "big",
+          "mode": "classic",
+          "seed": "bap-daily-2026-11-11"
+        },
+        "spins": [
+          [
+            "ORL",
+            "Paolo Banchero"
+          ],
+          [
+            "MIL",
+            "Kel'el Ware"
+          ],
+          [
+            "WAS",
+            "Alex Sarr"
+          ],
+          [
+            "UTA",
+            "Jaren Jackson Jr."
+          ],
+          [
+            "CHA",
+            "Hannes Steinbach"
+          ],
+          [
+            "PHX",
+            "Khaman Maluach"
+          ],
+          [
+            "TOR",
+            "Trayce Jackson-Davis"
+          ],
+          [
+            "OKC",
+            "Chet Holmgren"
+          ],
+          [
+            "MEM",
+            "Quinten Post"
+          ],
+          [
+            "ATL",
+            "Asa Newell"
+          ]
+        ],
+        "check": {
+          "ovr": 78
+        }
+      },
+      {
+        "key": "2026-11-10",
+        "dc": {
+          "key": "2026-11-10",
+          "sport": "nfl",
+          "pos": "te",
+          "mode": "all-time",
+          "seed": "bap-daily-2026-11-10"
+        }
+      },
+      {
+        "key": "2026-11-09",
+        "dc": {
+          "key": "2026-11-09",
+          "sport": "bucket",
+          "pos": "guard",
+          "mode": "classic",
+          "seed": "bap-daily-2026-11-09"
+        },
+        "spins": [
+          [
+            "LAC",
+            "Jordan Miller"
+          ],
+          [
+            "CHA",
+            "Christian Anderson"
+          ],
+          [
+            "NYK",
+            "Miles McBride"
+          ],
+          [
+            "CHI",
+            "Norman Powell"
+          ],
+          [
+            "HOU",
+            "Reed Sheppard"
+          ],
+          [
+            "OKC",
+            "Jalen Williams"
+          ],
+          [
+            "MIL",
+            "Jaime Jaquez Jr."
+          ],
+          [
+            "BKN",
+            "Drake Powell"
+          ],
+          [
+            "MIN",
+            "Bones Hyland"
+          ],
+          [
+            "PHX",
+            "Jordan Goodwin"
+          ]
+        ],
+        "check": {
+          "ovr": 76
+        }
+      },
+      {
+        "key": "2026-11-08",
+        "dc": {
+          "key": "2026-11-08",
+          "sport": "nfl",
+          "pos": "db",
+          "mode": "all-time",
+          "seed": "bap-daily-2026-11-08"
+        }
+      },
+      {
+        "key": "2026-11-07",
+        "dc": {
+          "key": "2026-11-07",
+          "sport": "bucket",
+          "pos": "big",
+          "mode": "all-time",
+          "seed": "bap-daily-2026-11-07"
+        },
+        "spins": [
+          [
+            "PHX",
+            "Amar'e Stoudemire"
+          ],
+          [
+            "ATL",
+            "Josh Smith"
+          ],
+          [
+            "WAS",
+            "Wes Unseld"
+          ],
+          [
+            "DET",
+            "Bob Lanier"
+          ],
+          [
+            "TOR",
+            "Pascal Siakam"
+          ],
+          [
+            "GSW",
+            "Nate Thurmond"
+          ],
+          [
+            "NYK",
+            "Willis Reed"
+          ],
+          [
+            "BOS",
+            "Robert Parish"
+          ],
+          [
+            "MIN",
+            "Al Jefferson"
+          ],
+          [
+            "CHI",
+            "Dennis Rodman"
+          ]
+        ],
+        "check": {
+          "ovr": 86
+        }
+      },
+      {
+        "key": "2026-11-06",
+        "dc": {
+          "key": "2026-11-06",
+          "sport": "nfl",
+          "pos": "rb",
+          "mode": "all-time",
+          "seed": "bap-daily-2026-11-06"
+        }
+      }
+    ]
+  }
+}

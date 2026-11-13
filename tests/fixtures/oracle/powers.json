@@ -1,0 +1,127 @@
+{
+  "sha": "92cb2a155bb2261cd68038ac366b994ad5dbb873",
+  "args": {
+    "date": "2026-11-13",
+    "drawSeed": 99
+  },
+  "types": null,
+  "oracle": {
+    "date": "2026-11-13",
+    "before": [
+      [
+        "Kobe Bryant",
+        "Myles Turner",
+        "Keaton Wagler",
+        "Caleb Love",
+        "Robert Williams III"
+      ],
+      [
+        "James Harden",
+        "Hugo Gonzalez",
+        "Bub Carrington",
+        "Tristan da Silva",
+        "Amen Thompson"
+      ],
+      [
+        "Ausar Thompson",
+        "Zaccharie Risacher",
+        "Tre Johnson",
+        "Justin Champagnie",
+        "Daniss Jenkins"
+      ],
+      [
+        "Carmelo Anthony",
+        "Nikola Jovic",
+        "AJ Johnson",
+        "Josh Okogie",
+        "Duncan Robinson"
+      ],
+      [
+        "VJ Edgecombe",
+        "Nikola Jokic",
+        "Max Strus",
+        "Keon Ellis",
+        "Jamison Battle"
+      ]
+    ],
+    "columns": [
+      [
+        "50:Caleb Love",
+        "40:Kobe Bryant",
+        "30:Robert Williams III",
+        "20:Keaton Wagler",
+        "10:Myles Turner"
+      ],
+      [
+        "50:Tristan da Silva",
+        "40:James Harden",
+        "30:Amen Thompson",
+        "20:Bub Carrington",
+        "10:Hugo Gonzalez"
+      ],
+      [
+        "50:Justin Champagnie",
+        "40:Ausar Thompson",
+        "30:Daniss Jenkins",
+        "20:Tre Johnson",
+        "10:Zaccharie Risacher"
+      ],
+      [
+        "50:Josh Okogie",
+        "40:Carmelo Anthony",
+        "30:Duncan Robinson",
+        "20:AJ Johnson",
+        "10:Nikola Jovic"
+      ],
+      [
+        "50:Keon Ellis",
+        "40:VJ Edgecombe",
+        "30:Jamison Battle",
+        "20:Max Strus",
+        "10:Nikola Jokic"
+      ]
+    ],
+    "rows": [
+      [
+        "Carmelo Anthony",
+        "Kobe Bryant",
+        "VJ Edgecombe",
+        "Ausar Thompson",
+        "James Harden"
+      ],
+      [
+        "Nikola Jovic",
+        "Myles Turner",
+        "Nikola Jokic",
+        "Zaccharie Risacher",
+        "Hugo Gonzalez"
+      ],
+      [
+        "AJ Johnson",
+        "Keaton Wagler",
+        "Max Strus",
+        "Tre Johnson",
+        "Bub Carrington"
+      ],
+      [
+        "Josh Okogie",
+        "Caleb Love",
+        "Keon Ellis",
+        "Justin Champagnie",
+        "Tristan da Silva"
+      ],
+      [
+        "Duncan Robinson",
+        "Robert Williams III",
+        "Jamison Battle",
+        "Daniss Jenkins",
+        "Amen Thompson"
+      ]
+    ],
+    "scout": [
+      "A",
+      "B+",
+      "C"
+    ]
+  }
+}

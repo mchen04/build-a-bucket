@@ -1,0 +1,40 @@
+{
+  "sha": "92cb2a155bb2261cd68038ac366b994ad5dbb873",
+  "args": {},
+  "types": {
+    "guard": [
+      "jumpShot",
+      "finishing",
+      "passing",
+      "handles",
+      "perimeterDefense",
+      "speed",
+      "bounce",
+      "size",
+      "basketballIQ",
+      "clutch"
+    ],
+    "big": [
+      "jumpShot",
+      "finishing",
+      "rebounding",
+      "playmaking",
+      "interiorDefense",
+      "speed",
+      "bounce",
+      "size",
+      "basketballIQ",
+      "clutch"
+    ]
+  },
+  "oracle": {
+    "guard": {
+      "ovr": 89,
+      "arch": "3-and-D Wing"
+    },
+    "big": {
+      "ovr": 90,
+      "arch": "Stretch-and-Protect Anchor"
+    }
+  }
+}
