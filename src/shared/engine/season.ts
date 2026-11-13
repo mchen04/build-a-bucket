@@ -464,15 +464,15 @@ export interface TeamMods {
   def: number;
 }
 
-export const NO_MODS: TeamMods = { off: 0, def: 0 };
+const NO_MODS: TeamMods = { off: 0, def: 0 };
 
-export function teamPower(team: string, era: Era, mods: TeamMods = NO_MODS): number {
+function teamPower(team: string, era: Era, mods: TeamMods = NO_MODS): number {
   const table = era === 'alltime' ? ALLTIME_TEAMS : CURRENT_TEAMS;
   const row = (table as TeamTable)[team] ?? { off: 68, def: 65 };
   return (row.off + mods.off * 3.3 + row.def + mods.def * 3.3) / 200;
 }
 
-export function winProbFor(ovr: number, team: string, era: Era, mods: TeamMods = NO_MODS): number {
+function winProbFor(ovr: number, team: string, era: Era, mods: TeamMods = NO_MODS): number {
   const allTime = era === 'alltime';
   const classic = !allTime;
   const base = clamp(0.2 + ((teamPower(team, era, mods) - 0.59) / 0.24) * 0.57, 0.13, 0.77);
@@ -485,7 +485,7 @@ export function winProbFor(ovr: number, team: string, era: Era, mods: TeamMods =
   return Math.min(allTime ? 0.91 : 0.87, Math.max(0.12, strength + boostValue));
 }
 
-export function valuesFromPicks(picks: Record<string, BucketPick>): Record<string, number> {
+function valuesFromPicks(picks: Record<string, BucketPick>): Record<string, number> {
   return Object.fromEntries(Object.entries(picks).map(([attr, pick]) => [attr, pick.val]));
 }
 

@@ -1,9 +1,9 @@
 import * as v from 'valibot';
 import type { RunState } from './run';
-import { DAILY_EPOCH, dailyPlanFor, newYorkDayKey, type DailyPlan } from './engine/daily';
+import { dailyPlanFor, newYorkDayKey, type DailyPlan } from './engine/daily';
 import { budgetForDateStr, budgetForSeed, type SalCard } from './engine/salary';
 
-export const DAILY_KEY = 'bab:daily:v1';
+const DAILY_KEY = 'bab:daily:v1';
 export const SALARY_KEY = 'bab:salary:v1';
 export const SQUAD_KEY = 'bab:squad:v1';
 
@@ -53,13 +53,13 @@ export function planForToday(now: Date = new Date()): DailyPlan {
   return dailyPlanFor(newYorkDayKey(now));
 }
 
-export function readDaily(storage: Storage = localStorage): Record<string, DailyDay> {
+function readDaily(storage: Storage = localStorage): Record<string, DailyDay> {
   const parsed = v.safeParse(DailyStoreSchema, readJson(storage, DAILY_KEY));
   if (!parsed.success) return {};
   return parsed.output.days as unknown as Record<string, DailyDay>;
 }
 
-export function writeDaily(days: Record<string, DailyDay>, storage: Storage = localStorage): void {
+function writeDaily(days: Record<string, DailyDay>, storage: Storage = localStorage): void {
   writeJson(storage, DAILY_KEY, { v: 1, days });
 }
 
@@ -71,14 +71,6 @@ export function dailyDay(key: string, storage: Storage = localStorage): DailyDay
 export function saveDailyDay(day: DailyDay, storage: Storage = localStorage): void {
   const days = readDaily(storage);
   writeDaily({ ...days, [day.key]: day }, storage);
-}
-
-export function dailyLocked(day: DailyDay): boolean {
-  return day.done;
-}
-
-export function isBucketDay(plan: DailyPlan): boolean {
-  return plan.sport === 'bucket' && plan.key >= DAILY_EPOCH;
 }
 
 const SalarySchema = v.object({

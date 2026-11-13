@@ -21,7 +21,7 @@ function hasResult(status: ParticipantStatus): boolean {
   return status === 'qualified' || status === 'eliminated' || status === 'playoffs' || status === 'done';
 }
 
-export function isPresent(participant: ParticipantView): boolean {
+function isPresent(participant: ParticipantView): boolean {
   return participant.status !== 'left' && !participant.away;
 }
 

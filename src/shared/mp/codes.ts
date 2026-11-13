@@ -1,6 +1,6 @@
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const CODE_LENGTH = 6;
-export const CODE_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
+const CODE_LENGTH = 6;
+const CODE_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{6}$/;
 
 export function normalizeCode(input: string): string {
   return input.trim().toUpperCase().replace(/[\s-]/g, '');

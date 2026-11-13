@@ -12,10 +12,9 @@ const ParticipantStatusSchema = v.picklist([
   'left',
 ]);
 
-export const NameSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(16));
+const NameSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(16));
 export const SecretSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{32}$/));
-export const ActionIdSchema = v.pipe(v.string(), v.uuid());
-export const CodeSchema = v.pipe(v.string(), v.regex(/^[A-Z2-9]{6}$/));
+const ActionIdSchema = v.pipe(v.string(), v.uuid());
 
 export const SettingsSchema = v.object({
   era: v.picklist(['current', 'alltime']),
@@ -43,13 +42,13 @@ export const BuildDraftSchema = v.object({
   ),
 });
 
-export const BuildSummarySchema = v.object({
+const BuildSummarySchema = v.object({
   filled: v.number(),
   total: v.number(),
   latest: v.nullable(v.string()),
 });
 
-export const SeasonSummarySchema = v.object({
+const SeasonSummarySchema = v.object({
   wins: v.number(),
   losses: v.number(),
   ovr: v.number(),
@@ -66,7 +65,7 @@ export const SeasonSummarySchema = v.object({
   finishLabel: v.nullable(v.string()),
 });
 
-export const RoundViewSchema = v.object({
+const RoundViewSchema = v.object({
   name: v.string(),
   opponent: v.string(),
   won: v.boolean(),
@@ -75,7 +74,7 @@ export const RoundViewSchema = v.object({
   label: v.nullable(v.string()),
 });
 
-export const ParticipantViewSchema = v.object({
+const ParticipantViewSchema = v.object({
   seat: v.number(),
   name: v.string(),
   isHost: v.boolean(),
@@ -91,7 +90,7 @@ export const ParticipantViewSchema = v.object({
   roundsTotal: v.number(),
 });
 
-export const EventViewSchema = v.object({
+const EventViewSchema = v.object({
   id: v.number(),
   kind: v.string(),
   seat: v.nullable(v.number()),
@@ -100,7 +99,7 @@ export const EventViewSchema = v.object({
   at: v.string(),
 });
 
-export const ParticipantProgressSchema = v.object({
+const ParticipantProgressSchema = v.object({
   seat: v.number(),
   status: ParticipantStatusSchema,
   away: v.boolean(),
@@ -114,7 +113,7 @@ export const LobbyDeltaSchema = v.object({
   events: v.array(EventViewSchema),
 });
 
-export const StandingEntrySchema = v.object({
+const StandingEntrySchema = v.object({
   seat: v.number(),
   name: v.string(),
   isMe: v.boolean(),
@@ -123,7 +122,7 @@ export const StandingEntrySchema = v.object({
   finishLabel: v.nullable(v.string()),
 });
 
-export const LobbyViewSchema = v.object({
+const LobbyViewSchema = v.object({
   code: v.string(),
   phase: v.picklist(['lobby', 'building', 'season', 'barrier', 'playoffs', 'finished']),
   version: v.number(),

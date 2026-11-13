@@ -14,7 +14,7 @@ export function errorResponse(status: number, reason: ApiErrorBody['reason'], me
   return jsonResponse(body, status);
 }
 
-export function codeFromPath(request: Request, index: number): string | null {
+function codeFromPath(request: Request, index: number): string | null {
   try {
     const segments = new URL(request.url).pathname.split('/').filter(Boolean);
     return segments[index] ?? null;

@@ -246,10 +246,6 @@ export function poolFor(catalog: Catalog, position: Position, era: Era): Player[
   return position === 'guard' ? catalog.currentGuards : catalog.currentBigs;
 }
 
-export function teamFor(catalog: Catalog, short: string): Team | undefined {
-  return catalog.teams.find((team) => team.short === short);
-}
-
 export function headshotFor(catalog: Catalog, player: Player): string | null {
   const id = catalog.headshots[player.name];
   return id ? `${DATA_BASE}/public/headshots/nba/${id}.webp` : null;

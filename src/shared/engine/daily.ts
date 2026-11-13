@@ -1,6 +1,3 @@
-import type { Rng } from './rng';
-import { hashRng } from './rng';
-
 export const DAILY_EPOCH = '2026-10-23';
 
 const NFL_POSITIONS = ['qb', 'wr', 'rb', 'db', 'te'];
@@ -66,15 +63,3 @@ export function dailyPlanFor(dateStr: string): DailyPlan {
   };
 }
 
-export function dailyRng(plan: DailyPlan, purpose: string): Rng {
-  return hashRng(dayNumber(plan.key) ^ hashSeed(`bap-daily-${purpose}`));
-}
-
-function hashSeed(input: string): number {
-  let h = 1779033703 ^ input.length;
-  for (let i = 0; i < input.length; i++) {
-    h = Math.imul(h ^ input.charCodeAt(i), 3432918353);
-    h = (h << 13) | (h >>> 19);
-  }
-  return h | 0;
-}

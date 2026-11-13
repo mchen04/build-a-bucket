@@ -22,7 +22,7 @@ function catalog(): Promise<Catalog> {
   return catalogPromise;
 }
 
-export function validateDraftProgress(draft: BuildDraft, settings: LobbySettings, data: Catalog): string | null {
+function validateDraftProgress(draft: BuildDraft, settings: LobbySettings, data: Catalog): string | null {
   if (draft.era !== settings.era) {
     return `This lobby plays ${settings.era === 'current' ? 'current' : 'all-time'} players.`;
   }
@@ -44,7 +44,7 @@ export function validateDraftProgress(draft: BuildDraft, settings: LobbySettings
   return null;
 }
 
-export function validateDraft(draft: BuildDraft, settings: LobbySettings, data: Catalog): string | null {
+function validateDraft(draft: BuildDraft, settings: LobbySettings, data: Catalog): string | null {
   const problem = validateDraftProgress(draft, settings, data);
   if (problem) return problem;
   const keys: readonly string[] = draft.position === 'guard' ? GUARD_ATTRS : BIG_ATTRS;

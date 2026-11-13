@@ -52,10 +52,8 @@ export const BODY_MAX = 10;
 
 export const MONEY: Record<Position, [number, number]> = { guard: [2, 55], big: [2, 52] };
 export const RETIRE_AGE = 38;
-export const COMEBACK_SEASONS = 3;
 export const UPGRADE_CAP: Record<string, number> = { size: 2, speed: 3, bounce: 3 };
 export const PHYSICAL: Record<Position, string[]> = { guard: ['speed', 'bounce'], big: ['bounce', 'speed'] };
-export const AGELESS = ['jumpShot', 'passing', 'playmaking', 'basketballIQ', 'clutch'];
 
 export const LADDER: Record<Position, { phys: string[]; tech: string[]; techAt: [number, number] }> = {
   guard: { phys: ['size'], tech: ['finishing', 'handles', 'perimeterDefense'], techAt: [31, 33] },
@@ -106,7 +104,7 @@ export const INJURIES: [string, number, number, number][] = [
 ];
 export const SEASON_ENDERS = ['torn ACL', 'ruptured Achilles', 'torn meniscus'];
 
-export const STOCK_STEPS: [number, [number, number]][] = [
+const STOCK_STEPS: [number, [number, number]][] = [
   [95, [1, 3]],
   [90, [1, 5]],
   [86, [5, 15]],
@@ -159,7 +157,7 @@ export function dashTypical(game: 'sprint' | 'forty', pos: string): number {
   return dashTarget(game, pos, 6) + 0.05;
 }
 
-export function benchCeil(pos: string, v: number): number {
+function benchCeil(pos: string, v: number): number {
   const row = BENCH_N[pos] ?? BENCH_N.guard;
   return line(row as number[], v);
 }

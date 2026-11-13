@@ -243,6 +243,5 @@ export const DISPLAY_DPOY_CURRENT = {
   bpg: [3.2, 3.8],
 };
 
-export const DATA_SHA = '92cb2a155bb2261cd68038ac366b994ad5dbb873';
+const DATA_SHA = '92cb2a155bb2261cd68038ac366b994ad5dbb873';
 export const DATA_BASE = `https://cdn.jsdelivr.net/gh/GrahamEves-1210/build-a-player@${DATA_SHA}`;
-export const HEADSHOT_BASE = `${DATA_BASE}/public/headshots/nba`;

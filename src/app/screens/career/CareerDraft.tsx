@@ -22,7 +22,7 @@ function band(overall: number): { round: number; part: string } {
   return { round, part: slot <= 10 ? 'Early' : slot <= 20 ? 'Mid' : 'Late' };
 }
 
-export function stockText(career: Career): string {
+function stockText(career: Career): string {
   const { lo, hi } = stockOf(career);
   const a = band(lo);
   const b = band(hi);
@@ -32,7 +32,7 @@ export function stockText(career: Career): string {
   return `${a.part} ${ordinal(a.round)} \u2013 ${b.part.toLowerCase()} ${ordinal(b.round)} round`;
 }
 
-export function offDrillScore(career: Career, drill: Drill): number {
+function offDrillScore(career: Career, drill: Drill): number {
   const trait = career.build[drill.trait]?.val ?? 5;
   const noise = seededRng(`${career.seed}-combine-${drill.id}`)();
   return clamp(0.35 + (trait / 11) * 0.55 + (noise - 0.5) * 0.3, 0.1, 1);

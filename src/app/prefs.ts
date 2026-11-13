@@ -1,6 +1,6 @@
-export const GRADES_KEY = 'bap-hide-grades';
-export const MOMENTS_KEY = 'bap_moments_off';
-export const RECENT_KEY = 'bap_scn_recent';
+const GRADES_KEY = 'bap-hide-grades';
+const MOMENTS_KEY = 'bap_moments_off';
+const RECENT_KEY = 'bap_scn_recent';
 
 export function readGradesHidden(): boolean {
   try {

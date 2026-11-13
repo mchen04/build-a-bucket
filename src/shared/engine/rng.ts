@@ -10,7 +10,7 @@ export function mulberry32(seed: number): Rng {
   };
 }
 
-export function hashString(input: string): number {
+function hashString(input: string): number {
   let h = 1779033703 ^ input.length;
   for (let i = 0; i < input.length; i++) {
     h = Math.imul(h ^ input.charCodeAt(i), 3432918353);

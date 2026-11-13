@@ -335,7 +335,7 @@ export function teamOf(ctx: Ctx, short: string): CareerTeam {
   return ctx.teams.find((t) => t.short === short) ?? (ctx.teams[0] as CareerTeam);
 }
 
-export const groupLabel = (g: Position) => (g === 'guard' ? 'G' : 'F/C');
+const groupLabel = (g: Position) => (g === 'guard' ? 'G' : 'F/C');
 
 const avgOvr = (list: { ovr: number }[]) => {
   const values = list.map((p) => p?.ovr).filter(Number.isFinite);
@@ -344,7 +344,7 @@ const avgOvr = (list: { ovr: number }[]) => {
 
 export const RETIRE_AT: Record<string, number> = { guard: 38, big: 38 };
 export const KEEP: Record<Position, number> = { guard: 5, big: 4 };
-export const STARTERS: Record<Position, number> = { guard: 3, big: 2 };
+const STARTERS: Record<Position, number> = { guard: 3, big: 2 };
 
 const FIRSTS = [
   'Andre', 'Cameron', 'Dorian', 'Ellis', 'Franklin', 'Grady', 'Hollis', 'Isaac', 'Jonah', 'Keon',
@@ -475,7 +475,7 @@ export function simTeam(fit: Fit, mods: { off?: number; def?: number } | null, c
   };
 }
 
-export function teamRating(team: { off: number; def: number }): number {
+function teamRating(team: { off: number; def: number }): number {
   return (55 + team.off * 3.3 + (55 + team.def * 3.3)) / 200;
 }
 
@@ -579,11 +579,6 @@ export function combineDrills(pos: Position): Drill[] {
 
 export function recordCombine(c: Career, id: K.DrillId, score: number): Career {
   const combine = c.draft.combine.map((d) => (d.id === id ? { ...d, score, ...drillValue(d.id, c.build[d.trait]?.val ?? 5, score, null, c.pos) } : d));
-  return { ...c, draft: { ...c.draft, combine } };
-}
-
-export function skipCombine(c: Career): Career {
-  const combine = c.draft.combine.map((d) => (d.score != null ? d : { ...d, score: 0.3, ...drillValue(d.id, Math.min(c.build[d.trait]?.val ?? 5, 3), 0.3, null, c.pos) }));
   return { ...c, draft: { ...c.draft, combine } };
 }
 
@@ -719,7 +714,7 @@ export function runDraft(c: Career, ctx: Ctx): Career {
   };
 }
 
-export function injuryRisk(durability: number, age: number, sat: boolean): number {
+function injuryRisk(durability: number, age: number, sat: boolean): number {
   const perGame = K.INJ_RATE * clamp(1 + (5.5 - durability) * K.INJ_PULL, 0.3, 1.8);
   return perGame * (age >= 31 ? 1.25 : 1) * (sat ? 0 : 1) * K.INJ_SCALE;
 }
@@ -878,9 +873,8 @@ export const fadeOf = (pos: Position, t: string) => {
   const entry = K.FADE[pos]?.[t];
   return entry ? { cls: entry[0], from: entry[1], ...(K.FADE_CLASS[entry[0]] as K.FadeClass) } : null;
 };
-export const primeOf = (ch: Trait | undefined) => Math.min(11, Math.round(ch?.val ?? 0) + (ch?.faded ?? 0));
-export const keepCap = (f: K.FadeClass & { from: number }, ch: Trait, age: number) => primeOf(ch) - Math.max(0, Math.floor((age - f.from) / f.keep));
-export const bodyFade = (dur: number | null) => (dur == null ? 1 : clamp(1.25 - 0.05 * dur, 0.75, 1.2));
+const primeOf = (ch: Trait | undefined) => Math.min(11, Math.round(ch?.val ?? 0) + (ch?.faded ?? 0));
+const bodyFade = (dur: number | null) => (dur == null ? 1 : clamp(1.25 - 0.05 * dur, 0.75, 1.2));
 
 export function gradeUp(ch: Trait, to: number, trained = true): Trait {
   return (ch.faded ?? 0) > 0 ? { ...ch, val: to, faded: (ch.faded ?? 0) - 1 } : { ...ch, val: to, ...(trained ? { upgraded: (ch.upgraded ?? 0) + 1 } : {}) };
@@ -946,7 +940,7 @@ export function maxedTrait(value: number, ch: Trait | null, type: string | null)
   return Math.round(value) >= 11 || (type != null && K.UPGRADE_CAP[type] != null && (ch?.upgraded ?? 0) >= (K.UPGRADE_CAP[type] as number));
 }
 
-export function countedHonors(n: number): number {
+function countedHonors(n: number): number {
   return Math.min(n, K.HONOR_KNEE) + Math.max(0, n - K.HONOR_KNEE) / 2;
 }
 

@@ -74,7 +74,7 @@ export function heightWeightFor(run: RunState): { height: number | null; weight:
   return { height: size?.height ?? null, weight: size?.weight ?? null };
 }
 
-export function pickFromPlayer(player: Player, attr: string, photo?: string): Pick {
+function pickFromPlayer(player: Player, attr: string, photo?: string): Pick {
   return {
     attr,
     val: player.attrs[attr] ?? 0,

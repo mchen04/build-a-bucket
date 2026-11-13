@@ -16,9 +16,9 @@ export const SAL_COLUMNS: SalColumn[] = [
   { key: 'size', label: 'SIZE & ATHLETICISM', guardTypes: ['speed', 'bounce', 'size'], bigTypes: ['size', 'bounce'] },
 ];
 
-export const SAL_TIERS = [50, 40, 30, 20, 10];
+const SAL_TIERS = [50, 40, 30, 20, 10];
 
-export const SAL_BANDS: [number, number][] = [
+const SAL_BANDS: [number, number][] = [
   [0, 0.2],
   [0.2, 0.4],
   [0.4, 0.6],
@@ -26,22 +26,9 @@ export const SAL_BANDS: [number, number][] = [
   [0.8, 1],
 ];
 
-export const SAL_CAP_OPTIONS = [130, 140, 150, 160, 170];
+const SAL_CAP_OPTIONS = [130, 140, 150, 160, 170];
 
-export const SAL_RECENT_PENALTY = 3.5;
-
-export const SAL_BUILD_KEYS = [
-  'jumpShot',
-  'finishing',
-  'passing',
-  'handles',
-  'perimeterDefense',
-  'speed',
-  'bounce',
-  'size',
-  'basketballIQ',
-  'clutch',
-];
+const SAL_RECENT_PENALTY = 3.5;
 
 export interface SalCard {
   id: string;
@@ -84,17 +71,17 @@ export function yesterdaySeedOf(dateStr: string): number {
   return before.getFullYear() * 10000 + (before.getMonth() + 1) * 100 + before.getDate();
 }
 
-export function playerPosGroup(player: Player & { posGroup?: string }): Position {
+function playerPosGroup(player: Player & { posGroup?: string }): Position {
   if (player.posGroup) return player.posGroup === 'big' ? 'big' : 'guard';
   const pos = player.position;
   return pos === 'C' || pos === 'PF' ? 'big' : 'guard';
 }
 
-export function salTypesFor(player: Player & { posGroup?: string }, column: SalColumn): string[] {
+function salTypesFor(player: Player & { posGroup?: string }, column: SalColumn): string[] {
   return playerPosGroup(player) === 'big' ? column.bigTypes : column.guardTypes;
 }
 
-export function salCatScore(player: Player & { posGroup?: string }, column: SalColumn): number {
+function salCatScore(player: Player & { posGroup?: string }, column: SalColumn): number {
   const types = salTypesFor(player, column);
   const total = types.reduce((sum, type) => sum + (player.attrs[type] ?? 5), 0);
   return total / types.length;
@@ -114,7 +101,7 @@ export function salaryPool(
   return qualifying.filter((player, index, all) => all.findIndex((other) => other.name === player.name) === index);
 }
 
-export function legendTierFor(
+function legendTierFor(
   legend: Player & { posGroup?: string },
   column: SalColumn,
   regulars: (Player & { posGroup?: string })[],
@@ -135,7 +122,7 @@ interface LegendSlots {
   usedLegends: Set<string>;
 }
 
-export function pickLegendSlots(
+function pickLegendSlots(
   rand: Rng,
   columns: SalColumn[],
   legends: (Player & { posGroup?: string })[],
@@ -178,7 +165,7 @@ export function pickLegendSlots(
   return { map, usedLegends };
 }
 
-export function pickedNamesForSeed(
+function pickedNamesForSeed(
   seed: number,
   columns: SalColumn[],
   players: (Player & { posGroup?: string; legend?: boolean })[],
@@ -229,7 +216,7 @@ function cardFor(
   };
 }
 
-export function generateGrid(
+function generateGrid(
   columns: SalColumn[],
   players: (Player & { posGroup?: string; legend?: boolean })[],
   rand: Rng,

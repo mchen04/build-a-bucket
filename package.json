@@ -6,11 +6,9 @@
   "scripts": {
     "dev": "node scripts/dev-server.ts",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:watch": "vitest",
     "e2e": "playwright test",
     "db:migrate": "node scripts/migrate.ts",
     "prune:lobbies": "node scripts/prune-lobbies.ts"

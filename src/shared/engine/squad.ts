@@ -25,11 +25,11 @@ export const SQUAD_SLOTS: SquadSlot[] = [
   { id: 'C', pos: 'big', label: 'C' },
 ];
 
-export const SQUAD_CAPS: Record<Position, number> = { guard: 3, big: 2 };
+const SQUAD_CAPS: Record<Position, number> = { guard: 3, big: 2 };
 
-export const SQUAD_REPLACEMENT = 64;
+const SQUAD_REPLACEMENT = 64;
 
-export const SQUAD_MOVE: Record<Position, { off: number; def: number }> = {
+const SQUAD_MOVE: Record<Position, { off: number; def: number }> = {
   guard: { off: 0.45, def: 0.15 },
   big: { off: 0.25, def: 0.35 },
 };
@@ -316,13 +316,6 @@ export function squadSeason(
   }
   return { seed: seedString, wins, losses, seedNumber, conference, champion, madePlayoffs, winProb, log: log.join(''), rounds };
 }
-
-export const HONOR_LABELS: Record<string, string> = {
-  AN1: 'ALL-NBA 1ST',
-  AN2: 'ALL-NBA 2ND',
-  AN3: 'ALL-NBA 3RD',
-  AS: 'ALL-STAR',
-};
 
 export function honorScore(line: { ppg: number; rpg: number; apg: number; spg: number; bpg: number }, wins: number): number {
   return line.ppg + 1.2 * line.rpg + 1.5 * line.apg + 2 * (line.spg + line.bpg) + (wins - 41) * 0.08;

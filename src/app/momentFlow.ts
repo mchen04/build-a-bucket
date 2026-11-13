@@ -22,7 +22,7 @@ function ovrOf(player: Player, group: Position): number {
   return ovrFromValues(player.attrs, group);
 }
 
-export function poolByTeam(catalog: Catalog): Array<{ player: Player; group: Position }> {
+function poolByTeam(catalog: Catalog): Array<{ player: Player; group: Position }> {
   const seen = new Set<string>();
   const out: Array<{ player: Player; group: Position }> = [];
   const add = (players: Player[], group: Position) => {
@@ -51,7 +51,7 @@ function dealTarget(
   return from[Math.floor(rng() * from.length)] ?? null;
 }
 
-export function dealContext(catalog: Catalog, team: string, rng: () => number): { star: DealTarget | null; stop: DealTarget | null } {
+function dealContext(catalog: Catalog, team: string, rng: () => number): { star: DealTarget | null; stop: DealTarget | null } {
   const pool = poolByTeam(catalog);
   const scorers = pool
     .map((entry) => ({ entry, score: scoreOf(entry.player, OFF_KEYS) }))
@@ -68,7 +68,7 @@ export function dealContext(catalog: Catalog, team: string, rng: () => number): 
   return { star, stop };
 }
 
-export function phaseForStop(stop: number, total = 82): string {
+function phaseForStop(stop: number, total = 82): string {
   if (stop >= total) return 'playoffs';
   const share = stop / total;
   return share < 0.3 ? 'early' : share < 0.55 ? 'mid' : share < 0.8 ? 'late' : 'stretch';

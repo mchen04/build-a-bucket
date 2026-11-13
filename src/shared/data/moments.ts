@@ -1,5 +1,5 @@
 import * as v from 'valibot';
-import { DATA_BASE, GUARD_ATTRS, BIG_ATTRS } from '../engine/rules';
+import { DATA_BASE } from '../engine/rules';
 import type { MomentEffect, Position } from '../engine/types';
 import { DataError, fetchSource } from './loader';
 
@@ -494,10 +494,6 @@ export function renderMomentText(text: string, ctx: Record<string, string | numb
     const value = ctx[trimmed] ?? ctx[key];
     return value === undefined ? '' : String(value);
   });
-}
-
-export function momentAttrs(position: Position): readonly string[] {
-  return position === 'guard' ? GUARD_ATTRS : BIG_ATTRS;
 }
 
 export { DATA_BASE };

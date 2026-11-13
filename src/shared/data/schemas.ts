@@ -1,6 +1,6 @@
 import * as v from 'valibot';
 
-export const PlayerSchema = v.object({
+const PlayerSchema = v.object({
   name: v.string(),
   short: v.string(),
   team: v.string(),
@@ -18,7 +18,7 @@ export const PlayerSchema = v.object({
   attrs: v.record(v.string(), v.number()),
 });
 
-export const TeamSchema = v.object({
+const TeamSchema = v.object({
   short: v.string(),
   name: v.string(),
   color: v.string(),
@@ -26,7 +26,7 @@ export const TeamSchema = v.object({
 });
 
 export const PlayerListSchema = v.array(PlayerSchema);
-export const SalaryLegendSchema = v.object({
+const SalaryLegendSchema = v.object({
   name: v.string(),
   team: v.string(),
   short: v.optional(v.string()),
@@ -55,19 +55,13 @@ export const PickSchema = v.object({
   weight: v.optional(v.number()),
 });
 
-export const BuildSchema = v.object({
-  position: v.picklist(['guard', 'big']),
-  era: v.picklist(['current', 'alltime']),
-  picks: v.record(v.string(), PickSchema),
-});
-
-export const StandingSchema = v.object({
+const StandingSchema = v.object({
   short: v.string(),
   wins: v.number(),
   isUs: v.optional(v.boolean()),
 });
 
-export const GameLineSchema = v.object({
+const GameLineSchema = v.object({
   g: v.number(),
   won: v.boolean(),
   home: v.boolean(),
@@ -79,7 +73,7 @@ export const GameLineSchema = v.object({
   ast: v.number(),
 });
 
-export const AwardSchema = v.object({
+const AwardSchema = v.object({
   name: v.string(),
   short: v.string(),
   team: v.optional(v.string()),

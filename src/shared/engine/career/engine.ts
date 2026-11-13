@@ -4,14 +4,14 @@ import type { Position } from '../types';
 import * as K from './rules';
 import * as C from './core';
 
-export const MINI_GAMES: Record<Position, string[]> = {
+const MINI_GAMES: Record<Position, string[]> = {
   guard: ['iso', 'pnr', 'clutch-shot', 'free-throws', 'lockdown', 'fast-break', 'half-court'],
   big: ['post-up', 'board', 'rim-protect', 'alley-oop', 'half-court', 'pnr', 'free-throws'],
 };
 
-export const STOP_GAMES = [9, 25, 41, 57, 73];
+const STOP_GAMES = [9, 25, 41, 57, 73];
 
-export function randomCareerSeed(): string {
+function randomCareerSeed(): string {
   const bytes = new Uint8Array(5);
   crypto.getRandomValues(bytes);
   return [...bytes].map((b) => (b % 36).toString(36)).join('');
@@ -116,15 +116,15 @@ function ageGroup(pos: Position, list: C.RosterPlayer[], r: Rng): C.RosterPlayer
   return out.sort(C.byOvr).slice(0, C.KEEP[pos]);
 }
 
-export const rosterYrs = (c: C.Career) => Math.max(0, (c.season ?? K.FIRST_SEASON) + (c.phase === 'offseason' ? 1 : 0) - K.FIRST_SEASON);
-export const outOf = (c: C.Career, short: string | null = null) => [
+const rosterYrs = (c: C.Career) => Math.max(0, (c.season ?? K.FIRST_SEASON) + (c.phase === 'offseason' ? 1 : 0) - K.FIRST_SEASON);
+const outOf = (c: C.Career, short: string | null = null) => [
   ...(c.gone ?? []),
   ...Object.entries(c.dealt ?? {})
     .filter(([, t]) => t !== short)
     .map(([n]) => n),
 ];
 
-export function seasonStats(games: C.GameLine[]): C.SeasonRecord['stats'] {
+function seasonStats(games: C.GameLine[]): C.SeasonRecord['stats'] {
   const played = games.filter((g) => !g.sat);
   const gp = played.length || 1;
   const sum = (k: 'pts' | 'reb' | 'ast') => played.reduce((s, g) => s + g[k], 0);
@@ -134,7 +134,7 @@ export function seasonStats(games: C.GameLine[]): C.SeasonRecord['stats'] {
   return { ppg: C.r10(pts / gp), rpg: C.r10(reb / gp), apg: C.r10(ast / gp), spg: 0, bpg: 0, gp: played.length, pts, reb, ast };
 }
 
-export function goalsFor(c: C.Career, dc: { starter: boolean }): C.Goal[] {
+function goalsFor(c: C.Career, dc: { starter: boolean }): C.Goal[] {
   const raw = K.GOALS[c.pos](c.ovr);
   const full = raw.map(([k, verb, n, unit]) => ({ k, label: `${verb} ${n.toLocaleString()} ${unit}`, n }));
   if (dc.starter) return full;
@@ -405,7 +405,7 @@ function playInMade(po: C.PlayoffState | null): boolean {
   return !!first.won;
 }
 
-export function bookSeason(c: C.Career, ctx: C.Ctx): C.Career {
+function bookSeason(c: C.Career, ctx: C.Ctx): C.Career {
   const a = c.active;
   if (!a?.final) return c;
   const f = a.final;
@@ -619,7 +619,7 @@ export function marketValue(c: C.Career): number {
   return C.r10((lo + (hi - lo) * clamp(perf, 0, 1) * ageCut) * repCut);
 }
 
-export function contractSituation(c: C.Career, ctx: C.Ctx): C.Offer[] | null {
+function contractSituation(c: C.Career, ctx: C.Ctx): C.Offer[] | null {
   if (!c.contract || c.contract.left > 0) return null;
   if (c.age >= retireAge(c) || c.seasons.length >= K.MAX_SEASONS) return null;
   const r = seededRng(`${c.seed}-fa-${c.year}`);
@@ -689,7 +689,7 @@ export const ASKS = {
   starter: { label: 'STARTER GUARANTEE', cost: [1, 2] as [number, number], hi: 0.3 },
 };
 
-export function leverageOf(c: C.Career): number {
+function leverageOf(c: C.Career): number {
   const last = c.seasons.slice(-2);
   const perf = last.length ? last.reduce((s, x) => s + K.seasonScore(c.pos, { ...x.stats, wins: x.wins, award: x.award, champion: x.champion }), 0) / last.length : 0.3;
   return clamp(Math.round(perf * 3 + (c.rep >= 7 ? 1 : 0) - (c.age >= 32 ? 1 : 0) - (c.rep <= 3 ? 1 : 0)), 0, 4);
@@ -773,7 +773,7 @@ export function campDrill(c: C.Career, score: number, hit: boolean): C.Career {
   });
 }
 
-export function canUpgrade(c: C.Career, type: string): boolean {
+function canUpgrade(c: C.Career, type: string): boolean {
   const ch = c.build[type];
   if (!ch) return false;
   const w = C.trainWindow(c.pos, c.age, type);
@@ -800,8 +800,8 @@ export function spendDev(c: C.Career, type: string): C.Career {
   });
 }
 
-export const bodyCost = (c: C.Career) => ((c.durability ?? 5) >= 8 ? 2 : 1);
-export const canBodyWork = (c: C.Career) => (c.durability ?? 5) < K.BODY_MAX && c.dev.points >= bodyCost(c);
+const bodyCost = (c: C.Career) => ((c.durability ?? 5) >= 8 ? 2 : 1);
+const canBodyWork = (c: C.Career) => (c.durability ?? 5) < K.BODY_MAX && c.dev.points >= bodyCost(c);
 
 export function bodyWork(c: C.Career): C.Career {
   if (!canBodyWork(c)) return c;
@@ -888,7 +888,7 @@ export function nextSeason(c: C.Career, ctx: C.Ctx): C.Career {
 
 export const canRetire = (c: C.Career) => c.age >= 29 || c.seasons.length >= 8;
 
-export function retireAge(c: C.Career): number {
+function retireAge(c: C.Career): number {
   return K.RETIRE_AGE + (c.ovr >= 90 && (c.durability ?? 5) >= 7 ? 2 : 0);
 }
 
@@ -958,6 +958,3 @@ export function retire(c: C.Career): C.Career {
   });
 }
 
-export function canUnretire(c: C.Career): boolean {
-  return c.phase === 'retired' && (c.seasons.length ?? 0) > 0;
-}
