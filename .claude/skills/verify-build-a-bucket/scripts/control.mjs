@@ -106,9 +106,12 @@ async function ui() {
   const { dir, state } = currentRun();
   const device = deviceFor(o.device ?? 'iphone');
   const { browserName, ...ctxOpts } = device;
+  const viewport = /^\d+x\d+$/.test(String(o.viewport ?? ''))
+    ? { width: Number(String(o.viewport).split('x')[0]), height: Number(String(o.viewport).split('x')[1]) }
+    : { width: 390, height: 844 };
   const browser = await pw[browserName].launch({ headless: true });
   const sessionFile = o.session ? path.join(dir, `session-${o.session}.json`) : null;
-  const ctx = await browser.newContext({ ...ctxOpts, viewport: { width: 390, height: 844 }, storageState: sessionFile && fs.existsSync(sessionFile) ? sessionFile : undefined });
+  const ctx = await browser.newContext({ ...ctxOpts, viewport, storageState: sessionFile && fs.existsSync(sessionFile) ? sessionFile : undefined });
   const page = await ctx.newPage();
   const log = [];
   const errors = [];
@@ -192,7 +195,7 @@ async function ui() {
   }
   if (sessionFile) await ctx.storageState({ path: sessionFile });
   await browser.close();
-  const result = { feature: o.feature ?? 'ui', device: o.device ?? 'iphone', base: state.base, ok: !failed, failed, steps: log, pageErrors: errors, evidence: ev };
+  const result = { feature: o.feature ?? 'ui', device: o.device ?? 'iphone', viewport, base: state.base, ok: !failed, failed, steps: log, pageErrors: errors, evidence: ev };
   fs.appendFileSync(path.join(dir, 'evidence', 'journal.jsonl'), JSON.stringify({ at: new Date().toISOString(), ...result }) + '\n');
   console.log(JSON.stringify(result, null, 2));
   if (failed) process.exitCode = 1;
@@ -484,5 +487,5 @@ async function cleanup() {
 }
 
 const table = { launch, doctor, ui, 'lobby-load': lobbyLoad, 'cold-load': coldLoad, cleanup };
-if (!table[cmd]) { console.error('usage: control.mjs launch [--port N] [--prod] | doctor | ui --feature F [--device iphone|pixel] [--session S] [--path /] --step ... | lobby-load [--players 8] [--extra 4] [--seconds 20] [--poll 1000] [--base URL] [--drafts off] | cold-load [--url URL] [--runs 5] [--visits 2] | cleanup'); process.exit(2); }
+if (!table[cmd]) { console.error('usage: control.mjs launch [--port N] [--prod] | doctor | ui --feature F [--device iphone|pixel] [--viewport 390x844] [--session S] [--path /] --step ... | lobby-load [--players 8] [--extra 4] [--seconds 20] [--poll 1000] [--base URL] [--drafts off] | cold-load [--url URL] [--runs 5] [--visits 2] | cleanup'); process.exit(2); }
 await table[cmd]();
