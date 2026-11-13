@@ -67,10 +67,10 @@ export async function fetchSource(path: string): Promise<string> {
 }
 
 export function extractLiteral(source: string, name: string): string {
-  const marker = `export const ${name}`;
-  const start = source.indexOf(marker);
-  if (start < 0) throw new DataError(`Missing export ${name}`);
-  let index = source.indexOf('=', start + marker.length);
+  const identifier = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`export\\s+const\\s+${identifier}(?![\\w$])`).exec(source);
+  if (!match) throw new DataError(`Missing export ${name}`);
+  let index = source.indexOf('=', match.index + match[0].length);
   if (index < 0) throw new DataError(`Missing value for ${name}`);
   index++;
   while (index < source.length && /\s/.test(source[index] as string)) index++;
@@ -169,17 +169,20 @@ export async function loadCatalog(): Promise<Catalog> {
   };
 }
 
+export function parseAges(source: string): Record<string, number> | null {
+  const table = JSON5.parse(extractLiteral(source, 'BIRTH_NBA')) as Record<string, unknown> | null;
+  if (!table || typeof table !== 'object') return null;
+  const clean: Record<string, number> = {};
+  for (const [name, year] of Object.entries(table)) {
+    if (typeof year === 'number' && Number.isFinite(year)) clean[name] = year;
+  }
+  return Object.keys(clean).length ? clean : null;
+}
+
 export async function loadCareerAges(): Promise<Record<string, number> | null> {
   try {
     const text = await fetchSource('src/data/player-ages.js');
-    const parsed = JSON5.parse(extractLiteral(text, 'BIRTH')) as { bucket?: Record<string, unknown> };
-    const table = parsed?.bucket;
-    if (!table || typeof table !== 'object') return null;
-    const clean: Record<string, number> = {};
-    for (const [name, year] of Object.entries(table)) {
-      if (typeof year === 'number' && Number.isFinite(year)) clean[name] = year;
-    }
-    return Object.keys(clean).length ? clean : null;
+    return parseAges(text);
   } catch {
     return null;
   }
