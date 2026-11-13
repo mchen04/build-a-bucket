@@ -105,6 +105,9 @@ and never logged or committed.
 - Identity is one secret per device. A second device is a new participant.
 - It is a namespace, not a room: `docker build` style chat, voice and spectating are not built.
 - The transport is HTTP polling. Long-poll or SSE is a hill-climb candidate if measurements ask for it.
+- Creating and joining are not rate limited: the lobby code is the only gate on `POST /api/lobby` and
+  `POST /api/lobby/:code/join`, so a client can open lobbies or probe codes as fast as it likes.
+- Stale lobbies are pruned by `npm run prune:lobbies` (24 hours idle by default); nothing else collects them.
 
 ## Where this differs from CONTRACT.md
 
