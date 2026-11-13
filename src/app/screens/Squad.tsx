@@ -104,6 +104,9 @@ export function Squad(props: Props) {
                 .map((line) => `${line.id} ${line.ppg}/${line.rpg}/${line.apg}${props.outcome?.honors[line.id] ? ` ${props.outcome.honors[line.id]}` : ''}`)
                 .join(' · ')}
             </div>
+            <button class="btn btn-ghost btn-small" data-testid="squad-new" style={{ marginTop: '6px' }} onClick={props.onReset}>
+              New squad
+            </button>
           </div>
         ) : null}
         {!allBuilt ? (
@@ -113,13 +116,13 @@ export function Squad(props: Props) {
         ) : null}
       </div>
       <div class="bottom">
-        {team ? (
+        {props.outcome ? (
+          <button class="btn" data-testid="squad-again" onClick={props.onSimulate}>
+            Run it back
+          </button>
+        ) : team ? (
           <button class="btn" data-testid="squad-simulate" onClick={props.onSimulate}>
             Simulate season
-          </button>
-        ) : props.outcome ? (
-          <button class="btn" data-testid="squad-again" onClick={props.onReset}>
-            New squad
           </button>
         ) : (
           <button class="btn" disabled>
