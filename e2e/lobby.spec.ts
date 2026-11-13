@@ -359,3 +359,41 @@ test('lets a returning player finish at the barrier and starts the playoffs', as
     for (const context of contexts) await context.close();
   }
 });
+
+test('keeps a lobby pick through an immediate reload', async ({ browser }) => {
+  test.setTimeout(300_000);
+  const contexts: BrowserContext[] = [];
+  const hostContext = await browser.newContext({ ...PROFILE });
+  const guestContext = await browser.newContext({ ...PROFILE });
+  contexts.push(hostContext, guestContext);
+  const host = await hostContext.newPage();
+  const guest = await guestContext.newPage();
+  try {
+    await host.goto('/');
+    await host.locator('[data-testid="mp-name"]').fill('Ava');
+    await host.locator('[data-testid="create-lobby"]').click();
+    await expect(host.locator('[data-testid="lobby-code"]')).toBeVisible();
+    const code = ((await host.locator('[data-testid="lobby-code"]').textContent()) ?? '').trim();
+    createdCodes.push(code);
+
+    await guest.goto('/');
+    await guest.locator('[data-testid="mp-name"]').fill('Ben');
+    await guest.locator('[data-testid="mp-code"]').fill(code);
+    await guest.locator('[data-testid="join-lobby"]').click();
+    await expect(guest.locator('[data-testid="lobby-code"]')).toBeVisible();
+
+    await host.locator('[data-testid="start-season"]').click();
+    await expect(guest.locator('[data-testid="open-builder"]')).toBeVisible();
+    await guest.locator('[data-testid="open-builder"]').click();
+    await spinAndPick(guest);
+    await guest.reload();
+    await expect(guest.locator('[data-testid="open-builder"]')).toContainText('Continue build · 1/10');
+    await guest.locator('[data-testid="open-builder"]').click();
+    await expect(guest.locator('.slot.filled')).toHaveCount(1);
+    await expect(host.locator('[data-testid="roster"] [data-seat="2"] .state')).toContainText('1/10', {
+      timeout: 15_000,
+    });
+  } finally {
+    for (const context of contexts) await context.close();
+  }
+});

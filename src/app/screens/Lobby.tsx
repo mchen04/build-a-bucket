@@ -5,6 +5,7 @@ import type { Position } from '../../shared/engine/types';
 import { isBuildComplete, type RunState } from '../../shared/run';
 import { TopBar } from '../components';
 import { draftFromRun, latestPick, runFromDraft } from '../mp/draft';
+import { clearLocalDraft, readLocalDraft, saveLocalDraft } from '../mp/draftStore';
 import { activityLine, awaitingCount, phaseLabel, readyLabel } from '../mp/format';
 import type { MpSession } from '../mp/session';
 import { clearMpSession } from '../mp/session';
@@ -48,6 +49,11 @@ export function Lobby(props: Props) {
   const seeded = useRef(false);
   const submitted = useRef(false);
   const releasedAt = useRef(0);
+  const updateRun = useCallback((next: RunState | null) => {
+    setRun(next);
+    if (next) saveLocalDraft(session.code, next);
+    else clearLocalDraft(session.code);
+  }, [session.code]);
 
   useEffect(() => {
     const handle = window.setInterval(() => setNow(Date.now()), 1000);
@@ -63,9 +69,15 @@ export function Lobby(props: Props) {
 
   useEffect(() => {
     if (!view || run) return;
+    if (view.phase === 'lobby') return;
+    const local = readLocalDraft(view.code);
+    if (local) {
+      setRun(local);
+      setPosition(local.position);
+      return;
+    }
     const stored = view.me.build;
     if (!stored) return;
-    if (view.phase === 'lobby') return;
     setRun(runFromDraft(stored, `${view.code}:${view.me.seat}`));
     setPosition(stored.position);
   }, [view, run]);
@@ -133,6 +145,7 @@ export function Lobby(props: Props) {
     setNotice(null);
     try {
       await act((code, secret) => submitBuildRequest(code, secret, draftFromRun(run, latestPick(run))));
+      updateRun(null);
       setScreen('lobby');
     } catch (caught) {
       setNotice(messageOf(caught));
@@ -160,6 +173,7 @@ export function Lobby(props: Props) {
         setNotice(null);
       }
     }
+    clearLocalDraft(session.code);
     clearMpSession();
     props.onExit(null);
   };
@@ -176,7 +190,7 @@ export function Lobby(props: Props) {
   const openBuilder = () => {
     if (!view) return;
     if (!run) {
-      setRun(
+      updateRun(
         runFromDraft(
           {
             position,
@@ -238,16 +252,16 @@ export function Lobby(props: Props) {
         <TeamSpin
           run={run}
           catalog={catalog}
-          onChange={setRun}
+          onChange={updateRun}
           onSimulate={() => void submit()}
-          onBack={() => setRun({ ...run, screen: 'builder' })}
+          onBack={() => updateRun({ ...run, screen: 'builder' })}
           simulateLabel={busy ? 'Submitting…' : 'Submit build'}
           simulateDisabled={busy}
           header={peerStrip}
         />
       );
     }
-    return <Builder run={run} catalog={catalog} onChange={setRun} onBack={() => setScreen('lobby')} header={peerStrip} />;
+    return <Builder run={run} catalog={catalog} onChange={updateRun} onBack={() => setScreen('lobby')} header={peerStrip} />;
   }
 
   const revealTotal = view.roundsTotal || 1;
