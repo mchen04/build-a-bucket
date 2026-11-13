@@ -238,7 +238,8 @@ test('shows the limitation text for the online modes', async ({ page }) => {
   const row = page.locator('.home-item').filter({ hasText: 'Blacktop · Compete · Versus' });
   await expect(row).toContainText('The original live servers are gone. Lobbies above are our multiplayer.');
   await expect(page.locator('[data-testid="mp-home"]')).toBeVisible();
-  await expect(page.locator('.home-item .lock').first()).toHaveText('Coming next');
+  await expect(page.getByTestId('home-career')).toContainText('Career');
+  await expect(page.locator('.home-item .lock')).toHaveCount(0);
   await expectNoVerticalOverflow(page, 'home limitations');
 });
 
