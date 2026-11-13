@@ -202,7 +202,7 @@ async function api(base, method, route, secret, body) {
   const t0 = performance.now();
   const r = await fetch(base + route, { method, headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
   const text = await r.text();
-  return { ms: performance.now() - t0, status: r.status, json: text ? JSON.parse(text) : null };
+  return { ms: performance.now() - t0, status: r.status, bytes: Buffer.byteLength(text, 'utf8'), json: text ? JSON.parse(text) : null };
 }
 
 async function lobbyLoad() {
@@ -212,8 +212,46 @@ async function lobbyLoad() {
   const pollMs = Number(o.poll ?? 1000);
   const run = o.base ? null : currentRun();
   const samples = {};
-  const add = (k, r) => { (samples[k] ??= { ms: [], status: {} }); samples[k].ms.push(r.ms); samples[k].status[r.status] = (samples[k].status[r.status] ?? 0) + 1; };
-  const seat = () => ({ secret: randomBytes(16).toString('hex'), version: 0 });
+  const add = (k, r) => { (samples[k] ??= { ms: [], bytes: [], status: {} }); samples[k].ms.push(r.ms); samples[k].bytes.push(r.bytes); samples[k].status[r.status] = (samples[k].status[r.status] ?? 0) + 1; };
+  const seat = () => ({ secret: randomBytes(16).toString('hex'), version: 0, token: '', events: 0, away: new Map(), filled: new Map() });
+  const GUARD_ATTRS = ['jumpShot', 'finishing', 'passing', 'handles', 'perimeterDefense', 'speed', 'bounce', 'size', 'basketballIQ', 'clutch'];
+  const draftFor = (tick) => {
+    const count = Math.min(1 + Math.floor(tick / 3), GUARD_ATTRS.length);
+    const picks = {};
+    for (let n = 0; n < count; n++) {
+      const attr = GUARD_ATTRS[n];
+      picks[attr] = { attr, val: 80 + n, playerName: `Load Player ${n}`, playerShort: `Load ${n}`, team: 'LAL' };
+    }
+    return {
+      position: 'guard',
+      era: 'current',
+      picks,
+      spinIndex: tick,
+      teamRespinUsed: false,
+      playerRespinUsed: false,
+      current: null,
+      team: null,
+      latest: { attr: GUARD_ATTRS[count - 1], playerName: `Load Player ${count - 1}` },
+    };
+  };
+  const absorb = (p, lobby, delta) => {
+    if (lobby) {
+      p.version = lobby.version;
+      p.events = lobby.events[0]?.id ?? 0;
+      for (const entry of lobby.participants) {
+        p.away.set(entry.seat, Boolean(entry.away));
+        p.filled.set(entry.seat, entry.summary?.filled ?? 0);
+      }
+    } else if (delta) {
+      p.version = delta.version;
+      for (const entry of delta.participants) {
+        p.away.set(entry.seat, Boolean(entry.away));
+        p.filled.set(entry.seat, entry.summary?.filled ?? 0);
+      }
+      p.events = Math.max(p.events, delta.events[0]?.id ?? 0);
+    }
+    p.token = `${p.events}:${[...p.away.values()].filter(Boolean).length}:${[...p.filled.values()].reduce((a, b) => a + b, 0)}`;
+  };
   const host = seat();
   const created = await api(base, 'POST', '/api/lobby', host.secret, { name: 'Load0', actionId: randomUUID() });
   add('create', created);
@@ -231,19 +269,46 @@ async function lobbyLoad() {
   await Promise.all(seated.map(async (p, idx) => {
     let draftTick = 0;
     while (Date.now() < stopAt) {
-      const r = await api(base, 'GET', `/api/lobby/${code}?since=${p.version}`, p.secret);
-      add(r.status === 204 ? 'poll-204' : 'poll-200', r);
-      if (r.status === 200) p.version = r.json.lobby.version ?? p.version;
+      const query = new URLSearchParams({ since: String(p.version), events: String(p.events) });
+      if (p.token) query.set('token', p.token);
+      const r = await api(base, 'GET', `/api/lobby/${code}?${query.toString()}`, p.secret);
+      add(r.status === 204 ? 'poll-204' : r.json?.delta ? 'poll-200-delta' : 'poll-200', r);
+      absorb(p, r.json?.lobby, r.json?.delta);
       if (o.drafts !== 'off' && ++draftTick % 3 === idx % 3) {
-        const d = await api(base, 'POST', `/api/lobby/${code}/build`, p.secret, { actionId: randomUUID(), draft: { position: 'guard', era: 'current', picks: {}, spinIndex: 0, teamRespinUsed: false, playerRespinUsed: false, current: null, team: null, latest: null } });
+        const d = await api(base, 'POST', `/api/lobby/${code}/build`, p.secret, { actionId: randomUUID(), draft: draftFor(draftTick) });
         add('build-sync', d);
+        absorb(p, d.json?.lobby);
       }
       await sleep(pollMs);
     }
   }));
   for (const p of seated) add('leave', await api(base, 'POST', `/api/lobby/${code}/leave`, p.secret, { actionId: randomUUID() }));
-  const summary = Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, { n: v.ms.length, p50: median(v.ms), p95: pct(v.ms, 95), max: Math.round(Math.max(...v.ms)), status: v.status }]));
-  const result = { base, code, players, attemptedJoins: guests.length, seated: seated.length, seconds, pollMs, startStatus: started.status, summary, joinStatuses, seatNumbers, distinctSeats: new Set(seatNumbers).size };
+  const summary = Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, { n: v.ms.length, p50: median(v.ms), p95: pct(v.ms, 95), max: Math.round(Math.max(...v.ms)), bytesTotal: v.bytes.reduce((a, b) => a + b, 0), bytesP50: median(v.bytes), status: v.status }]));
+  const poll = (() => {
+    const full = samples['poll-200'] ?? { ms: [], bytes: [] };
+    const delta = samples['poll-200-delta'] ?? { ms: [], bytes: [] };
+    const empty = samples['poll-204'] ?? { ms: [], bytes: [] };
+    const ms = [...full.ms, ...delta.ms, ...empty.ms];
+    const bytes = [...full.bytes, ...delta.bytes, ...empty.bytes];
+    const n200 = full.ms.length + delta.ms.length;
+    const bytesTotal = bytes.reduce((a, b) => a + b, 0);
+    const n = ms.length;
+    return {
+      n,
+      p50: median(ms),
+      p95: pct(ms, 95),
+      n200,
+      nFull: full.ms.length,
+      nDelta: delta.ms.length,
+      n204: empty.ms.length,
+      share204: n ? Math.round((empty.ms.length / n) * 100) : null,
+      bytesTotal,
+      bytesPerPoll: n ? Math.round(bytesTotal / n) : null,
+      bytesPerFull: full.ms.length ? Math.round(full.bytes.reduce((a, b) => a + b, 0) / full.ms.length) : null,
+      bytesPerDelta: delta.ms.length ? Math.round(delta.bytes.reduce((a, b) => a + b, 0) / delta.ms.length) : null,
+    };
+  })();
+  const result = { base, code, players, attemptedJoins: guests.length, seated: seated.length, seconds, pollMs, startStatus: started.status, summary, poll, joinStatuses, seatNumbers, distinctSeats: new Set(seatNumbers).size };
   if (run) fs.writeFileSync(path.join(evidenceDir(run.dir, 'perf'), `lobby-load-${Date.now()}.json`), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
 }
@@ -261,9 +326,11 @@ async function coldLoad() {
   const pw = require('@playwright/test');
   const url = o.url ?? baseUrl() + '/';
   const runs = Number(o.runs ?? 5);
+  const visits = Math.max(1, Number(o.visits ?? 1));
   const settle = Number(o.settle ?? 5000);
   const browser = await pw.chromium.launch({ headless: true });
   const out = [];
+  const tracked = new Set(['Document', 'Script', 'Fetch', 'XHR']);
   try {
     for (let i = 0; i < runs; i++) {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, userAgent: pw.devices['iPhone 14'].userAgent });
@@ -274,24 +341,84 @@ async function coldLoad() {
       await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
       await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 60, downloadThroughput: 9e6 / 8, uploadThroughput: 1.5e6 / 8 });
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-      let bytes = 0, reqs = 0;
-      cdp.on('Network.requestWillBeSent', () => reqs++);
-      cdp.on('Network.loadingFinished', (e) => { bytes += e.encodedDataLength || 0; });
+      let bucket = null;
+      cdp.on('Network.requestWillBeSent', (e) => {
+        if (!bucket) return;
+        bucket.requestCount++;
+        if (bucket.navAt === null) bucket.navAt = e.timestamp;
+        if (tracked.has(e.type) && bucket.network.length < 80) bucket.network.push({ id: e.requestId, url: e.request.url, type: e.type, start: e.timestamp });
+      });
+      cdp.on('Network.responseReceived', (e) => {
+        const hit = bucket?.network.find((r) => r.id === e.requestId);
+        if (!hit) return;
+        hit.status = e.response.status;
+        const t = e.response.timing;
+        if (t) hit.timing = { dns: t.dnsEnd - t.dnsStart, connect: t.connectEnd - t.connectStart, ssl: t.sslEnd - t.sslStart, ttfb: t.receiveHeadersEnd };
+      });
+      cdp.on('Network.loadingFinished', (e) => {
+        if (!bucket) return;
+        bucket.transferredBytes += e.encodedDataLength || 0;
+        const hit = bucket.network.find((r) => r.id === e.requestId);
+        if (hit) { hit.end = e.timestamp; hit.bytes = e.encodedDataLength; }
+      });
       const errors = [];
       page.on('pageerror', (e) => errors.push(String(e).slice(0, 200)));
-      const t0 = Date.now();
-      await page.goto(url, { waitUntil: 'load', timeout: 120000 });
-      const loadMs = Date.now() - t0;
-      await page.waitForTimeout(settle);
-      const p = await page.evaluate(() => ({ ...window.__perf, fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? null }));
-      const m = Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((x) => [x.name, x.value]));
-      out.push({ fcpMs: p.fcp, lcpMs: p.lcp || null, ttiIshMs: p.tti, loadMs, transferredBytes: bytes, requestCount: reqs, jsHeapUsedBytes: m.JSHeapUsedSize, longTasksMs: Math.round(p.longTasks), pageErrors: errors });
+      const samples = [];
+      for (let v = 0; v < visits; v++) {
+        if (v > 0) await page.evaluate(() => localStorage.clear());
+        bucket = { navAt: null, transferredBytes: 0, requestCount: 0, network: [] };
+        const t0 = Date.now();
+        await page.goto(url, { waitUntil: 'load', timeout: 120000 });
+        const loadMs = Date.now() - t0;
+        let firstSpinMs = null;
+        let spinError = null;
+        try {
+          await page.waitForFunction(
+            (re) => [...document.querySelectorAll('button')].some((b) => !b.disabled && b.getBoundingClientRect().width > 0 && new RegExp(re, 'i').test((b.innerText || '').trim())),
+            o['tti-re'] ?? '^PLAY\\b',
+            { timeout: 90000 },
+          );
+          await page.getByRole('button', { name: /^play ·/i }).first().click();
+          await page.locator('.spin-big').first().click();
+          await page.locator('.chip:enabled').first().waitFor({ state: 'visible', timeout: 60000 });
+          firstSpinMs = Date.now() - t0;
+        } catch (error) {
+          spinError = String(error.message ?? error).split('\n')[0].slice(0, 200);
+        }
+        await page.waitForTimeout(settle);
+        const p = await page.evaluate(() => ({ ...window.__perf, fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? null }));
+        const m = Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((x) => [x.name, x.value]));
+        samples.push({
+          visit: v + 1,
+          fcpMs: p.fcp,
+          lcpMs: p.lcp || null,
+          ttiIshMs: p.tti,
+          firstSpinMs,
+          spinError,
+          loadMs,
+          transferredBytes: bucket.transferredBytes,
+          requestCount: bucket.requestCount,
+          jsHeapUsedBytes: m.JSHeapUsedSize,
+          longTasksMs: Math.round(p.longTasks),
+          network: bucket.network.map((r) => ({
+            url: r.url,
+            status: r.status ?? null,
+            startMs: bucket.navAt === null ? null : Math.round((r.start - bucket.navAt) * 1000),
+            ms: r.end === undefined ? null : Math.round((r.end - r.start) * 1000),
+            bytes: r.bytes ?? null,
+            timing: r.timing ?? null,
+          })),
+        });
+      }
+      out.push({ run: i + 1, visits: samples, pageErrors: errors });
       await ctx.close();
     }
   } finally { await browser.close(); }
-  const keys = ['fcpMs', 'lcpMs', 'ttiIshMs', 'loadMs', 'transferredBytes', 'requestCount', 'jsHeapUsedBytes', 'longTasksMs'];
-  const summary = Object.fromEntries(keys.map((k) => { const v = out.map((r) => r[k]).filter((x) => x != null); return [k, { median: median(v), min: v.length ? Math.round(Math.min(...v)) : null, max: v.length ? Math.round(Math.max(...v)) : null, n: v.length }]; }));
-  const result = { url, runs, conditions: 'iPhone 14 390x844 DPR3, 9/1.5 Mbps 60 ms RTT, CPU 4x, cache off, fresh context (same as perf/baseline-original.json)', summary, detail: out };
+  const keys = ['fcpMs', 'lcpMs', 'ttiIshMs', 'firstSpinMs', 'loadMs', 'transferredBytes', 'requestCount', 'jsHeapUsedBytes', 'longTasksMs'];
+  const summarize = (rows) => Object.fromEntries(keys.map((k) => { const v = rows.map((r) => r[k]).filter((x) => x != null); return [k, { median: median(v), min: v.length ? Math.round(Math.min(...v)) : null, max: v.length ? Math.round(Math.max(...v)) : null, n: v.length }]; }));
+  const summary = summarize(out.map((r) => r.visits[0]));
+  const result = { url, runs, visits, conditions: 'iPhone 14 390x844 DPR3, 9/1.5 Mbps 60 ms RTT, CPU 4x, cache off, fresh context (same as perf/baseline-original.json)', summary, detail: out };
+  if (visits > 1) result.repeatSummary = summarize(out.map((r) => r.visits[1]).filter(Boolean));
   let file = null;
   try { const run = currentRun(); file = path.join(evidenceDir(run.dir, 'perf'), `cold-load-${Date.now()}.json`); fs.writeFileSync(file, JSON.stringify(result, null, 2)); } catch {}
   console.log(JSON.stringify({ ...result, detail: undefined, file }, null, 2));
@@ -315,5 +442,5 @@ async function cleanup() {
 }
 
 const table = { launch, doctor, ui, 'lobby-load': lobbyLoad, 'cold-load': coldLoad, cleanup };
-if (!table[cmd]) { console.error('usage: control.mjs launch [--port N] [--prod] | doctor | ui --feature F [--device iphone|pixel] [--session S] [--path /] --step ... | lobby-load [--players 8] [--extra 4] [--seconds 20] [--poll 1000] [--base URL] | cold-load [--url URL] [--runs 5] | cleanup'); process.exit(2); }
+if (!table[cmd]) { console.error('usage: control.mjs launch [--port N] [--prod] | doctor | ui --feature F [--device iphone|pixel] [--session S] [--path /] --step ... | lobby-load [--players 8] [--extra 4] [--seconds 20] [--poll 1000] [--base URL] [--drafts off] | cold-load [--url URL] [--runs 5] [--visits 2] | cleanup'); process.exit(2); }
 await table[cmd]();

@@ -19,7 +19,7 @@ export default tseslint.config(
     files: ['.claude/skills/**/*.mjs'],
     languageOptions: {
       globals: Object.fromEntries(
-        ['process', 'console', 'fetch', 'AbortSignal', 'performance', 'setTimeout', 'window', 'document', 'localStorage', 'requestAnimationFrame', 'PerformanceObserver'].map((name) => [name, 'readonly']),
+        ['process', 'console', 'fetch', 'AbortSignal', 'performance', 'setTimeout', 'window', 'document', 'localStorage', 'requestAnimationFrame', 'PerformanceObserver', 'Buffer', 'URLSearchParams'].map((name) => [name, 'readonly']),
       ),
     },
     rules: { 'no-empty': ['error', { allowEmptyCatch: true }] },
