@@ -103,6 +103,10 @@ async function revealRound(page: Page): Promise<number | null> {
   return match ? Number(match[1]) : null;
 }
 
+function readyToken(text: string): string {
+  return /(\d+\/\d+ ready)/.exec(text)?.[1] ?? '';
+}
+
 test('drives an eight player lobby from invite code to final standings', async ({ browser }) => {
   test.setTimeout(300_000);
   const contexts: BrowserContext[] = [];
@@ -166,17 +170,37 @@ test('drives an eight player lobby from invite code to final standings', async (
     await expect(reloader.locator('.slot.filled')).toHaveCount(4);
     mark('reloader placed four picks');
     await expectNoOverflow(reloader, 'builder with the roster panel');
-    await reloader.screenshot({ path: `${SHOTS}/build-with-roster.png` });
+
+    const peer = pages[2] as Page;
+    const pickStarted = Date.now();
+    await spinAndPick(reloader);
+    await expect
+      .poll(async () => (await peer.locator('[data-testid="activity-ticker"]').textContent()) ?? '', {
+        timeout: 8000,
+        intervals: [100],
+      })
+      .toContain(`${PLAYERS[RELOADER]} took`);
+    const pickLatency = Date.now() - pickStarted;
+    expect(pickLatency, 'a peer sees a pick within 2.5s').toBeLessThan(2500);
+    mark('peer saw the pick', `${pickLatency}ms`);
+    await expect(peer.locator('.roster-row', { hasText: PLAYERS[RELOADER] as string })).toContainText('/10');
+    await peer.locator('[data-testid="open-builder"]').click();
+    await expect(peer.locator('[data-testid="peer-strip"] .peer', { hasText: PLAYERS[RELOADER] as string })).toContainText(
+      '/10',
+    );
+    await expectNoOverflow(peer, 'builder while a peer is building');
+    await peer.screenshot({ path: `${SHOTS}/build-with-roster.png` });
+    await reloader.screenshot({ path: `${SHOTS}/build-own-board.png` });
 
     await reloader.waitForTimeout(1500);
     await reloader.reload();
-    await expect(reloader.locator('[data-testid="open-builder"]')).toHaveText(/Continue build · 4\/10/, { timeout: 30_000 });
-    mark('reloader resumed four picks');
+    await expect(reloader.locator('[data-testid="open-builder"]')).toHaveText(/Continue build · 5\/10/, { timeout: 30_000 });
+    mark('reloader resumed five picks');
     await reloader.locator('[data-testid="open-builder"]').click();
-    await expect(reloader.locator('.slot.filled')).toHaveCount(4);
+    await expect(reloader.locator('.slot.filled')).toHaveCount(5);
 
     mark('all players build');
-    await Promise.all(pages.map((page, index) => finishBuild(page, index === RELOADER ? 6 : 10, PLAYERS[index] as string)));
+    await Promise.all(pages.map((page, index) => finishBuild(page, index === RELOADER ? 5 : 10, PLAYERS[index] as string)));
     mark('every build submitted');
 
     await expect(host.locator('[data-testid="my-result"]')).toBeVisible({ timeout: 60_000 });
@@ -184,12 +208,18 @@ test('drives an eight player lobby from invite code to final standings', async (
     await expect(barrier.locator('[data-testid="barrier-state"]')).toContainText(/\d+\/\d+ ready/, {
       timeout: 60_000,
     });
+    const barrierReady = readyToken((await barrier.locator('[data-testid="barrier-state"]').textContent()) ?? '');
+    expect(barrierReady).toBe('8/8 ready');
     await expectNoOverflow(barrier, 'barrier');
     await barrier.screenshot({ path: `${SHOTS}/barrier.png` });
 
     await expect(host.locator('[data-testid="lobby-status"]')).toHaveText('Playoffs', { timeout: 60_000 });
     await expect(host.locator('[data-testid="next-reveal"]')).toBeVisible();
     await expectNoOverflow(host, 'playoff reveal');
+    const revealText = ((await host.locator('.body').innerText()) ?? '').toLowerCase();
+    expect(revealText, 'no final finish label at the first reveal').not.toContain('finals loss');
+    expect(revealText, 'no semi final label at the first reveal').not.toContain('semis');
+    expect(revealText, 'no champion at the first reveal').not.toContain('champion');
     await host.screenshot({ path: `${SHOTS}/playoff-reveal.png` });
 
     await expect
@@ -206,6 +236,10 @@ test('drives an eight player lobby from invite code to final standings', async (
 
     await expect(host.locator('[data-testid="standings"]')).toBeVisible({ timeout: 90_000 });
     await expect(host.locator('[data-testid="standings"] .table-row')).toHaveCount(9);
+    expect(readyToken((await host.locator('[data-testid="barrier-state"]').textContent()) ?? '')).toBe(barrierReady);
+    const champions = await host.locator('.peer.champ').count();
+    expect(await host.locator('[data-testid="standings"] .table-row', { hasText: 'Champion' }).count()).toBe(champions);
+    mark('champions in this lobby', String(champions));
     await expectNoOverflow(host, 'final standings');
     await host.screenshot({ path: `${SHOTS}/standings.png` });
     const fifth = pages[5] as Page;

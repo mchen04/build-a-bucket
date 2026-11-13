@@ -25,9 +25,24 @@ Single-player is unaffected: lobbies are an extra entry on the home screen.
 | `playoffs` | the reveal clock, `revealSeconds` per round | own bracket, round counter, countdown |
 | `finished` | the reveal clock | standings table and the champion |
 
+One line under the roster is the live activity ticker. It shows the newest event, for example
+"Dev took Kyrie Irving's FIN A+", "Eli finished 51-31, #3 seed" or "Gus is waiting at the playoff barrier".
+Peer chips show each player's filled count while they build, so a pick reaches the other screens in under
+2.5 seconds on the dev stack.
+
+Nothing reveals a playoff result before its round is revealed. A finish label such as "Semis" and the
+champion flag appear only once that player's own run is fully revealed.
+
+The readiness line is defined once: players who have a result (qualified, eliminated, in the playoffs or done)
+over the players who are present. Away players and players who left are excluded, so the same lobby shows the
+same number at the barrier and in the standings.
+
 A player who is unseen for 60 seconds counts as away. Away players do not hold the barrier.
 The host can release the barrier early with "start playoffs now".
 If the host is away for 45 seconds, or leaves, the earliest joined present player becomes host.
+
+Leaving before the start deletes the seat, so a full lobby can take a new player. Leaving after the start keeps
+the record and marks the seat as left.
 
 ## API
 

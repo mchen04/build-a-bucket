@@ -6,6 +6,7 @@ import { POST as startHandler } from '../api/lobby/[code]/start';
 import { POST as buildHandler } from '../api/lobby/[code]/build';
 import { POST as submitHandler } from '../api/lobby/[code]/submit';
 import { POST as releaseHandler } from '../api/lobby/[code]/release';
+import { POST as leaveHandler } from '../api/lobby/[code]/leave';
 import { loadLocalEnv } from '../scripts/lib.ts';
 import { db } from '../src/server/db';
 import { loadCatalog, poolFor } from '../src/shared/data/loader';
@@ -433,7 +434,8 @@ describe('lobby lifecycle', () => {
     expect(standings.length).toBe(2);
     for (const entry of standings) {
       expect(entry.record).toMatch(/^\d+-\d+$/);
-      expect(entry.finishLabel.length).toBeGreaterThan(2);
+      expect(typeof entry.finishLabel).toBe('string');
+      expect((entry.finishLabel ?? '').length).toBeGreaterThan(2);
     }
     const rows = await db().query<{ seat: number; total: string; qualified: boolean }>(
       `select p.seat,
@@ -449,6 +451,140 @@ describe('lobby lifecycle', () => {
       const expected = row.qualified ? Math.min(5, Number(row.total)) : 0;
       expect(entry?.rounds.length).toBe(expected);
     }
+
+    for (const entry of finished.participants) {
+      if (entry.season?.champion) {
+        expect(entry.season.finishLabel).toBe('Champion');
+      } else if (entry.season?.qualified === false) {
+        expect(['Missed playoffs', 'Play-in exit']).toContain(entry.season.finishLabel);
+      }
+    }
+    const champion = finished.participants.find((entry) => entry.season?.champion === true);
+    if (champion) {
+      expect(champion.season?.finishLabel).toBe('Champion');
+      expect(finished.standings?.find((entry) => entry.seat === champion.seat)?.finishLabel).toBe('Champion');
+      expect(finished.standings?.[0]?.seat).toBe(champion.seat);
+    }
+  });
+
+  it('shows peer progress and a live activity line for every pick', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const entries = Object.entries(draft.picks);
+    const firstAttr = (entries[0] as [string, Pick])[0];
+    const firstPick = (entries[0] as [string, Pick])[1];
+    const secondAttr = (entries[1] as [string, Pick])[0];
+    const secondPick = (entries[1] as [string, Pick])[1];
+
+    const started = Date.now();
+    const one = await buildHandler(
+      authed(guest.seat.secret, `lobby/${lobby.code}/build`, {
+        actionId: newActionId(),
+        draft: { ...draft, picks: { [firstAttr]: firstPick }, spinIndex: 1, latest: { attr: firstAttr, playerName: firstPick.playerName } },
+      }),
+    );
+    expect(one.status).toBe(200);
+    const hostView = await view(lobby.code, lobby.host.secret);
+    const roundTrip = Date.now() - started;
+    const peer = hostView.participants.find((entry) => !entry.isMe);
+    expect(peer?.summary).toEqual({ filled: 1, total: 10, latest: firstPick.playerName });
+    expect(hostView.events[0]?.kind).toBe('pick');
+    expect(hostView.events[0]?.name).toBe('Guest');
+    expect(hostView.events[0]?.detail ?? '').toMatch(/^took .+'s [A-Z]{2,3} [A-Z][+-]?$/);
+    expect(roundTrip).toBeLessThan(2500);
+
+    const two = await buildHandler(
+      authed(guest.seat.secret, `lobby/${lobby.code}/build`, {
+        actionId: newActionId(),
+        draft: {
+          ...draft,
+          picks: { [firstAttr]: firstPick, [secondAttr]: secondPick },
+          spinIndex: 2,
+          latest: { attr: secondAttr, playerName: secondPick.playerName },
+        },
+      }),
+    );
+    expect(two.status).toBe(200);
+    const nextView = await view(lobby.code, lobby.host.secret);
+    expect(nextView.events[0]?.detail ?? '').toContain(secondPick.playerName);
+    expect(nextView.events[0]?.detail).not.toBe(hostView.events[0]?.detail);
+    expect(nextView.participants.find((entry) => !entry.isMe)?.summary?.filled).toBe(2);
+  });
+
+  it('never reveals a playoff result beyond the revealed round', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'high'))).status).toBe(200);
+    await sleep(HOLD_WAIT);
+    const released = await release(lobby.code, lobby.host.secret);
+    expect(released.status).toBe(200);
+    const opened = (await read<{ lobby: LobbyView }>(released)).lobby;
+    expect(opened.phase).toBe('playoffs');
+    expect(opened.roundsRevealed).toBe(1);
+
+    const totals = await db().query<{ seat: number; total: string }>(
+      `select p.seat, coalesce(jsonb_array_length(p.season->'playoffRounds'), 0) as total
+       from participants p join lobbies l on l.id = p.lobby_id
+       where l.code = $1 and p.status <> 'left'`,
+      [lobby.code],
+    );
+    for (const row of totals) {
+      const entry = opened.participants.find((participantEntry) => participantEntry.seat === row.seat);
+      if (!entry?.season) continue;
+      const total = Number(row.total);
+      if (total > opened.roundsRevealed) {
+        expect(entry.season.finishLabel).toBeNull();
+        expect(entry.season.champion).toBe(false);
+      }
+      expect(entry.rounds.length).toBe(Math.min(total, opened.roundsRevealed));
+    }
+
+    await db().query("update lobbies set playoffs_started_at = now() - interval '30 seconds' where code = $1", [
+      lobby.code,
+    ]);
+    const finished = await view(lobby.code, lobby.host.secret);
+    expect(finished.phase).toBe('finished');
+    for (const entry of finished.participants) {
+      if (!entry.season?.qualified) continue;
+      expect(entry.season.finishLabel).not.toBeNull();
+      if (entry.season.champion) expect(entry.season.finishLabel).toBe('Champion');
+    }
+  });
+
+  it('frees the seat when a player leaves before the start', async () => {
+    const lobby = await newLobby('Host');
+    const guests = await Promise.all(Array.from({ length: 7 }, (_, index) => join(lobby.code, `P${index}`)));
+    const full = await view(lobby.code, lobby.host.secret);
+    expect(full.seatsTaken).toBe(8);
+    expect((await join(lobby.code, 'Extra')).response.status).toBe(409);
+
+    const leaver = guests[2]?.seat.secret as string;
+    const left = await leaveHandler(authed(leaver, `lobby/${lobby.code}/leave`, { actionId: newActionId() }));
+    expect(left.status).toBe(200);
+    const afterLeave = await view(lobby.code, lobby.host.secret);
+    expect(afterLeave.seatsTaken).toBe(7);
+    expect(afterLeave.participants).toHaveLength(7);
+    expect(await eventCount(lobby.code, 'left')).toBe(1);
+
+    const replaced = await join(lobby.code, 'Replacement');
+    expect(replaced.response.status).toBe(200);
+    const seated = await view(lobby.code, lobby.host.secret);
+    expect(seated.seatsTaken).toBe(8);
+    expect(new Set(seated.participants.map((entry) => entry.seat)).size).toBe(8);
+    expect(seated.participants.filter((entry) => entry.status !== 'left')).toHaveLength(8);
+
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const afterStart = await leaveHandler(
+      authed(guests[0]?.seat.secret as string, `lobby/${lobby.code}/leave`, { actionId: newActionId() }),
+    );
+    expect(afterStart.status).toBe(200);
+    const marked = await view(lobby.code, lobby.host.secret);
+    expect(marked.participants.some((entry) => entry.status === 'left')).toBe(true);
+    expect(marked.seatsTaken).toBe(7);
   });
 
   it('runs a solo lobby through the barrier to the standings', async () => {
