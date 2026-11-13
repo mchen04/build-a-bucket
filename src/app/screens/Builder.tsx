@@ -129,23 +129,18 @@ export function Builder(props: Props) {
         </div>
 
         <div class="stage">
-          {complete ? (
-            <div class="card center fade-in">
-              <div class="tiny muted">All 10 slots filled — simulate your season</div>
-              <div class="title" style={{ marginTop: '4px' }}>{archetype}</div>
-              <div class="muted" style={{ fontSize: '12px', marginTop: '4px' }}>
-                OVR {ovr} · 10 traits locked{build ? ` · ${build}` : ''}
-              </div>
-            </div>
-          ) : currentPlayer ? (
+          {currentPlayer ? (
             <div class="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div class="player-card">
                 <Avatar photo={photoFor(catalog, currentPlayer)} name={currentPlayer.name} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 900, fontSize: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <div
+                    data-testid="source-name"
+                    style={{ fontWeight: 900, fontSize: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                  >
                     {currentPlayer.name}
                   </div>
-                  <div class="tiny muted">
+                  <div class="tiny muted" data-testid="source-team">
                     {currentPlayer.team} · {teamName ?? ''} {currentPlayer.number ? `#${currentPlayer.number}` : ''}
                     {build ? ` · ${build}` : ''}
                   </div>
@@ -189,6 +184,14 @@ export function Builder(props: Props) {
                 >
                   Respin Player {run.playerRespinUsed ? '· used' : '· 1'}
                 </button>
+              </div>
+            </div>
+          ) : complete ? (
+            <div class="card center fade-in">
+              <div class="tiny muted">All 10 slots filled — simulate your season</div>
+              <div class="title" style={{ marginTop: '4px' }}>{archetype}</div>
+              <div class="muted" style={{ fontSize: '12px', marginTop: '4px' }}>
+                OVR {ovr} · 10 traits locked{build ? ` · ${build}` : ''}
               </div>
             </div>
           ) : (

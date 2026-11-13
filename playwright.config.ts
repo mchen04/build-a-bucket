@@ -21,6 +21,10 @@ export default defineConfig({
       name: 'mobile-webkit',
       use: { ...devices['iPhone 14'] },
     },
+    {
+      name: 'mobile-chromium',
+      use: { ...devices['Pixel 7'], browserName: 'chromium' },
+    },
   ],
   webServer: {
     command: `npm run dev -- --port ${PORT} --strictPort`,

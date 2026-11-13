@@ -671,6 +671,12 @@ export function chooseMoment(
   return next;
 }
 
+export function passStop(draft: SeasonDraft, rng: Rng): SeasonDraft {
+  const next: SeasonDraft = { ...draft, stopIndex: draft.stopIndex + 1, decisions: [...draft.decisions] };
+  continueDraft(next, rng);
+  return next;
+}
+
 export function finalizeDraft(draft: SeasonDraft, options: { playerName: string; rng: Rng; displayRng: Rng }): SeasonResult {
   const { team, position, era } = draft;
   const allTime = era === 'alltime';

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { loadCatalog, type Catalog } from '../shared/data/loader';
 import { loadMomentBank, type MomentBank } from '../shared/data/moments';
 import { randomSeed } from '../shared/engine/rng';
-import { chooseMoment, finalizeDraft, startSeason, type SeasonDraft } from '../shared/engine/season';
+import { chooseMoment, finalizeDraft, passStop, startSeason, type SeasonDraft } from '../shared/engine/season';
 import type { Era, MomentCard, Position } from '../shared/engine/types';
 import { clearRun, loadRun, saveRun } from '../shared/persistence';
 import { createRun, type RunState } from '../shared/run';
@@ -85,20 +85,35 @@ export function App() {
     commit(createRun(randomSeed(), position, era));
   };
 
-  const nextCard = (draft: SeasonDraft, source: RunState, catalogRef: Catalog): MomentCard | null => {
-    if (draft.phase !== 'moment') return null;
-    const stop = draft.stops[draft.stopIndex] as number;
-    const card = pickMoment({
-      bank: bank.current ?? { templates: [], skipped: [] },
-      catalog: catalogRef,
-      draft,
-      seed: source.seed,
-      stop,
-      recent: recentMoments(),
-      playerName: 'YOU',
-    });
-    if (card) rememberMoment(card.id);
-    return card;
+  const advanceDraft = (start: SeasonDraft, source: RunState, catalogRef: Catalog): { draft: SeasonDraft; card: MomentCard | null } => {
+    let draft = start;
+    for (let guard = 0; draft.phase === 'moment' && guard < 8; guard++) {
+      const stop = draft.stops[draft.stopIndex] as number;
+      const card = pickMoment({
+        bank: bank.current ?? { templates: [], skipped: [] },
+        catalog: catalogRef,
+        draft,
+        seed: source.seed,
+        stop,
+        recent: recentMoments(),
+        playerName: 'YOU',
+      });
+      if (card) {
+        rememberMoment(card.id);
+        return { draft, card };
+      }
+      draft = passStop(draft, Math.random);
+    }
+    return { draft, card: null };
+  };
+
+  const stagedRun = (draft: SeasonDraft, source: RunState, catalogRef: Catalog): RunState => {
+    const { draft: next, card } = advanceDraft(draft, source, catalogRef);
+    if (next.phase === 'done') {
+      const season = finalizeDraft(next, { playerName: 'YOU', rng: Math.random, displayRng: Math.random });
+      return { ...source, draft: null, moment: null, season };
+    }
+    return { ...source, draft: next, moment: card, season: null };
   };
 
   const simulate = async () => {
@@ -119,22 +134,15 @@ export function App() {
       return;
     }
     const draft = startSeason({ build, team: run.team, seed: run.seed, rng: Math.random, moments: true });
-    const withCard = { ...run, draft, moment: null, season: null, screen: 'season' as const };
-    commit({ ...withCard, moment: nextCard(draft, withCard, catalog) });
+    commit({ ...stagedRun(draft, run, catalog), screen: 'season' });
   };
 
   const choose = (optionId: string) => {
-    if (!run?.draft || !run.moment) return;
+    if (!run?.draft || !run.moment || !catalog) return;
     const option = run.moment.options.find((entry) => entry.id === optionId);
     if (!option) return;
     const next = chooseMoment(run.draft, { momentId: run.moment.id, optionId, effect: option.effect }, Math.random);
-    if (next.phase === 'done') {
-      const season = finalizeDraft(next, { playerName: 'YOU', rng: Math.random, displayRng: Math.random });
-      commit({ ...run, draft: null, moment: null, season, screen: 'season' });
-      return;
-    }
-    const staged = { ...run, draft: next, moment: null };
-    commit({ ...staged, moment: catalog ? nextCard(next, staged, catalog) : null });
+    commit({ ...stagedRun(next, run, catalog), screen: 'season' });
   };
 
   const toggleMoments = () => {

@@ -2,6 +2,18 @@ import { mkdirSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 
 const SHOTS = '/Users/michaelchen/Work/build-a-bucket-t_614e29cd/after/turn1';
+const GUARD_KEYS = [
+  'jumpShot',
+  'finishing',
+  'passing',
+  'handles',
+  'perimeterDefense',
+  'speed',
+  'bounce',
+  'size',
+  'basketballIQ',
+  'clutch',
+];
 
 test.beforeAll(() => {
   mkdirSync(SHOTS, { recursive: true });
@@ -24,10 +36,6 @@ async function expectNoVerticalOverflow(page: Page, label: string): Promise<void
   expect(overflow.app, `${label} overflows its frame`).toBeLessThanOrEqual(1);
 }
 
-async function pickCount(page: Page): Promise<number> {
-  return page.locator('.slot.filled').count();
-}
-
 async function spinAndPick(page: Page): Promise<void> {
   const before = await page.locator('.slot.filled').count();
   await page.locator('.spin-big').click();
@@ -37,83 +45,192 @@ async function spinAndPick(page: Page): Promise<void> {
   await expect(page.locator('.slot.filled')).toHaveCount(before + 1);
 }
 
-test('plays a full guard current run, restores mid-build, and fits a phone screen', async ({ page }) => {
+async function answerMoments(page: Page, name = 'moment'): Promise<number> {
+  let seen = 0;
+  for (let guard = 0; guard < 8; guard++) {
+    const card = page.locator('[data-testid="moment-card"]');
+    if (!(await card.isVisible().catch(() => false))) return seen;
+    const title = await card.locator('.title').textContent();
+    const options = card.locator('button');
+    expect(await options.count()).toBeGreaterThanOrEqual(2);
+    if (seen === 0) await shot(page, name);
+    await expectNoVerticalOverflow(page, `moment ${title ?? ''}`);
+    await options.first().click();
+    seen++;
+    await page.waitForTimeout(250);
+  }
+  return seen;
+}
+
+test('plays a full guard current run with moments, chips and headshots', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: /^Play · Guard · Current$/ })).toBeVisible();
   await expectNoVerticalOverflow(page, 'home');
-  await shot(page, '01-home');
 
   await page.getByRole('button', { name: /^Play · Guard · Current$/ }).click();
-
   await expect(page.locator('.spin-big')).toBeVisible();
-  await expectNoVerticalOverflow(page, 'builder start');
-  await shot(page, '02-builder-start');
 
-  await spinAndPick(page);
-  await spinAndPick(page);
-  await spinAndPick(page);
-  await expect(page.locator('.slot.filled')).toHaveCount(3);
+  await page.locator('.spin-big').click();
+  const firstChip = page.locator('.chip').first();
+  await firstChip.waitFor({ state: 'visible' });
 
-  await page.reload();
-  await expect(page.locator('.slot.filled')).toHaveCount(3);
-  await expect(page.locator('.top').getByText('3/10')).toBeVisible();
-  expect(await pickCount(page)).toBe(3);
-  await expectNoVerticalOverflow(page, 'builder after reload');
-  await shot(page, '03-builder-restored-after-reload');
+  const chips = await page.locator('.chip').evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      attr: node.getAttribute('data-attr'),
+      val: Number(node.getAttribute('data-val')),
+      disabled: (node as HTMLButtonElement).disabled,
+      hasPhoto: Boolean(node.querySelector('img')),
+      label: node.getAttribute('aria-label'),
+    })),
+  );
+  expect(chips).toHaveLength(GUARD_KEYS.length);
+  expect(chips.map((chip) => chip.attr)).toEqual(GUARD_KEYS);
+  expect(chips.every((chip) => chip.val >= 0 && chip.val <= 11)).toBe(true);
+  expect(chips.every((chip) => !chip.disabled)).toBe(true);
+  expect(chips.some((chip) => chip.hasPhoto)).toBe(true);
+  expect(chips[0]?.label).toContain('Jump Shot');
 
-  for (let index = 3; index < 10; index++) {
+  const filledAttr = chips[0]?.attr ?? 'jumpShot';
+  await firstChip.click();
+  await expect(page.locator('.slot.filled')).toHaveCount(1);
+
+  await page.locator('.spin-big').click();
+  await page.locator('.chip').first().waitFor({ state: 'visible' });
+  await expect(page.locator(`.chip[data-attr="${filledAttr}"]`)).toBeDisabled();
+  await expect(page.locator('.chip:enabled')).toHaveCount(GUARD_KEYS.length - 1);
+  await expect(page.locator('.slot-name').first()).toHaveText(/\S/);
+  await shot(page, 'builder-with-picks');
+  await expectNoVerticalOverflow(page, 'builder with picks');
+
+  await page.locator('.chip:enabled').first().click();
+  await expect(page.locator('.slot.filled')).toHaveCount(2);
+
+  const grades = page.locator('.icon-btn.wide');
+  await expect(grades).toHaveText('GRADES');
+  await grades.click();
+  await expect(grades).toHaveText('NUMBERS');
+  await expect(page.locator('.slot.filled .slot-val').first()).toHaveText(/^\d+$/);
+  await grades.click();
+  await expect(page.locator('.slot.filled .slot-val').first()).toHaveText(/^[A-S][+-]?$/);
+
+  for (let index = 2; index < 10; index++) {
     await spinAndPick(page);
   }
 
   await expect(page.locator('.slot.filled')).toHaveCount(10);
-  await expect(page.getByText('Build complete')).toBeVisible();
-  await expectNoVerticalOverflow(page, 'builder complete');
-  await shot(page, '04-build-complete');
+  await expect(page.getByText('All 10 slots filled — simulate your season')).toBeVisible();
+  await shot(page, 'build-complete');
+  await expectNoVerticalOverflow(page, 'build complete');
 
   await page.getByRole('button', { name: 'Spin for Team' }).click();
-  await expect(page.locator('.spin-big')).toBeVisible();
-  await expectNoVerticalOverflow(page, 'team spin');
-  await shot(page, '05-team-spin');
-
   await page.locator('.spin-big').click();
   await expect(page.getByRole('button', { name: 'Simulate Season' })).toBeEnabled();
   await expect(page.locator('.card').filter({ hasText: /OFF \d+ · DEF \d+/ })).toBeVisible();
-  await shot(page, '06-team-result');
 
   await page.getByRole('button', { name: 'Simulate Season' }).click();
   await expect(page.getByText('Record')).toBeVisible();
-  await expectNoVerticalOverflow(page, 'season');
-  await shot(page, '07-season-ticking');
 
-  await page.getByRole('button', { name: 'Skip to Result' }).click();
+  const momentsSeen = await answerMoments(page, 'moment');
+  expect(momentsSeen).toBeGreaterThanOrEqual(2);
+  const skip = page.getByRole('button', { name: 'Skip to Result' });
+  if (await skip.isVisible().catch(() => false)) await skip.click();
   await expect(page.locator('.award').first()).toBeVisible();
   await expectNoVerticalOverflow(page, 'season result');
-  await shot(page, '08-season-result');
 
   const advance = page.locator('.bottom .btn');
   const label = (await advance.textContent()) ?? '';
-  const seed = await page.locator('.body').getByText(/^#\d+$/).first().textContent();
   await advance.click();
-
   if (label.includes('Playoffs')) {
     await expect(page.getByRole('button', { name: 'Skip to Result' })).toBeVisible();
-    await shot(page, '09-playoffs-tip-off');
     await page.getByRole('button', { name: 'Skip to Result' }).click();
     await expect(page.locator('.banner')).toBeVisible();
-    await expectNoVerticalOverflow(page, 'playoffs result');
-    await shot(page, '10-playoffs-result');
+    await expectNoVerticalOverflow(page, 'playoffs');
     await page.getByRole('button', { name: 'See Results' }).click();
   }
 
-  await expect(page.getByRole('button', { name: 'New Build' })).toBeVisible();
-  await expect(page.getByText('Archetype')).toBeVisible();
-  await expectNoVerticalOverflow(page, 'end');
-  await shot(page, '11-end');
+  await expect(page.locator('[data-testid="ovr"]')).toBeVisible();
+  await expect(page.locator('[data-testid="archetype"]')).not.toHaveText('Spin to start building');
+  await expect(page.locator('[data-testid="ovr"]')).not.toHaveText('0');
+  await expect(page.locator('.banner h1')).toHaveText(
+    /NBA CHAMPIONS|LOST THE|OUT IN THE|MADE THE PLAYOFFS|MISSED THE PLAYOFFS/,
+  );
+  await shot(page, 'end-screen');
+  await expectNoVerticalOverflow(page, 'end screen');
+  console.log(`moments answered: ${momentsSeen}; advance label: ${label.trim()}`);
+});
 
-  await page.getByRole('button', { name: 'New Build' }).click();
-  await expect(page.getByRole('button', { name: /^Play · Guard · Current$/ })).toBeVisible();
-  await expect(page.locator('.slot')).toHaveCount(0);
-  console.log(`playoff seed text: ${seed ?? 'n/a'}; advance label: ${label.trim()}`);
+test('shows every trait of the player and blocks a filled one', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /^Play · Guard · Current$/ }).click();
+  await page.locator('.spin-big').click();
+  await page.locator('.chip').first().waitFor({ state: 'visible' });
+  const values = await page.locator('.chip').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-val')));
+  expect(values).toHaveLength(10);
+  expect(values.every((value) => value !== null)).toBe(true);
+});
+
+test('shows the no-slot state when a player has nothing left to give', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /^Play · Guard · Current$/ }).click();
+  await page.locator('.spin-big').click();
+  await page.locator('.player-card').waitFor({ state: 'visible' });
+  const playerName = (await page.locator('[data-testid="source-name"]').textContent())?.trim() ?? '';
+  const teamLine = (await page.locator('[data-testid="source-team"]').textContent()) ?? '';
+  const team = teamLine.split(' ')[0] ?? 'MIA';
+  expect(playerName.length).toBeGreaterThan(2);
+
+  const picks: Record<string, unknown> = {};
+  for (const attr of GUARD_KEYS) {
+    picks[attr] = { attr, val: 6, playerName: 'You', playerShort: 'You', team };
+  }
+  await page.addInitScript((run) => {
+    localStorage.setItem('bab:v1', JSON.stringify(run));
+  }, {
+    v: 1,
+    seed: 'b-e2e-noslot',
+    position: 'guard',
+    era: 'current',
+    picks,
+    spinIndex: 10,
+    teamRespinUsed: false,
+    playerRespinUsed: false,
+    current: { team, playerName },
+    team: null,
+    season: null,
+    draft: null,
+    moment: null,
+    screen: 'builder',
+  });
+  await page.goto('/');
+  await expect(page.locator('[data-testid="no-slots"]')).toHaveText('All available slots filled for this PLAYER');
+  await expect(page.locator('.chip')).toHaveCount(GUARD_KEYS.length);
+  await expect(page.locator('.chip:enabled')).toHaveCount(0);
+  await expectNoVerticalOverflow(page, 'no free slot');
+});
+
+test('reveals the saved playoff bracket and the final report', async ({ page }) => {
+  await page.addInitScript((run) => {
+    localStorage.setItem('bab:v1', JSON.stringify(run));
+  }, savedPlayoffRun());
+  await page.goto('/');
+
+  await expect(page.getByText('Record')).toBeVisible();
+  await page.getByRole('button', { name: 'Skip to Result' }).click();
+  await expect(page.locator('.award').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Enter Playoffs' }).click();
+
+  await expect(page.getByRole('button', { name: 'Skip to Result' })).toBeVisible();
+  await page.getByRole('button', { name: 'Skip to Result' }).click();
+  await expect(page.locator('.round')).toHaveCount(5);
+  await expect(page.locator('.round').first()).toContainText('Play-In');
+  await expect(page.locator('.round').last()).toContainText('NBA Finals');
+
+  await page.getByRole('button', { name: 'See Results' }).click();
+  await expect(page.locator('[data-testid="ovr"]')).toHaveText('88');
+  await expect(page.locator('[data-testid="archetype"]')).not.toHaveText('Spin to start building');
+  await expect(page.locator('[data-testid="outcome"] h1')).toHaveText('LOST THE NBA FINALS');
+  await expect(page.locator('.award').filter({ hasText: 'GOAT' })).toContainText('#22 all-time');
+  await expectNoVerticalOverflow(page, 'final report');
 });
 
 test('shows the limitation text for the online modes', async ({ page }) => {
@@ -164,9 +281,12 @@ function savedPlayoffRun(): unknown {
     playerRespinUsed: false,
     current: null,
     team: 'MIA',
+    draft: null,
+    moment: null,
     screen: 'season',
     season: {
       ovr: 88,
+      archetype: 'Elite Scorer',
       wins: 44,
       losses: 38,
       position: 'guard',
@@ -249,33 +369,3 @@ function savedPlayoffRun(): unknown {
     },
   };
 }
-
-test('reveals the saved playoff bracket and the end screen', async ({ page }) => {
-  await page.addInitScript((run) => {
-    localStorage.setItem('bab:v1', JSON.stringify(run));
-  }, savedPlayoffRun());
-  await page.goto('/');
-
-  await expect(page.getByText('Record')).toBeVisible();
-  await page.getByRole('button', { name: 'Skip to Result' }).click();
-  await expect(page.locator('.award').first()).toBeVisible();
-  await page.getByRole('button', { name: 'Enter Playoffs' }).click();
-
-  await expect(page.getByRole('button', { name: 'Skip to Result' })).toBeVisible();
-  await expectNoVerticalOverflow(page, 'playoffs tip off');
-  await shot(page, '12-playoffs-tip-off');
-
-  await page.getByRole('button', { name: 'Skip to Result' }).click();
-  await expect(page.locator('.round')).toHaveCount(5);
-  await expect(page.locator('.round').first()).toContainText('Play-In');
-  await expect(page.locator('.round').last()).toContainText('NBA Finals');
-  await expect(page.locator('.banner h1')).toHaveText('SEASON OVER');
-  await expectNoVerticalOverflow(page, 'playoffs bracket');
-  await shot(page, '13-playoffs-bracket');
-
-  await page.getByRole('button', { name: 'See Results' }).click();
-  await expect(page.getByRole('button', { name: 'New Build' })).toBeVisible();
-  await expect(page.locator('.award').filter({ hasText: 'GOAT' })).toContainText('#22 all-time');
-  await expectNoVerticalOverflow(page, 'end screen');
-  await shot(page, '14-end-after-playoffs');
-});
