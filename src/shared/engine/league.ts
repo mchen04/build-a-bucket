@@ -295,7 +295,12 @@ function headToHeadWins(a: string, b: string, games: readonly LeagueGameResult[]
   return wins;
 }
 
-function sortConference(teams: string[], records: Map<string, TeamRecord>, games: readonly LeagueGameResult[], seed: string): TeamRecord[] {
+export function rankConference(
+  teams: string[],
+  records: Map<string, TeamRecord>,
+  games: readonly LeagueGameResult[],
+  seed: string,
+): TeamRecord[] {
   const coin = new Map(teams.map((team) => [team, seededRng(`${seed}:coin:${team}`)()]));
   const record = (team: string) => records.get(team) ?? emptyRecord(team);
   return [...teams].sort((a, b) => {
@@ -512,8 +517,8 @@ export function simulateLeague(input: {
     }
   }
 
-  const east = sortConference(EAST, records, games, seed);
-  const west = sortConference(WEST, records, games, seed);
+  const east = rankConference(EAST, records, games, seed);
+  const west = rankConference(WEST, records, games, seed);
   east.forEach((row, index) => {
     row.seed = index + 1;
   });

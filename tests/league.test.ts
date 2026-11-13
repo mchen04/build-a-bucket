@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   LEAGUE_TEAMS,
   buildSchedule,
+  rankConference,
   simulateLeague,
   stageTotals,
   type HumanTeamInput,
+  type LeagueGameResult,
   type LeagueResult,
+  type TeamRecord,
 } from '../src/shared/engine/league';
 import { revealLeague, stageTotal } from '../src/shared/mp/league';
 
@@ -152,5 +155,82 @@ describe('shared league simulation', () => {
       }
     }
     expect(league().standings).toEqual(result.standings);
+  });
+});
+
+function record(team: string, wins: number, confWins: number, confLosses: number): TeamRecord {
+  return {
+    team,
+    conference: 'east',
+    wins,
+    losses: 82 - wins,
+    confWins,
+    confLosses,
+    pointsFor: 0,
+    pointsAgainst: 0,
+    seed: null,
+  };
+}
+
+function game(gameNo: number, home: string, away: string, winner: string): LeagueGameResult {
+  return {
+    gameNo,
+    round: 1,
+    stage: 0,
+    home,
+    away,
+    homeScore: winner === home ? 110 : 100,
+    awayScore: winner === away ? 110 : 100,
+    winner,
+  };
+}
+
+describe('conference tiebreakers', () => {
+  it('breaks a wins tie with head-to-head', () => {
+    const records = new Map([
+      ['AAA', record('AAA', 41, 25, 15)],
+      ['BBB', record('BBB', 41, 25, 15)],
+      ['CCC', record('CCC', 40, 24, 16)],
+    ]);
+    const games = [
+      game(1, 'AAA', 'BBB', 'AAA'),
+      game(2, 'BBB', 'AAA', 'AAA'),
+      game(3, 'AAA', 'BBB', 'AAA'),
+      game(4, 'BBB', 'AAA', 'BBB'),
+    ];
+    const order = rankConference(['AAA', 'BBB', 'CCC'], records, games, 'tie-seed');
+    expect(order.map((row) => row.team)).toEqual(['AAA', 'BBB', 'CCC']);
+  });
+
+  it('breaks an even head-to-head tie with conference record', () => {
+    const records = new Map([
+      ['AAA', record('AAA', 41, 30, 10)],
+      ['BBB', record('BBB', 41, 25, 15)],
+    ]);
+    const games = [
+      game(1, 'AAA', 'BBB', 'AAA'),
+      game(2, 'BBB', 'AAA', 'AAA'),
+      game(3, 'AAA', 'BBB', 'BBB'),
+      game(4, 'BBB', 'AAA', 'BBB'),
+    ];
+    const order = rankConference(['AAA', 'BBB'], records, games, 'tie-seed');
+    expect(order.map((row) => row.team)).toEqual(['AAA', 'BBB']);
+  });
+
+  it('uses a deterministic seeded coin when everything else is equal', () => {
+    const records = new Map([
+      ['AAA', record('AAA', 41, 25, 15)],
+      ['BBB', record('BBB', 41, 25, 15)],
+    ]);
+    const games = [
+      game(1, 'AAA', 'BBB', 'AAA'),
+      game(2, 'BBB', 'AAA', 'AAA'),
+      game(3, 'AAA', 'BBB', 'BBB'),
+      game(4, 'BBB', 'AAA', 'BBB'),
+    ];
+    const first = rankConference(['AAA', 'BBB'], records, games, 'coin-seed').map((row) => row.team);
+    const second = rankConference(['AAA', 'BBB'], records, games, 'coin-seed').map((row) => row.team);
+    expect(first).toEqual(second);
+    expect([['AAA', 'BBB'], ['BBB', 'AAA']]).toContainEqual(first);
   });
 });
