@@ -17,6 +17,7 @@ import { clearRun, loadRun, saveRun } from '../shared/persistence';
 import { createRun, type RunState } from '../shared/run';
 import { LazyScreen } from './lazy';
 import type { MpEntry } from './modes/LobbyMode';
+import { parseInvite } from '../shared/mp/invite';
 import type { MpSession } from './mp/session';
 import { pickMoment } from './momentFlow';
 import { readMomentsOff, recentMoments, rememberMoment, writeMomentsOff } from './prefs';
@@ -79,7 +80,15 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [momentsOff, setMomentsOff] = useState(() => readMomentsOff());
-  const [mpEntry, setMpEntry] = useState<MpEntry | null>(() => savedMpEntry());
+  const [invite, setInvite] = useState<string | null>(() =>
+    parseInvite({ pathname: window.location.pathname, search: window.location.search }),
+  );
+  const [inviteName, setInviteName] = useState('');
+  const [mpEntry, setMpEntry] = useState<MpEntry | null>(() => {
+    const saved = savedMpEntry();
+    if (invite) return saved?.kind === 'resume' && saved.session.code === invite ? saved : null;
+    return saved;
+  });
   const [mpNotice, setMpNotice] = useState<string | null>(null);
   const bank = useRef<MomentBank | null>(null);
 
@@ -394,10 +403,55 @@ export function App() {
               initial: mpEntry,
               onExit: (message: string | null) => {
                 setMpEntry(null);
+                setInvite(null);
+                window.history.replaceState({}, '', '/');
                 if (message) setMpNotice(message);
               },
             }}
           />
+        ) : invite ? (
+          <div class="screen">
+            <div class="top">
+              <span class="top-title">Join lobby</span>
+            </div>
+            <div class="body" style={{ justifyContent: 'center' }}>
+              {mpNotice ? <div class="notice bad">{mpNotice}</div> : null}
+              <div class="card" style={{ display: 'grid', gap: '8px' }}>
+                <div>
+                  <div class="tiny muted">Invite</div>
+                  <div class="code" data-testid="invite-code">
+                    {invite}
+                  </div>
+                </div>
+                <input
+                  class="field"
+                  data-testid="invite-name"
+                  placeholder="Your name"
+                  maxLength={16}
+                  autocomplete="off"
+                  value={inviteName}
+                  onInput={(event) => setInviteName((event.target as HTMLInputElement).value)}
+                />
+                <button
+                  class="btn"
+                  data-testid="invite-join"
+                  disabled={!inviteName.trim()}
+                  onClick={() => setMpEntry({ kind: 'join', name: inviteName.trim(), code: invite })}
+                >
+                  Join lobby
+                </button>
+                <button
+                  class="btn btn-ghost btn-small"
+                  onClick={() => {
+                    setInvite(null);
+                    window.history.replaceState({}, '', '/');
+                  }}
+                >
+                  Back
+                </button>
+              </div>
+            </div>
+          </div>
         ) : (
           body()
         )}
