@@ -63,6 +63,7 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
 
   const cap = mode === 'daily' ? budgetForDateStr(plan.key) : budgetForSeed(seed);
   const locked = play?.locked === true;
+  const powersLocked = locked || (mode === 'infinite' && play !== null);
 
   const persist = (
     nextPowers: { shuffle: boolean; scout: boolean },
@@ -99,21 +100,21 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
   };
 
   const armShuffle = () => {
-    if (locked || powers.shuffle) return;
+    if (powersLocked || powers.shuffle) return;
     setPowersOpen(false);
     setScoutMode(false);
-    setShuffleArmed(true);
+    setShuffleArmed((armed) => !armed);
   };
 
   const armScout = () => {
-    if (locked || powers.scout) return;
+    if (powersLocked || powers.scout) return;
     setPowersOpen(false);
     setShuffleArmed(false);
-    setScoutMode(true);
+    setScoutMode((armed) => !armed);
   };
 
   const applyShuffle = (target: ShuffleTarget) => {
-    if (!grid || locked || powers.shuffle) return;
+    if (!grid || powersLocked || powers.shuffle) return;
     const nextGrid =
       target.kind === 'column' ? shuffleColumn(grid, target.index, Math.random) : shuffleRow(grid, target.tier, Math.random);
     const nextPowers = { ...powers, shuffle: true };
@@ -124,7 +125,7 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
   };
 
   const revealScout = (card: SalCard) => {
-    if (locked || powers.scout) return;
+    if (powersLocked || powers.scout) return;
     const nextScouted = { ...scouted, [card.id]: scoutGrade(card) };
     const nextPowers = { ...powers, scout: true };
     setScouted(nextScouted);
@@ -134,6 +135,9 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
   };
 
   const confirm = (cards: SalCard[]) => {
+    setShuffleArmed(false);
+    setScoutMode(false);
+    setPowersOpen(false);
     const { position, values } = buildFromCards(cards);
     const team = teamForSeed(seed, catalog.teams.map((entry) => entry.short));
     const rand = mulberry32(seed);
@@ -182,6 +186,7 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
       play={play}
       notice={notice}
       powers={powers}
+      powersDisabled={powersLocked}
       scouted={scouted}
       shuffleArmed={shuffleArmed}
       scoutMode={scoutMode}
@@ -189,6 +194,10 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
       onTogglePowers={() => setPowersOpen((open) => !open)}
       onArmShuffle={armShuffle}
       onArmScout={armScout}
+      onCancelPower={() => {
+        setShuffleArmed(false);
+        setScoutMode(false);
+      }}
       onShuffle={applyShuffle}
       onScout={revealScout}
       onToggleMode={toggleMode}

@@ -27,6 +27,7 @@ interface Props {
   play: SalaryOutcome | null;
   notice: string | null;
   powers: { shuffle: boolean; scout: boolean };
+  powersDisabled: boolean;
   scouted: Record<string, string>;
   shuffleArmed: boolean;
   scoutMode: boolean;
@@ -34,6 +35,7 @@ interface Props {
   onTogglePowers: () => void;
   onArmShuffle: () => void;
   onArmScout: () => void;
+  onCancelPower: () => void;
   onShuffle: (target: ShuffleTarget) => void;
   onScout: (card: SalCard) => void;
   onToggleMode: () => void;
@@ -88,7 +90,7 @@ export function Salary(props: Props) {
         onBack={props.onExit}
         right={
           <div class="sc-powers">
-            <button class="icon-btn wide" data-testid="salary-powers" disabled={locked} onClick={props.onTogglePowers}>
+            <button class="icon-btn wide" data-testid="salary-powers" disabled={props.powersDisabled} onClick={props.onTogglePowers}>
               POWERS
             </button>
             <button class="icon-btn wide" data-testid="salary-mode" onClick={props.onToggleMode}>
@@ -99,9 +101,9 @@ export function Salary(props: Props) {
       />
       <div class="body">
         {props.notice ? <div class="notice bad">{props.notice}</div> : null}
-        {props.powersOpen && !locked ? (
+        {props.powersOpen && !props.powersDisabled ? (
           <div class="card" data-testid="salary-powers-menu">
-            <div class="tiny muted">POWERS · one use each today</div>
+            <div class="tiny muted">{props.mode === 'daily' ? 'POWERS · one use each today' : 'POWERS · one use each run'}</div>
             <div class="sc-power-row">
               <button
                 class="btn btn-small sc-power"
@@ -125,11 +127,17 @@ export function Salary(props: Props) {
         {props.shuffleArmed ? (
           <div class="notice" data-testid="salary-shuffle-hint">
             Tap a column header or a price row.
+            <button class="btn btn-small" data-testid="salary-power-cancel" onClick={props.onCancelPower}>
+              Cancel
+            </button>
           </div>
         ) : null}
         {props.scoutMode ? (
           <div class="notice" data-testid="salary-scout-hint">
             Tap a card to reveal its grade.
+            <button class="btn btn-small" data-testid="salary-power-cancel" onClick={props.onCancelPower}>
+              Cancel
+            </button>
           </div>
         ) : null}
         <div class="sc-bar" data-testid="salary-cap">

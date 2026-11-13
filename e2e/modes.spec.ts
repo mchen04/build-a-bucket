@@ -221,6 +221,12 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
   await expect(page.getByTestId('salary-shuffle-column-shooting')).toBeVisible();
   await expect(page.getByTestId('salary-shuffle-row-0')).toBeVisible();
   await expectNoVerticalOverflow(page, 'salary shuffle targets');
+  await page.getByTestId('salary-power-cancel').click();
+  await expect(page.getByTestId('salary-shuffle-hint')).toHaveCount(0);
+  await page.getByTestId('salary-powers').click();
+  await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('1');
+  await page.getByTestId('salary-power-shuffle').click();
+  await expect(page.getByTestId('salary-shuffle-column-shooting')).toBeVisible();
   await page.getByTestId('salary-shuffle-column-shooting').click();
   await expect(page.getByTestId('salary-shuffle-column-shooting')).toHaveCount(0);
   await page.getByTestId('salary-powers').click();
@@ -259,11 +265,16 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
   await page.getByTestId('salary-mode').click();
   await expect(page.getByTestId('salary-mode')).toHaveText('INFINITE');
   await page.getByTestId('salary-powers').click();
+  await expect(page.getByTestId('salary-powers-menu')).toContainText('one use each run');
   await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('1');
   await page.getByTestId('salary-power-shuffle').click();
   await expect(page.getByTestId('salary-shuffle-row-0')).toBeVisible();
   await page.getByTestId('salary-shuffle-row-0').click();
   await expect(page.getByTestId('salary-shuffle-row-0')).toHaveCount(0);
+  for (const column of columns) await page.locator(`[data-testid^="salary-${column}-"]`).nth(4).click();
+  await page.getByTestId('salary-confirm').click();
+  await expect(page.getByTestId('salary-result')).toContainText('SEASON RESULT');
+  await expect(page.getByTestId('salary-powers')).toBeDisabled();
 });
 
 test('squad builder fills five slots, simulates the season and survives a reload', async ({ page }) => {
