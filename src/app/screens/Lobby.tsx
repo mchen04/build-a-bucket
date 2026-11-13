@@ -37,7 +37,13 @@ function samePositions(a: readonly string[], b: readonly string[]): boolean {
 
 export function Lobby(props: Props) {
   const { session, catalog } = props;
-  const onGone = useCallback((message: string) => props.onExit(message), [props]);
+  const onGone = useCallback(
+    (message: string) => {
+      clearLocalDraft(session.code);
+      props.onExit(message);
+    },
+    [props, session.code],
+  );
   const { view, status, error, act, refresh } = useLobby(session, onGone);
   const [run, setRun] = useState<RunState | null>(null);
   const [position, setPosition] = useState<Position>('guard');
@@ -48,6 +54,7 @@ export function Lobby(props: Props) {
   const [now, setNow] = useState(() => Date.now());
   const seeded = useRef(false);
   const submitted = useRef(false);
+  const restoredSync = useRef(false);
   const releasedAt = useRef(0);
   const updateRun = useCallback((next: RunState | null) => {
     setRun(next);
@@ -70,17 +77,26 @@ export function Lobby(props: Props) {
   useEffect(() => {
     if (!view || run) return;
     if (view.phase === 'lobby') return;
+    if (view.me.season) return;
     const local = readLocalDraft(view.code);
     if (local) {
       setRun(local);
       setPosition(local.position);
+      const localPicks = Object.keys(local.picks).length;
+      const serverPicks = view.me.build ? Object.keys(view.me.build.picks).length : 0;
+      if (!restoredSync.current && localPicks > serverPicks) {
+        restoredSync.current = true;
+        void act((code, secret) => syncDraftRequest(code, secret, draftFromRun(local, latestPick(local)))).catch(() => {
+          return undefined;
+        });
+      }
       return;
     }
     const stored = view.me.build;
     if (!stored) return;
     setRun(runFromDraft(stored, `${view.code}:${view.me.seat}`));
     setPosition(stored.position);
-  }, [view, run]);
+  }, [view, run, act]);
 
   useEffect(() => {
     submitted.current = Boolean(view?.me.season);
@@ -89,6 +105,7 @@ export function Lobby(props: Props) {
   useEffect(() => {
     setRun(null);
     setScreen('lobby');
+    restoredSync.current = false;
   }, [session.code]);
 
   useEffect(() => {
@@ -119,9 +136,11 @@ export function Lobby(props: Props) {
     if (!view) return;
     if (view.phase !== 'playoffs' && view.phase !== 'finished') return;
     if (screen !== 'build') return;
+    if (busy) return;
+    updateRun(null);
     setScreen('lobby');
     setNotice('The playoffs have already started.');
-  }, [view?.phase, screen]);
+  }, [view?.phase, screen, busy, updateRun]);
 
   useEffect(() => {
     if (!view || view.phase !== 'barrier' || awaiting > 0) return undefined;
@@ -155,9 +174,13 @@ export function Lobby(props: Props) {
       await act((code, secret) => submitBuildRequest(code, secret, draftFromRun(run, latestPick(run))));
       updateRun(null);
       setScreen('lobby');
+      setNotice(null);
     } catch (caught) {
       setNotice(messageOf(caught));
-      if (caught instanceof MpError && caught.status === 409) setScreen('lobby');
+      if (caught instanceof MpError && caught.status === 409) {
+        updateRun(null);
+        setScreen('lobby');
+      }
     } finally {
       setBusy(false);
     }

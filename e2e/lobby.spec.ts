@@ -362,6 +362,7 @@ test('lets a returning player finish at the barrier and starts the playoffs', as
 
     await finishBuild(guest, 9, 'Ben');
     await expect(guest.locator('[data-testid="my-result"]')).toBeVisible({ timeout: 60_000 });
+    await expect(guest.getByText('The playoffs have already started.')).toHaveCount(0);
     expect((await guest.locator('[data-testid="my-result"]').textContent()) ?? '').toMatch(/in the playoffs|· out/);
     await expect(guest.locator('[data-testid="lobby-status"]')).toHaveText('Playoffs', { timeout: 60_000 });
     await guest.screenshot({ path: `${SHOTS}/barrier-return-playoffs.png` });
@@ -401,11 +402,11 @@ test('keeps a lobby pick through an immediate reload', async ({ browser }) => {
     await spinAndPick(guest);
     await guest.reload();
     await expect(guest.locator('[data-testid="open-builder"]')).toContainText('Continue build · 1/10');
-    await guest.locator('[data-testid="open-builder"]').click();
-    await expect(guest.locator('.slot.filled')).toHaveCount(1);
     await expect(host.locator('[data-testid="roster"] [data-seat="2"] .state')).toContainText('1/10', {
       timeout: 15_000,
     });
+    await guest.locator('[data-testid="open-builder"]').click();
+    await expect(guest.locator('.slot.filled')).toHaveCount(1);
 
     await fillBuild(guest, 9, 'Ben');
     await guest.getByRole('button', { name: 'Submit build' }).click();
