@@ -142,9 +142,9 @@ function buildStandings(
       const p = clamp(0.2 + ((v - 0.59) / 0.24) * 0.57 + uniform(rng, -0.06, 0.06), 0.13, 0.77);
       let teamWins = 0;
       for (let i = 0; i < 82; i++) if (rng() < p) teamWins++;
-      return { short, wins: teamWins };
+      return { short, wins: teamWins, losses: 82 - teamWins };
     });
-  rows.push({ short: team, wins, isUs: true });
+  rows.push({ short: team, wins, losses: 82 - wins, isUs: true });
   rows.sort((a, b) => b.wins - a.wins || (a.isUs ? -1 : 1));
   return { seed: rows.findIndex((row) => row.isUs) + 1, standings: rows };
 }

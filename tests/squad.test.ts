@@ -57,6 +57,15 @@ describe('squad season', () => {
     expect(second.log).toBe(first.log);
     expect(squadSeason('sq-fix-season-2', 'DAL', strength).log).not.toBe(first.log);
   });
+
+  it('returns conference standings with losses', () => {
+    const starters = squadStarters('DAL', guards, bigs);
+    const strength = squadStrength('DAL', starters, squad);
+    const season = squadSeason('sq-fix-standings', 'DAL', strength);
+    expect(season.standings).toHaveLength(15);
+    expect(season.standings.every((row) => row.losses === 82 - row.wins)).toBe(true);
+    expect(season.standings.find((row) => row.isUs)?.short).toBe('DAL');
+  });
 });
 
 describe('squad honors', () => {

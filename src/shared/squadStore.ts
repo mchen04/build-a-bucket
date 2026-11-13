@@ -4,6 +4,8 @@ import { RunSchema } from './data/schemas';
 
 export const SQUAD_KEY = 'bab:squad:v1';
 
+export type SquadStage = 'build' | 'review' | 'season' | 'standings' | 'playoffs' | 'recap';
+
 function readJson(storage: Storage, key: string): unknown {
   try {
     const raw = storage.getItem(key);
@@ -26,6 +28,7 @@ const SquadSchema = v.object({
   seed: v.string(),
   team: v.nullable(v.string()),
   season: v.number(),
+  stage: v.optional(v.picklist(['build', 'review', 'season', 'standings', 'playoffs', 'recap'])),
   slots: v.array(
     v.object({
       id: v.string(),
@@ -47,6 +50,7 @@ export interface SquadState {
   seed: string;
   team: string | null;
   season: number;
+  stage?: SquadStage;
   slots: SquadSlotState[];
   result: unknown;
 }
@@ -57,6 +61,7 @@ export function newSquadState(seed: string): SquadState {
     seed,
     team: null,
     season: 0,
+    stage: 'build',
     slots: [
       { id: 'PG', pos: 'guard', run: null },
       { id: 'SG', pos: 'guard', run: null },
