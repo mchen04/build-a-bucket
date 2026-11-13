@@ -660,6 +660,42 @@ describe('lobby lifecycle', () => {
     }
   });
 
+  it('carries every revealed round to a polling client', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'high'))).status).toBe(200);
+    await sleep(HOLD_WAIT);
+    const released = await release(lobby.code, lobby.host.secret);
+    expect(released.status).toBe(200);
+    const opened = (await read<{ lobby: LobbyView }>(released)).lobby;
+    expect(opened.phase).toBe('playoffs');
+    expect(opened.roundsRevealed).toBe(1);
+
+    const since = opened.version;
+    const token = progressToken(opened);
+    const newest = opened.events[0]?.id ?? 0;
+    const still = await viewHandler(poll(lobby.host.secret, lobby.code, since, token, newest));
+    expect(still.status).toBe(204);
+
+    await sleep(opened.revealSeconds * 1000 + 500);
+    const advanced = await viewHandler(poll(lobby.host.secret, lobby.code, since, token, newest));
+    expect(advanced.status).toBe(200);
+    const body = await read<{ lobby?: LobbyView }>(advanced);
+    expect(body.lobby).toBeDefined();
+    const revealed = body.lobby as LobbyView;
+    expect(revealed.roundsRevealed).toBeGreaterThan(opened.roundsRevealed);
+    expect(revealed.version).toBeGreaterThan(since);
+    expect(revealed.phase).toBe('playoffs');
+
+    const peer = await view(lobby.code, guest.seat.secret);
+    expect(peer.roundsRevealed).toBe(revealed.roundsRevealed);
+    for (const entry of revealed.participants) {
+      expect(entry.rounds.length).toBeLessThanOrEqual(revealed.roundsRevealed);
+    }
+  });
+
   it('frees the seat when a player leaves before the start', async () => {
     const lobby = await newLobby('Host');
     const guests = await Promise.all(Array.from({ length: 7 }, (_, index) => join(lobby.code, `P${index}`)));

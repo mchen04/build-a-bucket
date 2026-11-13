@@ -49,13 +49,22 @@ function view(overrides: Partial<LobbyView> = {}): LobbyView {
 }
 
 describe('progress token', () => {
-  it('tracks the newest event, away flags and filled slots', () => {
-    expect(progressToken(view())).toBe('10:0:0');
-    expect(progressToken(view({ events: [event(11), event(10)] }))).toBe('11:0:0');
+  it('tracks the newest event, away seats and filled slots', () => {
+    expect(progressToken(view())).toBe('10::0');
+    expect(progressToken(view({ events: [event(11), event(10)] }))).toBe('11::0');
     expect(progressToken(view({ participants: [participant(1, { away: true }), participant(2)] }))).toBe('10:1:0');
+    expect(progressToken(view({ participants: [participant(1, { away: true }), participant(2, { away: true })] }))).toBe(
+      '10:1,2:0',
+    );
     expect(
       progressToken(view({ participants: [participant(1, { summary: { filled: 4, total: 10, latest: null } }), participant(2)] })),
-    ).toBe('10:0:4');
+    ).toBe('10::4');
+  });
+
+  it('notices an away flag that moved to another seat', () => {
+    const before = view({ participants: [participant(1, { away: true }), participant(2)] });
+    const after = view({ participants: [participant(1), participant(2, { away: true })] });
+    expect(progressToken(before)).not.toBe(progressToken(after));
   });
 });
 
@@ -80,7 +89,7 @@ describe('delta merge', () => {
     expect(merged.participants[1]?.joinedAt).toBe(base.participants[1]?.joinedAt);
     expect(merged.me.seat).toBe(1);
     expect(merged.events.map((entry) => entry.id)).toEqual([11, 10]);
-    expect(progressToken(merged)).toBe('11:1:19');
+    expect(progressToken(merged)).toBe('11:2:19');
   });
 
   it('leaves seats the delta does not mention alone', () => {

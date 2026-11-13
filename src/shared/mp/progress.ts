@@ -2,7 +2,10 @@ import { EVENT_LIMIT, type LobbyDelta, type LobbyView, type ParticipantProgress,
 
 export function progressToken(view: Pick<LobbyView, 'events' | 'participants'>): string {
   const latest = view.events[0]?.id ?? 0;
-  const away = view.participants.reduce((count, entry) => count + (entry.away ? 1 : 0), 0);
+  const away = view.participants
+    .filter((entry) => entry.away)
+    .map((entry) => entry.seat)
+    .join(',');
   const filled = view.participants.reduce((count, entry) => count + (entry.summary?.filled ?? 0), 0);
   return `${latest}:${away}:${filled}`;
 }

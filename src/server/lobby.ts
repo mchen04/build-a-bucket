@@ -50,6 +50,7 @@ interface RawLobby {
   settings: unknown;
   version: number | string;
   playoffs_started_at: string | null;
+  rounds_revealed: number | string;
 }
 
 interface RawParticipant {
@@ -82,6 +83,11 @@ interface ReadRow {
 export function parseSettings(raw: unknown): LobbySettings {
   const parsed = v.safeParse(SettingsSchema, raw);
   return parsed.success ? parsed.output : CREATE_DEFAULT_SETTINGS;
+}
+
+export function revealedCount(startedAt: number | null, revealSeconds: number, now: number): number {
+  if (startedAt === null) return 0;
+  return Math.max(0, Math.min(MAX_ROUNDS, 1 + Math.floor((now - startedAt) / (revealSeconds * 1000))));
 }
 
 function parseSeason(raw: unknown): SeasonResult | null {
@@ -178,10 +184,7 @@ function buildView(row: ReadRow, now: number): LobbyView | null {
   if (!meRow) return null;
   const settings = parseSettings(raw.settings);
   const startedAt = raw.playoffs_started_at ? Date.parse(raw.playoffs_started_at) : null;
-  const revealed =
-    startedAt === null
-      ? 0
-      : Math.max(0, Math.min(MAX_ROUNDS, 1 + Math.floor((now - startedAt) / (settings.revealSeconds * 1000))));
+  const revealed = revealedCount(startedAt, settings.revealSeconds, now);
   const byId = new Map(row.participants.map((entry) => [entry.id, entry]));
   const roundsTotal = row.participants.reduce((max, entry) => Math.max(max, rawRounds(parseSeason(entry.season)).length), 0);
   const hostId = raw.host_participant;
@@ -271,7 +274,8 @@ hb as (
 select
   (select json_build_object(
     'id', l.id, 'code', l.code, 'phase', l.phase, 'host_participant', l.host_participant,
-    'settings', l.settings, 'version', l.version, 'playoffs_started_at', l.playoffs_started_at
+    'settings', l.settings, 'version', l.version, 'playoffs_started_at', l.playoffs_started_at,
+    'rounds_revealed', l.rounds_revealed
   ) from l) as lobby,
   (select coalesce(json_agg(json_build_object(
     'id', p.id, 'name', p.name, 'seat', p.seat, 'status', p.status,
@@ -377,6 +381,20 @@ select w.lobby_id, w.participant_id, 'barrier',
 from waiting w
 `;
 
+const REVEAL_SQL = `
+with reached as (
+  select l.id as id,
+    least($2::int,
+      greatest(1, 1 + floor(extract(epoch from (now() - l.playoffs_started_at))
+        / coalesce((l.settings->>'revealSeconds')::int, 5))::int)) as revealed
+  from lobbies l
+  where l.code = $1 and l.phase = 'playoffs' and l.playoffs_started_at is not null
+)
+update lobbies l set rounds_revealed = r.revealed, version = l.version + 1, updated_at = now()
+from reached r
+where l.id = r.id and r.revealed > l.rounds_revealed
+`;
+
 const FINISH_SQL = `
 with done as (
   update participants p set status = 'done'
@@ -395,6 +413,7 @@ export function maintenancePlan(code: string): { text: string; params: unknown[]
   return [
     { text: HOST_SQL, params: [code, Math.floor(HOST_IDLE_MS / 1000)] },
     { text: BARRIER_SQL, params: [code, Math.floor(AWAY_MS / 1000)] },
+    { text: REVEAL_SQL, params: [code, MAX_ROUNDS] },
     { text: FINISH_SQL, params: [code, MAX_ROUNDS - 1] },
   ];
 }
@@ -416,7 +435,7 @@ function needsMaintenance(row: ReadRow, now: number): boolean {
   if (lobby.phase === 'barrier') return true;
   if (lobby.phase === 'playoffs' && lobby.playoffs_started_at) {
     const revealSeconds = parseSettings(lobby.settings).revealSeconds;
-    return Date.parse(lobby.playoffs_started_at) + revealSeconds * (MAX_ROUNDS - 1) * 1000 <= now;
+    return revealedCount(Date.parse(lobby.playoffs_started_at), revealSeconds, now) > Number(lobby.rounds_revealed ?? 0);
   }
   return false;
 }
@@ -885,7 +904,7 @@ hold as (
 ),
 released as (
   update lobbies lob
-  set phase = 'playoffs', playoffs_started_at = now(), version = lob.version + 1, updated_at = now()
+  set phase = 'playoffs', playoffs_started_at = now(), rounds_revealed = 1, version = lob.version + 1, updated_at = now()
   from l, me, pending, hold
   where lob.id = l.id
     and lob.phase in ('building', 'season', 'barrier')

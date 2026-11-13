@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { devices, expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { db } from '../src/server/db';
+import { DEFAULT_REVEAL_SECONDS } from '../src/shared/mp/types';
 import { loadLocalEnv } from '../scripts/lib.ts';
 
 const SHOTS = '/Users/michaelchen/Work/build-a-bucket-t_614e29cd/after/turn2';
@@ -222,17 +223,34 @@ test('drives an eight player lobby from invite code to final standings', async (
     expect(revealText, 'no champion at the first reveal').not.toContain('champion');
     await host.screenshot({ path: `${SHOTS}/playoff-reveal.png` });
 
-    await expect
-      .poll(async () => {
-        const rounds = await Promise.all(pages.map((page) => revealRound(page)));
-        return rounds.filter((value) => value !== null).length;
-      }, { timeout: 60_000 })
-      .toBeGreaterThanOrEqual(7);
-    const rounds = (await Promise.all(pages.map((page) => revealRound(page)))).filter(
-      (value): value is number => value !== null,
-    );
-    expect(Math.min(...rounds)).toBeGreaterThanOrEqual(1);
-    expect(Math.max(...rounds) - Math.min(...rounds)).toBeLessThanOrEqual(1);
+    const revealMs = DEFAULT_REVEAL_SECONDS * 1000;
+    const firstSeen: Array<Map<number, number>> = pages.map(() => new Map());
+    const watchStarted = Date.now();
+    while (Date.now() - watchStarted < 90_000) {
+      const seen = await Promise.all(pages.map((page) => revealRound(page)));
+      seen.forEach((round, index) => {
+        const timeline = firstSeen[index] as Map<number, number>;
+        if (round !== null && !timeline.has(round)) timeline.set(round, Date.now() - watchStarted);
+      });
+      if (await host.locator('[data-testid="standings"]').isVisible()) break;
+      await host.waitForTimeout(250);
+    }
+    const roundsTotal = Math.max(...firstSeen.map((timeline) => Math.max(...timeline.keys())));
+    expect(roundsTotal, 'the reveal clock shows every round the lobby has').toBeGreaterThanOrEqual(3);
+    firstSeen.forEach((timeline, index) => {
+      const seen = [...timeline.keys()].sort((a, b) => a - b);
+      expect(seen, `page ${index} watched rounds 1..${roundsTotal} in order`).toEqual(
+        Array.from({ length: roundsTotal }, (_, step) => step + 1),
+      );
+    });
+    for (let round = 1; round <= roundsTotal; round++) {
+      const times = firstSeen.map((timeline) => timeline.get(round) ?? -1);
+      expect(Math.min(...times), `every page saw round ${round}`).toBeGreaterThanOrEqual(0);
+      expect(
+        Math.max(...times) - Math.min(...times),
+        `round ${round} reached every page inside one reveal interval`,
+      ).toBeLessThanOrEqual(revealMs);
+    }
 
     await expect(host.locator('[data-testid="standings"]')).toBeVisible({ timeout: 90_000 });
     await expect(host.locator('[data-testid="standings"] .table-row')).toHaveCount(9);
@@ -249,7 +267,7 @@ test('drives an eight player lobby from invite code to final standings', async (
 
     const standings = await host.locator('[data-testid="standings"] .table-row').allTextContents();
     console.log(`standings:\n${standings.join('\n')}`);
-    console.log(`synchronised rounds seen: ${rounds.join(', ')}`);
+    console.log(`rounds seen per page: ${firstSeen.map((timeline) => [...timeline.keys()].sort().join('/')).join(' | ')}`);
   } finally {
     for (const context of contexts) await context.close();
   }

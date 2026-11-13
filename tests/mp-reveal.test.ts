@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { revealSeasonSummary } from '../src/server/lobby';
+import { revealedCount, revealSeasonSummary } from '../src/server/lobby';
 import type { PlayoffRound, SeasonResult } from '../src/shared/engine/types';
 
 const ROUND_NAMES = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'];
@@ -64,5 +64,15 @@ describe('reveal projection', () => {
     expect(summary.wins).toBe(50);
     expect(summary.losses).toBe(32);
     expect(summary.qualified).toBe(true);
+  });
+
+  it('counts one reveal per interval on the shared clock', () => {
+    const start = Date.UTC(2026, 0, 1, 0, 0, 0);
+    expect(revealedCount(null, 5, start)).toBe(0);
+    expect(revealedCount(start, 5, start)).toBe(1);
+    expect(revealedCount(start, 5, start + 4999)).toBe(1);
+    expect(revealedCount(start, 5, start + 5000)).toBe(2);
+    expect(revealedCount(start, 5, start + 20_000)).toBe(5);
+    expect(revealedCount(start, 5, start + 600_000)).toBe(5);
   });
 });
