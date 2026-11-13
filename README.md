@@ -46,6 +46,7 @@ npm run e2e         # Playwright: iPhone 14 (WebKit) and Pixel 7 (Chromium), hea
 `npm run e2e` starts the dev server itself. The lobby tests (vitest `tests/mp-lobby.test.ts` and
 `e2e/lobby.spec.ts`) need `DATABASE_URL` and skip themselves without it; the lobby spec is excluded from the CI
 run. One vitest case loads the real data files from jsDelivr; `BAB_SKIP_NETWORK=1` skips it offline.
+Playwright screenshots go to `test-results/shots/<spec>/`, or under `BAB_SHOTS` when set.
 
 `.claude/skills/verify-build-a-bucket/` is the verification skill: `scripts/control.mjs` launches the stack,
 drives the UI step by step with screenshots and aria snapshots as evidence, and measures cold load and the lobby

@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs';
+import { shotDir } from './shots';
 import { expect, test, type Page } from '@playwright/test';
 
-const SHOTS = '/Users/michaelchen/Work/build-a-bucket-t_614e29cd/after/turn5';
+const SHOTS = shotDir('career');
 
 test.use({ viewport: { width: 390, height: 844 } });
 

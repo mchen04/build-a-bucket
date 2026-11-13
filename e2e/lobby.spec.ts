@@ -1,10 +1,11 @@
 import { mkdirSync } from 'node:fs';
+import { shotDir } from './shots';
 import { devices, expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { db } from '../src/server/db';
 import { DEFAULT_REVEAL_SECONDS, MAX_ROUNDS } from '../src/shared/mp/types';
 import { loadLocalEnv } from '../scripts/lib.ts';
 
-const SHOTS = '/Users/michaelchen/Work/build-a-bucket-t_614e29cd/after/turn2';
+const SHOTS = shotDir('lobby');
 const PLAYERS = ['Ava', 'Ben', 'Cleo', 'Dev', 'Eli', 'Fern', 'Gus', 'Hana'];
 const PROFILE = devices['iPhone 14'];
 const RELOADER = 3;
