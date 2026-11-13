@@ -1,4 +1,4 @@
-import type { LobbyPhase, ParticipantView } from '../../shared/mp/types';
+import type { EventView, LobbyPhase, ParticipantStatus, ParticipantView } from '../../shared/mp/types';
 
 export function phaseLabel(phase: LobbyPhase): string {
   switch (phase) {
@@ -15,6 +15,14 @@ export function phaseLabel(phase: LobbyPhase): string {
     case 'finished':
       return 'Finished';
   }
+}
+
+function hasResult(status: ParticipantStatus): boolean {
+  return status === 'qualified' || status === 'eliminated' || status === 'playoffs' || status === 'done';
+}
+
+export function isPresent(participant: ParticipantView): boolean {
+  return participant.status !== 'left' && !participant.away;
 }
 
 export function statusLine(participant: ParticipantView, phase: LobbyPhase): string {
@@ -42,7 +50,7 @@ export function statusLine(participant: ParticipantView, phase: LobbyPhase): str
       return `${last.name}: ${last.wins}-${last.losses}`;
     }
     case 'done':
-      return season ? season.finishLabel : 'out';
+      return season?.finishLabel ?? (season?.qualified ? 'in the playoffs' : 'out');
   }
 }
 
@@ -64,23 +72,46 @@ export function shortStatus(participant: ParticipantView, phase: LobbyPhase): st
     case 'playoffs':
       return `R${participant.rounds.length}`;
     case 'done':
-      return participant.season?.champion ? 'won' : 'out';
+      return participant.season?.champion ? 'champ' : 'out';
   }
 }
 
-export function readyCount(participants: readonly ParticipantView[]): number {
-  return participants.filter(
-    (entry) => entry.status === 'qualified' || entry.status === 'eliminated' || entry.status === 'done',
-  ).length;
+export function readyLabel(participants: readonly ParticipantView[]): string {
+  const present = participants.filter(isPresent);
+  if (present.length === 0) return 'waiting for players';
+  const ready = present.filter((entry) => hasResult(entry.status));
+  return `${ready.length}/${present.length} ready`;
 }
 
 export function awaitingCount(participants: readonly ParticipantView[]): number {
-  return participants.filter(
-    (entry) =>
-      entry.status !== 'left' &&
-      !entry.away &&
-      entry.status !== 'qualified' &&
-      entry.status !== 'eliminated' &&
-      entry.status !== 'done',
-  ).length;
+  return participants.filter((entry) => isPresent(entry) && !hasResult(entry.status)).length;
+}
+
+function defaultDetail(kind: string): string {
+  switch (kind) {
+    case 'joined':
+      return 'joined the lobby';
+    case 'started':
+      return 'started the season';
+    case 'pick':
+      return 'made a pick';
+    case 'barrier':
+      return 'is waiting at the playoff barrier';
+    case 'playoffs_started':
+      return 'the playoffs have started';
+    case 'host_changed':
+      return 'is the new host';
+    case 'left':
+      return 'left the lobby';
+    default:
+      return '';
+  }
+}
+
+export function activityLine(event: EventView | undefined): string {
+  if (!event) return 'Waiting for the first move';
+  const detail = event.detail ?? defaultDetail(event.kind);
+  const who = event.name ?? '';
+  if (!who) return detail;
+  return detail ? `${who} ${detail}` : who;
 }

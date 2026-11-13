@@ -122,7 +122,8 @@ export async function releaseRequest(code: string, secret: string, force: boolea
   return parseView(response);
 }
 
-export async function leaveLobbyRequest(code: string, secret: string): Promise<LobbyView> {
+export async function leaveLobbyRequest(code: string, secret: string): Promise<void> {
   const response = await request(`/api/lobby/${code}/leave`, postInit(secret, { actionId: newActionId() }));
-  return parseView(response);
+  if (response.ok || response.status === 403 || response.status === 404) return;
+  throw new MpError(`Could not leave the lobby (${response.status}).`, response.status, 'server');
 }

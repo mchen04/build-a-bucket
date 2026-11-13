@@ -13,7 +13,7 @@ export async function POST(request: Request): Promise<Response> {
     actionId: parsed.value.actionId,
   });
   if (!outcome.ok) return errorResponse(outcome.status, outcome.error.reason, outcome.error.error);
-  return jsonResponse({ lobby: outcome.view });
+  return jsonResponse({ left: true });
 }
 
 export const GET = () => methodNotAllowed('POST');

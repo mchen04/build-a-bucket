@@ -1,6 +1,6 @@
 import * as v from 'valibot';
 import { loadCatalog, poolFor, type Catalog } from '../shared/data/loader';
-import { BIG_ATTRS, CURRENT_TEAMS, GUARD_ATTRS } from '../shared/engine/rules';
+import { ATTR_LABELS, BIG_ATTRS, CURRENT_TEAMS, GUARD_ATTRS, gradeFor } from '../shared/engine/rules';
 import { seededRng } from '../shared/engine/rng';
 import { simulateSeason } from '../shared/engine/season';
 import type { Build, PlayoffRound, SeasonResult, SeriesRound } from '../shared/engine/types';
@@ -30,6 +30,10 @@ import { SeasonSchema } from '../shared/data/schemas';
 import { db, errorMessage, isUniqueViolation } from './db';
 
 export type Outcome = { ok: true; view: LobbyView } | { ok: false; status: number; error: ApiErrorBody };
+
+export type LeaveOutcome =
+  | { ok: true; view: LobbyView | null }
+  | { ok: false; status: number; error: ApiErrorBody };
 
 const CREATE_DEFAULT_SETTINGS: LobbySettings = {
   era: 'current',
@@ -145,6 +149,15 @@ function runSeason(draft: BuildDraft, playerName: string, seed: string): SeasonR
   });
 }
 
+function pickDetail(draft: BuildDraft): string | null {
+  const latest = draft.latest ?? null;
+  if (!latest) return null;
+  const pick = draft.picks[latest.attr];
+  const label = ATTR_LABELS[latest.attr];
+  if (!pick || !label) return null;
+  return `took ${pick.playerName}'s ${label.short} ${gradeFor(pick.val)}`;
+}
+
 function toRoundView(round: PlayoffRound): RoundView {
   if (round.type === 'playin') {
     return {
@@ -177,9 +190,11 @@ function finishLabelFor(season: SeasonResult, series: SeriesRound[], playedPlayI
   return 'First round';
 }
 
-function seasonSummaryFor(season: SeasonResult): SeasonSummary {
-  const series = season.playoffRounds.filter((round): round is SeriesRound => round.type === 'series');
-  const playedPlayIn = season.playoffRounds.some((round) => round.type === 'playin');
+export function revealSeasonSummary(season: SeasonResult, revealed: number, finalPhase: boolean): SeasonSummary {
+  const rounds = rawRounds(season);
+  const series = rounds.filter((round): round is SeriesRound => round.type === 'series');
+  const playedPlayIn = rounds.some((round) => round.type === 'playin');
+  const revealedAll = finalPhase || (rounds.length > 0 && revealed >= rounds.length);
   const finishRank = finishRankOf({
     champion: season.champion,
     madePlayoffs: season.madePlayoffs,
@@ -195,12 +210,12 @@ function seasonSummaryFor(season: SeasonResult): SeasonSummary {
     rpg: season.rpg,
     apg: season.apg,
     madePlayoffs: season.madePlayoffs,
-    champion: season.champion,
+    champion: revealedAll ? season.champion : false,
     archetype: season.archetype ?? '',
     team: season.team,
     qualified: season.madePlayoffs,
     finishRank,
-    finishLabel: finishLabelFor(season, series, playedPlayIn),
+    finishLabel: revealedAll ? finishLabelFor(season, series, playedPlayIn) : null,
   };
 }
 
@@ -239,7 +254,7 @@ function buildView(row: ReadRow, now: number): LobbyView | null {
       summary: entry.summary
         ? { filled: entry.summary.filled, total: ATTRS_PER_BUILD, latest: entry.summary.latest }
         : null,
-      season: season ? seasonSummaryFor(season) : null,
+      season: season ? revealSeasonSummary(season, revealed, raw.phase === 'finished') : null,
       rounds,
       roundsTotal,
     };
@@ -373,14 +388,32 @@ from moved m
 `;
 
 const BARRIER_SQL = `
-update lobbies l set phase = 'barrier', version = l.version + 1, updated_at = now()
-where l.code = $1 and l.phase in ('building', 'season')
-  and not exists (
-    select 1 from participants p
-    where p.lobby_id = l.id and p.status <> 'left'
-      and p.last_seen > now() - make_interval(secs => $2::int)
-      and p.status not in ('qualified', 'eliminated', 'done')
-  )
+with waiting as (
+  select l.id as lobby_id,
+    (select p.id from participants p
+      where p.lobby_id = l.id and p.status <> 'left' and p.last_seen > now() - make_interval(secs => $2::int)
+      order by p.joined_at asc, p.seat asc limit 1) as participant_id,
+    (select p.name from participants p
+      where p.lobby_id = l.id and p.status <> 'left' and p.last_seen > now() - make_interval(secs => $2::int)
+      order by p.joined_at asc, p.seat asc limit 1) as name
+  from lobbies l
+  where l.code = $1 and l.phase in ('building', 'season')
+    and not exists (
+      select 1 from participants p
+      where p.lobby_id = l.id and p.status <> 'left'
+        and p.last_seen > now() - make_interval(secs => $2::int)
+        and p.status not in ('qualified', 'eliminated', 'done')
+    )
+), moved as (
+  update lobbies l set phase = 'barrier', version = l.version + 1, updated_at = now()
+  from waiting w
+  where l.id = w.lobby_id
+  returning l.id
+)
+insert into events (lobby_id, participant_id, kind, payload)
+select w.lobby_id, w.participant_id, 'barrier',
+  jsonb_build_object('name', w.name, 'detail', 'is waiting at the playoff barrier')
+from waiting w
 `;
 
 const FINISH_SQL = `
@@ -549,7 +582,7 @@ seated as (
 ),
 log as (
   insert into events (lobby_id, participant_id, kind, payload)
-  select l.id, s.id, 'joined', jsonb_build_object('seat', s.seat, 'name', $3::text)
+  select l.id, s.id, 'joined', jsonb_build_object('seat', s.seat, 'name', $3::text, 'detail', 'joined the lobby')
   from l, seated s
   where (select seat from mine) is null
 ),
@@ -647,7 +680,7 @@ export async function startLobby(input: {
 }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
-  const detail = `${input.settings.era === 'current' ? 'Current' : 'All-time'} · ${input.settings.positions.join('/')}`;
+  const detail = 'started the season';
   try {
     const rows = await sql.query<{
       lobby_id: string | null;
@@ -713,7 +746,7 @@ log as (
   select (select id from l), w.id, $7::text,
     jsonb_build_object('seat', w.seat, 'name', w.name, 'detail', $8::text)
   from written w
-  where $7::text <> 'building'
+  where $8::text is not null
 )
 select
   (select id from l) as lobby_id,
@@ -735,8 +768,8 @@ async function writeBuild(input: {
   const tokenHash = await hashSecret(input.secret);
   const detail =
     input.season && input.status !== 'building'
-      ? `${input.season.wins}-${input.season.losses} · #${input.season.seed} seed`
-      : null;
+      ? `finished ${input.season.wins}-${input.season.losses}, #${input.season.seed} seed`
+      : pickDetail(input.draft);
   const lobbyId = await sql.query<{ id: string }>('select id from lobbies where code = $1', [input.code]);
   const id = lobbyId[0]?.id;
   if (!id) return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -753,7 +786,7 @@ async function writeBuild(input: {
     JSON.stringify(input.draft),
     input.season ? JSON.stringify(input.season) : null,
     input.status,
-    input.status === 'building' ? 'building' : input.status,
+    input.status === 'building' ? 'pick' : input.status,
     detail,
   ]);
   const row = rows[0];
@@ -829,7 +862,7 @@ export async function submitBuild(input: {
 }
 
 const LEAVE_SQL = `
-with l as (select id from lobbies where code = $1),
+with l as (select id, phase from lobbies where code = $1),
 me as (select p.id, p.seat, p.name from participants p where p.lobby_id = (select id from l) and p.token_hash = $2),
 act as (
   insert into actions (participant_id, action_id, lobby_id)
@@ -837,30 +870,37 @@ act as (
   on conflict (participant_id, action_id) do nothing
   returning participant_id
 ),
-left_lobby as (
-  update participants p set status = 'left', last_seen = now()
-  from me, act
-  where p.id = me.id and act.participant_id = me.id and p.status <> 'left'
+removed as (
+  delete from participants p
+  using me, act, l
+  where p.id = me.id and act.participant_id = me.id and l.phase = 'lobby'
   returning p.id, p.seat, p.name
 ),
+marked as (
+  update participants p set status = 'left', last_seen = now()
+  from me, act, l
+  where p.id = me.id and act.participant_id = me.id and l.phase <> 'lobby' and p.status <> 'left'
+  returning p.id, p.seat, p.name
+),
+gone as (select * from removed union all select * from marked),
 bump as (
   update lobbies lob set version = lob.version + 1, updated_at = now()
-  from left_lobby where lob.id = (select id from l)
+  from gone where lob.id = (select id from l)
   returning lob.version
 ),
 log as (
   insert into events (lobby_id, participant_id, kind, payload)
   select (select id from l), x.id, 'left', jsonb_build_object('seat', x.seat, 'name', x.name, 'detail', 'left the lobby')
-  from left_lobby x
+  from gone x
 )
 select
   (select id from l) as lobby_id,
   (select id from me) as me_id,
-  (select count(*)::int from left_lobby) as left_count,
+  (select count(*)::int from gone) as left_count,
   exists (select 1 from act) as action_ok
 `;
 
-export async function leaveLobby(input: { code: string; secret: string; actionId: string }): Promise<Outcome> {
+export async function leaveLobby(input: { code: string; secret: string; actionId: string }): Promise<LeaveOutcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
   try {
@@ -876,7 +916,8 @@ export async function leaveLobby(input: { code: string; secret: string; actionId
       return { ok: false, status: 404, error: { error: 'You are not in this lobby.', reason: 'not_found' } };
     }
     await maintain(input.code);
-    return readLobby({ code: input.code, secret: input.secret });
+    const outcome = await readLobby({ code: input.code, secret: input.secret });
+    return outcome.ok ? outcome : { ok: true, view: null };
   } catch (error) {
     return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
   }

@@ -6,9 +6,17 @@ interface Props {
   phase: LobbyPhase;
   capacity: number;
   compact?: boolean;
+  myProgress?: number;
 }
 
 export function Roster(props: Props) {
+  const labelFor = (entry: ParticipantView): string => {
+    if (entry.isMe && props.myProgress !== undefined && props.myProgress > (entry.summary?.filled ?? 0)) {
+      return `${props.myProgress}/10`;
+    }
+    return shortStatus(entry, props.phase);
+  };
+
   if (props.compact) {
     return (
       <div class="roster-grid" data-testid="peer-strip">
@@ -24,7 +32,7 @@ export function Roster(props: Props) {
           >
             <span class="peer-seat">{entry.seat}</span>
             <span class="peer-name">{entry.name}</span>
-            <span class="peer-state">{shortStatus(entry, props.phase)}</span>
+            <span class="peer-state">{labelFor(entry)}</span>
           </div>
         ))}
       </div>

@@ -44,7 +44,7 @@ export const SeasonSummarySchema = v.object({
   team: v.string(),
   qualified: v.boolean(),
   finishRank: v.number(),
-  finishLabel: v.string(),
+  finishLabel: v.nullable(v.string()),
 });
 
 export const RoundViewSchema = v.object({
@@ -97,7 +97,7 @@ export const StandingEntrySchema = v.object({
   isMe: v.boolean(),
   record: v.string(),
   ovr: v.number(),
-  finishLabel: v.string(),
+  finishLabel: v.nullable(v.string()),
 });
 
 export const LobbyViewSchema = v.object({

@@ -58,7 +58,7 @@ export interface SeasonSummary {
   team: string;
   qualified: boolean;
   finishRank: number;
-  finishLabel: string;
+  finishLabel: string | null;
 }
 
 export interface RoundView {
@@ -101,7 +101,7 @@ export interface StandingEntry {
   isMe: boolean;
   record: string;
   ovr: number;
-  finishLabel: string;
+  finishLabel: string | null;
 }
 
 export interface LobbyView {

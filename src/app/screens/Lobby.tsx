@@ -5,7 +5,7 @@ import type { Position } from '../../shared/engine/types';
 import { isBuildComplete, type RunState } from '../../shared/run';
 import { TopBar } from '../components';
 import { draftFromRun, latestPick, runFromDraft } from '../mp/draft';
-import { awaitingCount, phaseLabel, readyCount } from '../mp/format';
+import { activityLine, awaitingCount, phaseLabel, readyLabel } from '../mp/format';
 import type { MpSession } from '../mp/session';
 import { clearMpSession } from '../mp/session';
 import { leaveLobbyRequest, releaseRequest, startLobbyRequest, submitBuildRequest, syncDraftRequest } from '../mp/api';
@@ -85,7 +85,7 @@ export function Lobby(props: Props) {
       void act((code, secret) => syncDraftRequest(code, secret, draftFromRun(run, latestPick(run)))).catch(() => {
         return undefined;
       });
-    }, 1500);
+    }, 400);
     return () => window.clearTimeout(handle);
   }, [run, screen, act]);
 
@@ -147,7 +147,7 @@ export function Lobby(props: Props) {
   const exit = async (leave: boolean) => {
     if (leave) {
       try {
-        await act((code, secret) => leaveLobbyRequest(code, secret));
+        await leaveLobbyRequest(session.code, session.secret);
       } catch {
         setNotice(null);
       }
@@ -207,7 +207,21 @@ export function Lobby(props: Props) {
 
   const me = view.me;
   const roster = <Roster participants={view.participants} phase={view.phase} capacity={view.capacity} />;
-  const peerStrip = <Roster participants={view.participants} phase={view.phase} capacity={view.capacity} compact />;
+  const peerStrip = (
+    <>
+      <Roster
+        participants={view.participants}
+        phase={view.phase}
+        capacity={view.capacity}
+        compact
+        myProgress={run ? Object.keys(run.picks).length : undefined}
+      />
+      <div class="ticker" data-testid="activity-ticker">
+        <span class="ticker-dot" />
+        {activityLine(view.events[0])}
+      </div>
+    </>
+  );
   const fullRoster = view.phase === 'lobby' || view.phase === 'building' || view.phase === 'season';
 
   if (screen === 'build' && run) {
@@ -259,6 +273,7 @@ export function Lobby(props: Props) {
               <div class="code" data-testid="lobby-code">
                 {view.code}
               </div>
+              <div class="tiny muted">No moments · the season runs straight through</div>
             </div>
             <div class="tiny muted" style={{ textAlign: 'right' }}>
               {view.seatsTaken}/{view.capacity} in
@@ -272,6 +287,13 @@ export function Lobby(props: Props) {
         ) : null}
 
         {fullRoster ? roster : peerStrip}
+
+        {fullRoster ? (
+          <div class="ticker" data-testid="activity-ticker">
+            <span class="ticker-dot" />
+            {activityLine(view.events[0])}
+          </div>
+        ) : null}
 
         {phase === 'lobby' ? (
           me.isHost ? (
@@ -306,7 +328,6 @@ export function Lobby(props: Props) {
                   Bigs
                 </button>
               </div>
-              <span class="tiny muted">Moments are off — the season runs straight through</span>
             </div>
           ) : (
             <div class="card">
@@ -341,7 +362,8 @@ export function Lobby(props: Props) {
           <div class="card" data-testid="my-result">
             <div class="tiny muted">Your season · no moments</div>
             <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }}>
-              {me.season.finishLabel} · {me.season.wins}-{me.season.losses} · #{me.season.seed}
+              {me.season.finishLabel ?? (me.season.qualified ? 'In the playoffs' : 'Out')} · {me.season.wins}-
+              {me.season.losses} · #{me.season.seed}
               {me.season.qualified ? ' · in the playoffs' : ' · out'}
             </div>
           </div>
@@ -365,7 +387,7 @@ export function Lobby(props: Props) {
           <div class="card">
             <div class="tiny muted">{phase === 'barrier' ? 'Barrier' : 'Barrier released'}</div>
             <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }} data-testid="barrier-state">
-              {readyCount(view.participants)}/{view.seatsTaken} ready
+              {readyLabel(view.participants)}
               {awayWaiting ? ' · someone is away' : phase === 'barrier' ? '' : ' · playoffs started together'}
             </div>
             {phase === 'barrier' ? (
@@ -391,7 +413,9 @@ export function Lobby(props: Props) {
                 Round {Math.min(view.roundsRevealed, revealTotal)} of {revealTotal} · reveal every {view.revealSeconds}s
               </div>
               <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px', marginBottom: '6px' }}>
-                {me.season ? `${me.season.finishLabel} · ${me.season.wins}-${me.season.losses}` : 'Spectating'}
+                {me.season
+                  ? `${me.season.finishLabel ?? 'In the playoffs'} · ${me.season.wins}-${me.season.losses}`
+                  : 'Spectating'}
               </div>
               {me.rounds.length ? (
                 <div class="bracket">
