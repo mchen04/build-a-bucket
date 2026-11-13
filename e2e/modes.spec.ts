@@ -160,13 +160,24 @@ test('daily challenge plays to its end state, resumes after reload and locks the
   await page.getByTestId('home-daily').click();
   await expect(page.getByTestId('daily-result')).toBeVisible();
   await expect(page.getByTestId('daily-result')).toContainText('OVR');
+  await expect(page.getByTestId('daily-build')).toBeVisible();
+  await expect(page.getByTestId('daily-run')).toBeVisible();
+  await expect(page.getByTestId('daily-awards')).toBeVisible();
+  await expect(page.getByTestId('daily-view')).toBeVisible();
   await expect(page.getByTestId('daily-play')).toHaveCount(0);
   await expectNoVerticalOverflow(page, 'daily locked');
+  await shot(page, 'daily-result-full');
+  await page.getByTestId('daily-view').click();
+  await expect(page.locator('[data-testid="ovr"]')).toBeVisible();
   await page.reload();
   await expect(page.getByTestId('home-daily')).toContainText('OVR');
   await page.getByTestId('home-daily').click();
   await expect(page.getByTestId('daily-result')).toContainText('OVR');
+  await expect(page.getByTestId('daily-build')).toBeVisible();
+  await expect(page.getByTestId('daily-run')).toBeVisible();
+  await expect(page.getByTestId('daily-view')).toBeVisible();
   await expectNoVerticalOverflow(page, 'daily locked after reload');
+  await shot(page, 'daily-result-reload');
 });
 
 test('salary cap plays the daily grid, locks it and keeps an infinite run local', async ({ page }) => {
@@ -354,13 +365,44 @@ test('squad builder fills five slots, simulates the season and survives a reload
   await shot(page, 'squad-ready');
 
   await page.getByTestId('squad-team').locator('.team-btn').first().click();
+  await page.getByTestId('squad-review').click();
+  await expect(page.getByTestId('squad-ready')).toBeVisible();
+  await expect(page.getByTestId('squad-lineup').locator('.lineup-row')).toHaveCount(5);
+  await expect(page.getByTestId('squad-ready')).not.toContainText('CHAMPIONS');
+  await expectNoVerticalOverflow(page, 'squad review');
+  await shot(page, 'squad-review');
   await page.getByTestId('squad-simulate').click();
+  await expect(page.getByTestId('squad-season')).toBeVisible();
+  await expect(page.getByTestId('squad-season')).not.toContainText('CHAMPIONS');
+  await shot(page, 'squad-season');
+  await page.getByTestId('squad-season-skip').click();
+  await expect(page.getByTestId('squad-standings')).toBeVisible();
+  await expect(page.getByTestId('squad-standings')).not.toContainText('CHAMPIONS');
+  await expect(page.getByTestId('squad-standings')).not.toContainText('Missed playoffs');
+  await expectNoVerticalOverflow(page, 'squad standings');
+  await shot(page, 'squad-standings');
+  const standingsNext = page.getByTestId('squad-standings-next');
+  if ((await standingsNext.textContent())?.includes('Playoffs')) {
+    await standingsNext.click();
+    await expect(page.getByTestId('squad-playoffs')).toBeVisible();
+    await expect(page.getByTestId('squad-playoffs')).not.toContainText('CHAMPIONS');
+    await shot(page, 'squad-playoffs');
+    await page.getByTestId('squad-playoffs-skip').click();
+    await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
+    await page.getByTestId('squad-recap-next').click();
+  } else {
+    await standingsNext.click();
+  }
   await expect(page.getByTestId('squad-result')).toBeVisible();
   await expect(page.getByTestId('squad-result')).toContainText('SEED');
+  await expect(page.getByTestId('squad-again')).toHaveText('Another season');
+  await expect(page.getByTestId('squad-new')).toHaveText('New squad');
   await expectNoVerticalOverflow(page, 'squad result');
   await shot(page, 'squad-result');
 
   await page.reload();
   await page.getByTestId('home-squad').click();
   await expect(page.getByTestId('squad-result')).toContainText('SEED');
+  await expect(page.getByTestId('squad-again')).toBeVisible();
+  await expect(page.getByTestId('squad-new')).toBeVisible();
 });
