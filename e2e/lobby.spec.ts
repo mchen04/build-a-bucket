@@ -252,8 +252,8 @@ test('drives an eight player lobby from invite code to final standings', async (
     }
     expect(totals.size, 'every page reads the same lobby round count').toBe(1);
     const lobbyRounds = [...totals][0] as number;
-    expect(lobbyRounds, 'the lobby has more than one round to reveal').toBeGreaterThanOrEqual(2);
-    const clockRounds = Math.min(lobbyRounds, MAX_ROUNDS - 1);
+    expect(lobbyRounds, 'the lobby countdown is the fixed playoff length').toBe(MAX_ROUNDS);
+    const clockRounds = MAX_ROUNDS - 1;
     firstSeen.forEach((timeline, index) => {
       expect([...timeline.keys()].sort((a, b) => a - b), `page ${index} watched rounds 1..${clockRounds} in order`).toEqual(
         Array.from({ length: clockRounds }, (_, step) => step + 1),

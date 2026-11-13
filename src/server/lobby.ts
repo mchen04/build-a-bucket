@@ -187,7 +187,7 @@ function buildView(row: ReadRow, now: number): LobbyView | null {
   const startedAt = raw.playoffs_started_at ? Date.parse(raw.playoffs_started_at) : null;
   const revealed = revealedCount(startedAt, settings.revealSeconds, now);
   const byId = new Map(row.participants.map((entry) => [entry.id, entry]));
-  const roundsTotal = row.participants.reduce((max, entry) => Math.max(max, rawRounds(parseSeason(entry.season)).length), 0);
+  const roundsTotal = MAX_ROUNDS;
   const hostId = raw.host_participant;
   const participants: ParticipantView[] = row.participants.map((entry) => {
     const season = parseSeason(entry.season);

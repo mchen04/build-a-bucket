@@ -17,7 +17,7 @@ import { simulateSeason } from '../src/shared/engine/season';
 import type { Build, Era, Pick, Position, SeasonResult } from '../src/shared/engine/types';
 import { generateSecret, newActionId } from '../src/shared/mp/codes';
 import { progressToken } from '../src/shared/mp/progress';
-import type { BuildDraft, LobbyDelta, LobbySettings, LobbyView } from '../src/shared/mp/types';
+import { MAX_ROUNDS, type BuildDraft, type LobbyDelta, type LobbySettings, type LobbyView } from '../src/shared/mp/types';
 
 const BASE = 'http://localhost:4173/api';
 const SETTINGS: LobbySettings = { era: 'current', positions: ['guard', 'big'], revealSeconds: 2 };
@@ -863,6 +863,41 @@ describeDb('lobby lifecycle', () => {
       expect(entry.season.finishLabel).not.toBeNull();
       if (entry.season.champion) expect(entry.season.finishLabel).toBe('Champion');
     }
+  });
+
+  it('keeps the playoff countdown fixed instead of the deepest run', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'high'))).status).toBe(200);
+    await sleep(HOLD_WAIT);
+    const released = await release(lobby.code, lobby.host.secret);
+    expect(released.status).toBe(200);
+    const opened = (await read<{ lobby: LobbyView }>(released)).lobby;
+    expect(opened.phase).toBe('playoffs');
+    expect(opened.roundsTotal).toBe(MAX_ROUNDS);
+
+    await db().query(
+      `update participants p
+       set season = jsonb_set(p.season, '{playoffRounds}', $2::jsonb)
+       from lobbies l where l.id = p.lobby_id and l.code = $1`,
+      [
+        lobby.code,
+        JSON.stringify([
+          { type: 'series', name: 'First Round', opponent: { short: 'BOS' }, won: false, wins: 0, losses: 4 },
+        ]),
+      ],
+    );
+    const shortened = await view(lobby.code, lobby.host.secret);
+    expect(shortened.roundsTotal).toBe(MAX_ROUNDS);
+    const totals = await db().query<{ total: string }>(
+      `select coalesce(jsonb_array_length(p.season->'playoffRounds'), 0) as total
+       from participants p join lobbies l on l.id = p.lobby_id
+       where l.code = $1 and p.status <> 'left'`,
+      [lobby.code],
+    );
+    expect(Math.max(...totals.map((row) => Number(row.total)))).toBe(1);
   });
 
   it('carries every revealed round to a polling client', async () => {
