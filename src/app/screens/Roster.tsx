@@ -11,8 +11,8 @@ interface Props {
 
 export function Roster(props: Props) {
   const labelFor = (entry: ParticipantView): string => {
-    if (entry.isMe && props.myProgress !== undefined && props.myProgress > (entry.summary?.filled ?? 0)) {
-      return `${props.myProgress}/10`;
+    if (entry.isMe && props.myProgress !== undefined && entry.summary && props.myProgress > entry.summary.filled) {
+      return `${props.myProgress}/${entry.summary.total}`;
     }
     return shortStatus(entry, props.phase);
   };
@@ -52,6 +52,7 @@ export function Roster(props: Props) {
           <span class="seat">{entry.seat}</span>
           <span class="who">
             {entry.name}
+            {entry.isMe ? <span class="roster-tag">YOU</span> : null}
             {entry.isHost ? <span class="roster-tag">HOST</span> : null}
             {entry.away && entry.status !== 'left' ? <span class="roster-tag away">AWAY</span> : null}
           </span>

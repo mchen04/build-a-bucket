@@ -100,7 +100,7 @@ function perFor(line: PerLine): number {
   return uPer(line) * (15 / leagueUPer);
 }
 
-function teamStrength(short: string, table: TeamTable): number {
+export function teamStrength(short: string, table: TeamTable): number {
   const row = table[short] ?? { off: 68, def: 65 };
   const v = (row.off + row.def) / 200;
   return clamp(0.2 + ((v - 0.59) / 0.24) * 0.57, 0.13, 0.77);
@@ -472,7 +472,7 @@ function teamPower(team: string, era: Era, mods: TeamMods = NO_MODS): number {
   return (row.off + mods.off * 3.3 + row.def + mods.def * 3.3) / 200;
 }
 
-function winProbFor(ovr: number, team: string, era: Era, mods: TeamMods = NO_MODS): number {
+export function winProbFor(ovr: number, team: string, era: Era, mods: TeamMods = NO_MODS): number {
   const allTime = era === 'alltime';
   const classic = !allTime;
   const base = clamp(0.2 + ((teamPower(team, era, mods) - 0.59) / 0.24) * 0.57, 0.13, 0.77);

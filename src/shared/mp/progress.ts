@@ -7,7 +7,8 @@ export function progressToken(view: Pick<LobbyView, 'events' | 'participants'>):
     .map((entry) => entry.seat)
     .join(',');
   const filled = view.participants.reduce((count, entry) => count + (entry.summary?.filled ?? 0), 0);
-  return `${latest}:${away}:${filled}`;
+  const teams = view.participants.map((entry) => `${entry.seat}:${entry.team ?? ''}:${entry.ready ? 1 : 0}`).join(',');
+  return `${latest}:${away}:${filled}:${teams}`;
 }
 
 export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
@@ -15,7 +16,7 @@ export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
   const participants: ParticipantView[] = view.participants.map((entry) => {
     const next = progress.get(entry.seat);
     if (!next) return entry;
-    return { ...entry, status: next.status, away: next.away, summary: next.summary };
+    return { ...entry, status: next.status, away: next.away, summary: next.summary, team: next.team, ready: next.ready };
   });
   return {
     ...view,

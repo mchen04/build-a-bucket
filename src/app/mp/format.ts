@@ -1,84 +1,54 @@
-import type { EventView, LobbyPhase, ParticipantStatus, ParticipantView } from '../../shared/mp/types';
+import type { EventView, LobbyPhase, ParticipantView, ReadyView } from '../../shared/mp/types';
 
 export function phaseLabel(phase: LobbyPhase): string {
   switch (phase) {
     case 'lobby':
       return 'In the lobby';
+    case 'draw':
+      return 'Team draw';
     case 'building':
       return 'Building';
+    case 'preview':
+      return 'Team preview';
     case 'season':
       return 'Season running';
-    case 'barrier':
-      return 'Barrier';
+    case 'awards':
+      return 'Awards';
+    case 'playin':
+      return 'Play-In';
     case 'playoffs':
       return 'Playoffs';
-    case 'finished':
-      return 'Finished';
+    case 'recap':
+      return 'Recap';
   }
-}
-
-function hasResult(status: ParticipantStatus): boolean {
-  return status === 'qualified' || status === 'eliminated' || status === 'playoffs' || status === 'done';
-}
-
-function isPresent(participant: ParticipantView): boolean {
-  return participant.status !== 'left' && !participant.away;
 }
 
 export function statusLine(participant: ParticipantView, phase: LobbyPhase): string {
   if (participant.status === 'left') return 'left';
   if (participant.away) return 'away';
-  const season = participant.season;
-  switch (participant.status) {
-    case 'joined':
-      return phase === 'lobby' ? 'ready' : 'building';
-    case 'building': {
-      const filled = participant.summary?.filled ?? 0;
-      const latest = participant.summary?.latest;
-      return latest ? `${filled}/10 · ${latest}` : `${filled}/10`;
-    }
-    case 'qualified':
-    case 'eliminated':
-      if (!season) return 'simming…';
-      return `${season.wins}-${season.losses} · #${season.seed}${season.qualified ? ' · in' : ' · out'}`;
-    case 'playoffs': {
-      const last = participant.rounds[participant.rounds.length - 1];
-      if (!last) return 'in the playoffs';
-      return `${last.name}: ${last.wins}-${last.losses}`;
-    }
-    case 'done':
-      return season?.finishLabel ?? (season?.qualified ? 'in the playoffs' : 'out');
+  if (participant.season) {
+    const record = `${participant.season.wins}-${participant.season.losses}`;
+    if (participant.season.finish) return `${participant.season.finish} · ${record}`;
+    if (participant.season.seed) return `${record} · #${participant.season.seed}`;
+    return record;
   }
+  if (participant.team) return participant.team;
+  if (participant.status === 'ready') return 'ready';
+  if (participant.summary) return `${participant.summary.filled}/${participant.summary.total}`;
+  return phase === 'lobby' ? 'ready' : '—';
 }
 
 export function shortStatus(participant: ParticipantView, phase: LobbyPhase): string {
   if (participant.status === 'left') return 'left';
   if (participant.away) return 'away';
-  switch (participant.status) {
-    case 'joined':
-      return phase === 'lobby' ? 'ready' : '—';
-    case 'building':
-      return `${participant.summary?.filled ?? 0}/10`;
-    case 'qualified':
-      return 'in';
-    case 'eliminated':
-      return 'out';
-    case 'playoffs':
-      return `R${participant.rounds.length}`;
-    case 'done':
-      return participant.season?.champion ? 'champ' : 'out';
-  }
+  if (participant.team) return participant.team;
+  if (participant.status === 'ready') return 'ready';
+  if (participant.summary) return `${participant.summary.filled}/${participant.summary.total}`;
+  return phase === 'lobby' ? 'ready' : '—';
 }
 
-export function readyLabel(participants: readonly ParticipantView[]): string {
-  const present = participants.filter(isPresent);
-  if (present.length === 0) return 'waiting for players';
-  const ready = present.filter((entry) => hasResult(entry.status));
-  return `${ready.length}/${present.length} ready`;
-}
-
-export function awaitingCount(participants: readonly ParticipantView[]): number {
-  return participants.filter((entry) => isPresent(entry) && !hasResult(entry.status)).length;
+export function readyLabel(ready: ReadyView): string {
+  return `${ready.ready}/${ready.present} ready`;
 }
 
 function defaultDetail(kind: string): string {
@@ -86,13 +56,19 @@ function defaultDetail(kind: string): string {
     case 'joined':
       return 'joined the lobby';
     case 'started':
-      return 'started the season';
-    case 'pick':
-      return 'made a pick';
-    case 'barrier':
-      return 'is waiting at the playoff barrier';
-    case 'playoffs_started':
-      return 'the playoffs have started';
+      return 'started the league';
+    case 'draw':
+      return 'drew a team';
+    case 'reroll':
+      return 'rerolled a team';
+    case 'locked':
+      return 'locked the teams';
+    case 'submitted':
+      return 'submitted a build';
+    case 'checkpoint':
+      return 'reached a checkpoint';
+    case 'rematch':
+      return 'started a rematch';
     case 'host_changed':
       return 'is the new host';
     case 'left':

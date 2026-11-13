@@ -6,10 +6,10 @@ import {
   EAST,
   EAST_SET,
   WEST,
-} from './rules';
-import { mulberry32, seededRng, type Rng } from './rng';
-import { ovrFromValues } from './ovr';
-import type { Player, Position } from './types';
+} from './rules.js';
+import { mulberry32, seededRng, type Rng } from './rng.js';
+import { ovrFromValues } from './ovr.js';
+import type { Player, Position } from './types.js';
 
 export interface SquadSlot {
   id: string;

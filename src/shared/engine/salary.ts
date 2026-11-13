@@ -1,5 +1,5 @@
-import type { Player, Position } from './types';
-import { hashRng, teamPickHash, type Rng } from './rng';
+import type { Player, Position } from './types.js';
+import { hashRng, teamPickHash, type Rng } from './rng.js';
 
 export interface SalColumn {
   key: string;

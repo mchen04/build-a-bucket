@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { Catalog } from '../../shared/data/loader';
 import { generateSecret, normalizeCode } from '../../shared/mp/codes';
-import { DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../../shared/mp/types';
+import type { LobbySettings } from '../../shared/mp/types';
 import { createLobbyRequest, joinLobbyRequest } from '../mp/api';
 import { saveMpSession, type MpSession } from '../mp/session';
 import { Lobby } from '../screens/Lobby';
@@ -10,11 +10,7 @@ export type MpEntry =
   | { kind: 'create' | 'join'; name: string; code: string }
   | { kind: 'resume'; session: MpSession };
 
-const MP_DEFAULT_SETTINGS: LobbySettings = {
-  era: 'current',
-  positions: ['guard', 'big'],
-  revealSeconds: DEFAULT_REVEAL_SECONDS,
-};
+const MP_DEFAULT_SETTINGS: LobbySettings = { era: 'current', mode: 'normal' };
 
 interface Props {
   catalog: Catalog;

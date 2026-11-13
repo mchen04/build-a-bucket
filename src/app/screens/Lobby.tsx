@@ -1,19 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { Catalog } from '../../shared/data/loader';
-import { BARRIER_HOLD_SECONDS, DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../../shared/mp/types';
 import type { Position } from '../../shared/engine/types';
-import { isBuildComplete, type RunState } from '../../shared/run';
+import type {
+  LobbySettings,
+  LobbyView,
+  NormalBuild,
+  SalaryBuild,
+  SalaryCardPick,
+  SquadBuild,
+  SquadPlayerBuild,
+} from '../../shared/mp/types';
+import { createRun, isBuildComplete, type RunState } from '../../shared/run';
 import { TopBar } from '../components';
-import { draftFromRun, latestPick, runFromDraft } from '../mp/draft';
+import {
+  advanceRequest,
+  drawRequest,
+  leaveLobbyRequest,
+  lockRequest,
+  readyRequest,
+  rematchRequest,
+  rerollRequest,
+  startLobbyRequest,
+  submitBuildRequest,
+} from '../mp/api';
 import { clearLocalDraft, readLocalDraft, saveLocalDraft } from '../mp/draftStore';
-import { activityLine, awaitingCount, phaseLabel, readyLabel } from '../mp/format';
-import type { MpSession } from '../mp/session';
-import { clearMpSession } from '../mp/session';
-import { MpError, leaveLobbyRequest, releaseRequest, startLobbyRequest, submitBuildRequest, syncDraftRequest } from '../mp/api';
+import { activityLine, phaseLabel, readyLabel } from '../mp/format';
+import { clearMpSession, type MpSession } from '../mp/session';
 import { useLobby } from '../mp/useLobby';
 import { Builder } from './Builder';
+import { LeaguePanel } from './LeaguePanel';
+import { LobbySalary } from './LobbySalary';
+import { LobbySquad } from './LobbySquad';
 import { Roster } from './Roster';
-import { TeamSpin } from './TeamSpin';
 
 interface Props {
   session: MpSession;
@@ -21,18 +39,10 @@ interface Props {
   onExit: (message: string | null) => void;
 }
 
-const EMPTY_SETTINGS: LobbySettings = {
-  era: 'current',
-  positions: ['guard', 'big'],
-  revealSeconds: DEFAULT_REVEAL_SECONDS,
-};
+const EMPTY_SETTINGS: LobbySettings = { era: 'current', mode: 'normal' };
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong.';
-}
-
-function samePositions(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((value) => b.includes(value));
 }
 
 export function Lobby(props: Props) {
@@ -47,20 +57,21 @@ export function Lobby(props: Props) {
   const { view, status, error, act, refresh } = useLobby(session, onGone);
   const [run, setRun] = useState<RunState | null>(null);
   const [position, setPosition] = useState<Position>('guard');
-  const [screen, setScreen] = useState<'lobby' | 'build'>('lobby');
+  const [screen, setScreen] = useState<'lobby' | 'build' | 'salary' | 'squad'>('lobby');
   const [settings, setSettings] = useState<LobbySettings>(EMPTY_SETTINGS);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const seeded = useRef(false);
-  const submitted = useRef(false);
-  const restoredSync = useRef(false);
-  const releasedAt = useRef(0);
-  const updateRun = useCallback((next: RunState | null) => {
-    setRun(next);
-    if (next) saveLocalDraft(session.code, next);
-    else clearLocalDraft(session.code);
-  }, [session.code]);
+
+  const updateRun = useCallback(
+    (next: RunState | null) => {
+      setRun(next);
+      if (next) saveLocalDraft(session.code, next);
+      else clearLocalDraft(session.code);
+    },
+    [session.code],
+  );
 
   useEffect(() => {
     const handle = window.setInterval(() => setNow(Date.now()), 1000);
@@ -71,98 +82,30 @@ export function Lobby(props: Props) {
     if (!view || seeded.current) return;
     seeded.current = true;
     setSettings(view.settings);
-    setPosition(view.settings.positions[0] ?? 'guard');
-  }, [view]);
-
-  useEffect(() => {
-    if (!view || run) return;
-    if (view.phase === 'lobby') return;
-    if (view.phase === 'playoffs' || view.phase === 'finished') {
-      clearLocalDraft(view.code);
-      return;
-    }
-    if (view.me.season) return;
-    const local = readLocalDraft(view.code);
-    if (local) {
-      setRun(local);
-      setPosition(local.position);
-      const localPicks = Object.keys(local.picks).length;
-      const serverPicks = view.me.build ? Object.keys(view.me.build.picks).length : 0;
-      if (!restoredSync.current && localPicks > serverPicks) {
-        restoredSync.current = true;
-        void act((code, secret) => syncDraftRequest(code, secret, draftFromRun(local, latestPick(local)))).catch(() => {
-          return undefined;
-        });
-      }
-      return;
-    }
-    const stored = view.me.build;
-    if (!stored) return;
-    setRun(runFromDraft(stored, `${view.code}:${view.me.seat}`));
-    setPosition(stored.position);
-  }, [view, run, act]);
-
-  useEffect(() => {
-    submitted.current = Boolean(view?.me.season);
+    setPosition('guard');
   }, [view]);
 
   useEffect(() => {
     setRun(null);
     setScreen('lobby');
-    restoredSync.current = false;
   }, [session.code]);
 
   useEffect(() => {
-    const filled = run ? Object.keys(run.picks).length : 0;
-    if (!run || screen !== 'build' || submitted.current || filled === 0) return undefined;
-    const handle = window.setTimeout(() => {
-      void act((code, secret) => syncDraftRequest(code, secret, draftFromRun(run, latestPick(run)))).catch(() => {
-        return undefined;
-      });
-    }, 400);
-    return () => window.clearTimeout(handle);
-  }, [run, screen, act]);
-
-  const phase = view?.phase ?? 'lobby';
-  const awaiting = view ? awaitingCount(view.participants) : 0;
-  const awayWaiting = view
-    ? view.participants.some(
-        (entry) =>
-          entry.status !== 'left' &&
-          entry.away &&
-          entry.status !== 'qualified' &&
-          entry.status !== 'eliminated' &&
-          entry.status !== 'done',
-      )
-    : false;
+    if (view?.phase === 'draw') updateRun(null);
+  }, [view?.phase, updateRun]);
 
   useEffect(() => {
     if (!view) return;
-    if (view.phase !== 'playoffs' && view.phase !== 'finished') return;
-    if (screen !== 'build') return;
-    if (busy) return;
-    updateRun(null);
-    setScreen('lobby');
-    setNotice('The playoffs have already started.');
-  }, [view?.phase, screen, busy, updateRun]);
+    if (view.phase !== 'building' || view.me.status === 'ready') {
+      if (screen !== 'lobby') setScreen('lobby');
+    }
+  }, [view?.phase, view?.me.status, screen]);
 
-  useEffect(() => {
-    if (!view || view.phase !== 'barrier' || awaiting > 0) return undefined;
-    let handle = 0;
-    const attempt = () => {
-      releasedAt.current = Date.now();
-      void act((code, secret) => releaseRequest(code, secret, false)).catch(() => undefined);
-      handle = window.setTimeout(attempt, BARRIER_HOLD_SECONDS * 1000);
-    };
-    handle = window.setTimeout(attempt, Math.max(0, releasedAt.current + BARRIER_HOLD_SECONDS * 1000 - Date.now()));
-    return () => window.clearTimeout(handle);
-  }, [view?.version, view?.phase, awaiting, act]);
-
-  const start = async () => {
+  const runAction = async (action: (code: string, secret: string) => Promise<LobbyView>) => {
     setBusy(true);
     setNotice(null);
     try {
-      await act((code, secret) => startLobbyRequest(code, secret, settings));
+      await act(action);
     } catch (caught) {
       setNotice(messageOf(caught));
     } finally {
@@ -170,30 +113,62 @@ export function Lobby(props: Props) {
     }
   };
 
-  const submit = async () => {
+  const start = () => runAction((code, secret) => startLobbyRequest(code, secret, settings));
+  const draw = () => runAction((code, secret) => drawRequest(code, secret));
+  const reroll = () => runAction((code, secret) => rerollRequest(code, secret));
+  const lock = () => runAction((code, secret) => lockRequest(code, secret));
+  const ready = () => (view ? runAction((code, secret) => readyRequest(code, secret, view.stage)) : undefined);
+  const advance = () => (view ? runAction((code, secret) => advanceRequest(code, secret, view.stage)) : undefined);
+  const rematch = () => {
+    updateRun(null);
+    return runAction((code, secret) => rematchRequest(code, secret));
+  };
+
+  const openNormal = () => {
+    if (!view) return;
+    const local = readLocalDraft(view.code);
+    if (local && local.era === view.settings.era) setRun(local);
+    else updateRun({ ...createRun(`${view.code}:${view.me.seat}:${view.settings.era}`, position, view.settings.era), team: view.me.team });
+    setScreen('build');
+  };
+
+  const submitNormal = async () => {
     if (!run) return;
+    const build: NormalBuild = { kind: 'normal', position: run.position, era: run.era, picks: run.picks };
     setBusy(true);
     setNotice(null);
     try {
-      await act((code, secret) => submitBuildRequest(code, secret, draftFromRun(run, latestPick(run))));
+      await act((code, secret) => submitBuildRequest(code, secret, build));
       updateRun(null);
       setScreen('lobby');
-      setNotice(null);
     } catch (caught) {
       setNotice(messageOf(caught));
-      if (caught instanceof MpError && caught.status === 409) {
-        updateRun(null);
-        setScreen('lobby');
-      }
     } finally {
       setBusy(false);
     }
   };
 
-  const forceRelease = async () => {
+  const submitSalary = async (cards: SalaryCardPick[]) => {
+    const build: SalaryBuild = { kind: 'salary', position: cards[4]?.posGroup ?? 'guard', cards };
     setBusy(true);
+    setNotice(null);
     try {
-      await act((code, secret) => releaseRequest(code, secret, true));
+      await act((code, secret) => submitBuildRequest(code, secret, build));
+      setScreen('lobby');
+    } catch (caught) {
+      setNotice(messageOf(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitSquad = async (players: SquadPlayerBuild[]) => {
+    const build: SquadBuild = { kind: 'squad', players };
+    setBusy(true);
+    setNotice(null);
+    try {
+      await act((code, secret) => submitBuildRequest(code, secret, build));
+      setScreen('lobby');
     } catch (caught) {
       setNotice(messageOf(caught));
     } finally {
@@ -223,29 +198,6 @@ export function Lobby(props: Props) {
     }
   };
 
-  const openBuilder = () => {
-    if (!view) return;
-    if (!run) {
-      updateRun(
-        runFromDraft(
-          {
-            position,
-            era: view.settings.era,
-            picks: {},
-            spinIndex: 0,
-            teamRespinUsed: false,
-            playerRespinUsed: false,
-            current: null,
-            team: null,
-            latest: null,
-          },
-          `${view.code}:${view.me.seat}`,
-        ),
-      );
-    }
-    setScreen('build');
-  };
-
   if (!view) {
     return (
       <div class="screen">
@@ -264,51 +216,63 @@ export function Lobby(props: Props) {
   }
 
   const me = view.me;
-  const roster = <Roster participants={view.participants} phase={view.phase} capacity={view.capacity} />;
   const peerStrip = (
     <>
-      <Roster
-        participants={view.participants}
-        phase={view.phase}
-        capacity={view.capacity}
-        compact
-        myProgress={run ? Object.keys(run.picks).length : undefined}
-      />
+      <Roster participants={view.participants} phase={view.phase} capacity={view.capacity} compact />
       <div class="ticker" data-testid="activity-ticker">
         <span class="ticker-dot" />
         {activityLine(view.events[0])}
       </div>
     </>
   );
-  const fullRoster = view.phase === 'lobby' || view.phase === 'building' || view.phase === 'season';
 
-  if (screen === 'build' && run && phase !== 'playoffs' && phase !== 'finished') {
-    if (run.screen === 'team') {
-      return (
-        <TeamSpin
-          run={run}
-          catalog={catalog}
-          onChange={updateRun}
-          onSimulate={() => void submit()}
-          onBack={() => updateRun({ ...run, screen: 'builder' })}
-          simulateLabel={busy ? 'Submitting…' : 'Submit build'}
-          simulateDisabled={busy}
-          header={peerStrip}
-        />
-      );
-    }
-    return <Builder run={run} catalog={catalog} onChange={updateRun} onBack={() => setScreen('lobby')} header={peerStrip} />;
+  if (screen === 'build' && run && view.phase === 'building' && me.status !== 'ready') {
+    return (
+      <Builder
+        run={run}
+        catalog={catalog}
+        header={peerStrip}
+        onChange={updateRun}
+        onBack={() => setScreen('lobby')}
+        completeLabel={busy ? 'Submitting…' : 'Submit build'}
+        onComplete={() => void submitNormal()}
+      />
+    );
   }
 
-  const revealTotal = view.roundsTotal || 1;
+  if (screen === 'salary' && view.salaryBoard && view.salaryBudget !== null && view.phase === 'building' && me.status !== 'ready') {
+    return (
+      <LobbySalary
+        board={view.salaryBoard}
+        budget={view.salaryBudget}
+        busy={busy}
+        header={peerStrip}
+        onBack={() => setScreen('lobby')}
+        onSubmit={(cards) => void submitSalary(cards)}
+      />
+    );
+  }
+
+  if (screen === 'squad' && view.phase === 'building' && me.status !== 'ready') {
+    return (
+      <LobbySquad
+        catalog={catalog}
+        era={view.settings.era}
+        team={me.team}
+        busy={busy}
+        header={peerStrip}
+        onBack={() => setScreen('lobby')}
+        onSubmit={(players) => void submitSquad(players)}
+      />
+    );
+  }
+
+  const present = view.participants.filter((entry) => entry.status !== 'left');
+  const leaguePhase = view.phase === 'season' || view.phase === 'awards' || view.phase === 'playin' || view.phase === 'playoffs' || view.phase === 'recap';
   const nextReveal =
-    view.playoffsStartedAt === null
+    view.stageStartedAt === null || view.league === null || view.league.stageTotal === 0
       ? 0
-      : Math.max(0, Date.parse(view.playoffsStartedAt) + view.roundsRevealed * view.revealSeconds * 1000 - now);
-  const standings = view.standings ?? [];
-  const champion = view.participants.find((entry) => entry.season?.champion) ?? null;
-  const building = phase === 'building' || phase === 'season';
-  const canBuild = building || (phase === 'barrier' && !me.season);
+      : Math.max(0, Date.parse(view.stageStartedAt) + view.league.stageTotal * 1200 - now);
 
   return (
     <div class="screen">
@@ -325,14 +289,14 @@ export function Lobby(props: Props) {
         {notice ? <div class="notice">{notice}</div> : null}
         {status === 'reconnecting' && error ? <div class="notice bad">Reconnecting… {error}</div> : null}
 
-        {phase === 'lobby' ? (
+        {view.phase === 'lobby' ? (
           <div class="card mp-share">
             <div>
               <div class="tiny muted">Invite code</div>
               <div class="code" data-testid="lobby-code">
                 {view.code}
               </div>
-              <div class="tiny muted">No moments · the season runs straight through</div>
+              <div class="tiny muted">One shared NBA season · 2–8 friends</div>
             </div>
             <div class="tiny muted" style={{ textAlign: 'right' }}>
               {view.seatsTaken}/{view.capacity} in
@@ -345,18 +309,27 @@ export function Lobby(props: Props) {
           </div>
         ) : null}
 
-        {fullRoster ? roster : peerStrip}
+        <Roster participants={view.participants} phase={view.phase} capacity={view.capacity} />
+        <div class="ticker" data-testid="activity-ticker">
+          <span class="ticker-dot" />
+          {activityLine(view.events[0])}
+        </div>
 
-        {fullRoster ? (
-          <div class="ticker" data-testid="activity-ticker">
-            <span class="ticker-dot" />
-            {activityLine(view.events[0])}
-          </div>
-        ) : null}
-
-        {phase === 'lobby' ? (
+        {view.phase === 'lobby' ? (
           me.isHost ? (
             <div class="card" style={{ display: 'grid', gap: '6px' }}>
+              <span class="tiny muted">Mode · shared</span>
+              <div class="seg">
+                <button aria-pressed={settings.mode === 'normal'} onClick={() => setSettings({ ...settings, mode: 'normal' })}>
+                  Normal
+                </button>
+                <button aria-pressed={settings.mode === 'salary'} onClick={() => setSettings({ ...settings, mode: 'salary' })}>
+                  Salary
+                </button>
+                <button aria-pressed={settings.mode === 'squad'} onClick={() => setSettings({ ...settings, mode: 'squad' })}>
+                  Squad
+                </button>
+              </div>
               <span class="tiny muted">Era · shared</span>
               <div class="seg">
                 <button aria-pressed={settings.era === 'current'} onClick={() => setSettings({ ...settings, era: 'current' })}>
@@ -366,168 +339,86 @@ export function Lobby(props: Props) {
                   All-Time
                 </button>
               </div>
-              <span class="tiny muted">Builds allowed</span>
-              <div class="seg">
-                <button
-                  aria-pressed={samePositions(settings.positions, ['guard', 'big'])}
-                  onClick={() => setSettings({ ...settings, positions: ['guard', 'big'] })}
-                >
-                  Both
-                </button>
-                <button
-                  aria-pressed={samePositions(settings.positions, ['guard'])}
-                  onClick={() => setSettings({ ...settings, positions: ['guard'] })}
-                >
-                  Guards
-                </button>
-                <button
-                  aria-pressed={samePositions(settings.positions, ['big'])}
-                  onClick={() => setSettings({ ...settings, positions: ['big'] })}
-                >
-                  Bigs
-                </button>
-              </div>
             </div>
           ) : (
             <div class="card">
               <div class="tiny muted">
-                {view.settings.era === 'current' ? 'Current' : 'All-time'} · {view.settings.positions.join(' or ')} · no
-                moments
+                {view.settings.mode === 'normal' ? 'Normal' : view.settings.mode === 'salary' ? 'Salary Cap' : 'Squad'} ·{' '}
+                {view.settings.era === 'current' ? 'Current' : 'All-time'}
               </div>
               <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }}>Waiting for the host to start</div>
             </div>
           )
         ) : null}
 
-        {canBuild ? (
-          me.season ? (
-            <div class="card">
-              <div class="tiny muted">Season · no moments</div>
-              <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }} data-testid="building-state">
-                {awaiting > 0 ? `${awaiting} still building` : 'Everyone is done — results in'}
-              </div>
-            </div>
-          ) : (
-            <div class="card">
-              <div class="tiny muted">Season · no moments</div>
-              <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }} data-testid="building-state">
-                {awaiting > 0 ? `${awaiting} still building` : 'Everyone is done — results in'}
-              </div>
-            </div>
-          )
-        ) : null}
-
-        {me.season && view.phase !== 'lobby' ? (
-          <div class="card" data-testid="my-result">
-            <div class="tiny muted">Your season · no moments</div>
-            <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }}>
-              {me.season.finishLabel ?? (me.season.qualified ? 'In the playoffs' : 'Out')} · {me.season.wins}-
-              {me.season.losses} · #{me.season.seed}
-              {me.season.qualified ? ' · in the playoffs' : ' · out'}
-            </div>
-          </div>
-        ) : null}
-
-        {canBuild && !run && view.settings.positions.length > 1 ? (
-          <div class="card">
-            <span class="tiny muted">Your build</span>
-            <div class="seg">
-              <button aria-pressed={position === 'guard'} onClick={() => setPosition('guard')}>
-                Guard
-              </button>
-              <button aria-pressed={position === 'big'} onClick={() => setPosition('big')}>
-                Big
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {phase === 'barrier' || phase === 'playoffs' || phase === 'finished' ? (
-          <div class="card">
-            <div class="tiny muted">{phase === 'barrier' ? 'Barrier' : 'Barrier released'}</div>
-            <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }} data-testid="barrier-state">
-              {readyLabel(view.participants)}
-              {awayWaiting ? ' · someone is away' : phase === 'barrier' ? '' : ' · playoffs started together'}
-            </div>
-            {phase === 'barrier' ? (
-              <div class="tiny muted" style={{ marginTop: '2px' }}>
-                Playoffs start together once everyone present has a result
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {phase === 'playoffs' || phase === 'finished' ? (
+        {view.phase === 'draw' ? (
           <>
-            {champion ? (
-              <div class="banner" data-testid="champion-banner">
-                <h1 style={{ fontSize: '17px' }}>{champion.name} is the champion</h1>
-                <p>
-                  {champion.season?.wins}-{champion.season?.losses} · OVR {champion.season?.ovr}
-                </p>
+            <div class="card">
+              <div class="tiny muted">Team draw</div>
+              <div style={{ fontWeight: 800, fontSize: '13px' }}>
+                {me.team ? `You are the ${me.team}` : 'Draw a team from the unclaimed pool'}
+              </div>
+              <div class="tiny muted">
+                {view.teams.length}/{present.length} teams drawn · one reroll each
+              </div>
+            </div>
+            {view.teams.length ? (
+              <div class="card">
+                {view.teams.map((entry) => (
+                  <div class="tiny" key={entry.seat} style={{ fontWeight: entry.isMe ? 800 : 500 }}>
+                    {entry.name} · {entry.team}
+                    {entry.rerollUsed ? ' · rerolled' : ''}
+                  </div>
+                ))}
               </div>
             ) : null}
-            <div class="card">
-              <div class="tiny muted">
-                Round {Math.min(view.roundsRevealed, revealTotal)} of {revealTotal} · reveal every {view.revealSeconds}s
-              </div>
-              <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px', marginBottom: '6px' }}>
-                {me.season
-                  ? `${me.season.finishLabel ?? 'In the playoffs'} · ${me.season.wins}-${me.season.losses}`
-                  : 'Spectating'}
-              </div>
-              {me.rounds.length ? (
-                <div class="bracket">
-                  {me.rounds.map((round) => (
-                    <div class="round" key={`${round.name}-${round.opponent}`}>
-                      <span class="rname">{round.name}</span>
-                      <span class="ropp">vs {round.opponent}</span>
-                      <span class={`rres ${round.won ? 'win' : 'loss'}`}>{round.label ?? `${round.wins}-${round.losses}`}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div class="tiny muted">
-                  {me.season?.qualified ? 'Waiting for the first reveal…' : 'You did not make the playoffs.'}
-                </div>
-              )}
-              {phase === 'playoffs' && nextReveal > 0 ? (
-                <div class="tiny muted" style={{ marginTop: '4px' }} data-testid="next-reveal">
-                  Next reveal in {Math.ceil(nextReveal / 1000)}s
-                </div>
-              ) : null}
-            </div>
           </>
         ) : null}
 
-        {phase === 'finished' && standings.length ? (
-          <div class="table" data-testid="standings">
-            <div class="table-row head">
-              <span>#</span>
-              <span>Player</span>
-              <span>Record</span>
+        {view.phase === 'building' ? (
+          <div class="card">
+            <div class="tiny muted">
+              {view.settings.mode === 'normal' ? 'Normal build' : view.settings.mode === 'salary' ? 'Salary Cap build' : 'Squad build'}
             </div>
-            {standings.map((entry, index) => (
-              <div class={`table-row${entry.isMe ? ' us' : ''}`} key={entry.seat} data-seat={entry.seat}>
-                <span>{index + 1}</span>
-                <span>
-                  {entry.name} <span class="tiny muted">{entry.finishLabel}</span>
-                </span>
-                <span style={{ textAlign: 'right' }}>
-                  {entry.record}
-                  <span class="tiny muted"> · {entry.ovr}</span>
-                </span>
-              </div>
-            ))}
+            <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }} data-testid="building-state">
+              {me.status === 'ready'
+                ? 'Build submitted — waiting for the others'
+                : `${view.ready.ready}/${view.ready.present} builds in`}
+            </div>
+            {me.team ? <div class="tiny muted">Your team · {me.team}</div> : null}
+          </div>
+        ) : null}
+
+        {view.phase === 'preview' ? (
+          <div class="card">
+            <div class="tiny muted">Team preview</div>
+            {view.teams.map((entry) => {
+              const participant = view.participants.find((candidate) => candidate.seat === entry.seat);
+              return (
+                <div class="tiny" key={entry.seat} style={{ fontWeight: entry.isMe ? 800 : 500 }}>
+                  {entry.name} · {entry.team}
+                  {participant?.summary ? ` · OVR ${participant.summary.ovr}` : ''}
+                </div>
+              );
+            })}
+            <div class="tiny muted" style={{ marginTop: '4px' }}>{readyLabel(view.ready)}</div>
+          </div>
+        ) : null}
+
+        {leaguePhase ? <LeaguePanel view={view} busy={busy} onReady={() => void ready()} onAdvance={() => void advance()} /> : null}
+
+        {view.phase === 'season' && view.league && !view.league.checkpoint && nextReveal > 0 ? (
+          <div class="tiny muted" data-testid="next-reveal">
+            Next batch in {Math.ceil(nextReveal / 1000)}s
           </div>
         ) : null}
       </div>
 
       <div class="bottom">
-        {phase === 'lobby' ? (
+        {view.phase === 'lobby' ? (
           me.isHost ? (
             <button class="btn" disabled={busy} onClick={() => void start()} data-testid="start-season">
-              Start season · {view.seatsTaken} player{view.seatsTaken === 1 ? '' : 's'}
+              Start league · {view.seatsTaken} player{view.seatsTaken === 1 ? '' : 's'}
             </button>
           ) : (
             <button class="btn" disabled>
@@ -536,47 +427,84 @@ export function Lobby(props: Props) {
           )
         ) : null}
 
-        {canBuild ? (
-          me.season ? (
-            <button class="btn" disabled>
-              Waiting for the others
-            </button>
+        {view.phase === 'draw' ? (
+          me.team ? (
+            <div class="row">
+              <button class="btn" disabled={busy || me.rerollUsed} onClick={() => void reroll()} data-testid="reroll-team">
+                {me.rerollUsed ? 'Reroll used' : 'Reroll team'}
+              </button>
+              {me.isHost ? (
+                <button class="btn btn-ghost" disabled={busy} onClick={() => void lock()} data-testid="lock-teams">
+                  Lock teams
+                </button>
+              ) : null}
+            </div>
           ) : (
-            <button class="btn" data-testid="open-builder" onClick={openBuilder}>
-              {run && isBuildComplete(run)
-                ? 'Spin for team'
-                : run && Object.keys(run.picks).length
-                  ? `Continue build · ${Object.keys(run.picks).length}/10`
-                  : 'Build your player'}
+            <button class="btn" disabled={busy} onClick={() => void draw()} data-testid="draw-team">
+              Draw team
             </button>
           )
         ) : null}
 
-        {phase === 'barrier' && me.season ? (
-          me.isHost && awayWaiting ? (
-            <button class="btn" disabled={busy} onClick={() => void forceRelease()} data-testid="force-playoffs">
-              Start playoffs now
+        {view.phase === 'building' && me.status !== 'ready' ? (
+          view.settings.mode === 'normal' ? (
+            <div class="row">
+              <div class="seg" style={{ flex: 1 }}>
+                <button aria-pressed={position === 'guard'} onClick={() => setPosition('guard')}>
+                  Guard
+                </button>
+                <button aria-pressed={position === 'big'} onClick={() => setPosition('big')}>
+                  Big
+                </button>
+              </div>
+              <button class="btn" data-testid="open-builder" onClick={openNormal}>
+                {run && isBuildComplete(run) ? 'Review build' : run && Object.keys(run.picks).length ? `Continue · ${Object.keys(run.picks).length}/10` : 'Build your player'}
+              </button>
+            </div>
+          ) : view.settings.mode === 'salary' ? (
+            <button class="btn" data-testid="open-builder" onClick={() => setScreen('salary')}>
+              Open salary board
             </button>
           ) : (
-            <button class="btn" disabled>
-              {awayWaiting ? 'Waiting on an away player' : 'Starting playoffs together…'}
+            <button class="btn" data-testid="open-builder" onClick={() => setScreen('squad')}>
+              Build your five
             </button>
           )
         ) : null}
 
-        {phase === 'playoffs' ? (
+        {view.phase === 'building' && me.status === 'ready' ? (
           <button class="btn" disabled>
-            Revealing round {Math.min(view.roundsRevealed, revealTotal)} of {revealTotal}
+            Waiting for the others
           </button>
         ) : null}
 
-        {phase === 'finished' ? (
-          <button class="btn" onClick={() => void exit(false)} data-testid="leave-lobby">
-            Close the lobby
-          </button>
+        {view.phase === 'preview' ? (
+          <div class="row">
+            <button class="btn" disabled={busy || view.ready.mine} onClick={() => void ready()} data-testid="preview-ready">
+              {view.ready.mine ? 'Ready' : 'Ready for the season'}
+            </button>
+            {me.isHost ? (
+              <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="start-season-now">
+                Start season
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
-        {phase !== 'finished' ? (
+        {view.phase === 'recap' ? (
+          <div class="row">
+            {me.isHost ? (
+              <button class="btn" disabled={busy} onClick={() => void rematch()} data-testid="rematch">
+                Rematch
+              </button>
+            ) : null}
+            <button class="btn btn-ghost" onClick={() => void exit(false)} data-testid="leave-lobby">
+              Close the lobby
+            </button>
+          </div>
+        ) : null}
+
+        {view.phase !== 'recap' ? (
           <button class="btn btn-ghost btn-small" onClick={() => void exit(true)} data-testid="quit-lobby">
             Leave lobby
           </button>

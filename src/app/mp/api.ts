@@ -1,7 +1,7 @@
 import * as v from 'valibot';
 import { newActionId } from '../../shared/mp/codes';
 import { ApiErrorSchema, LobbyDeltaSchema, LobbyEnvelopeSchema } from '../../shared/mp/schemas';
-import type { BuildDraft, LobbyDelta, LobbySettings, LobbyView } from '../../shared/mp/types';
+import type { LobbyBuild, LobbyDelta, LobbySettings, LobbyView } from '../../shared/mp/types';
 
 const TIMEOUT_MS = 8000;
 const RETRIES = 3;
@@ -132,18 +132,38 @@ export async function startLobbyRequest(code: string, secret: string, settings: 
   return parseView(response);
 }
 
-export async function syncDraftRequest(code: string, secret: string, draft: BuildDraft): Promise<LobbyView> {
-  const response = await request(`/api/lobby/${code}/build`, postInit(secret, { actionId: newActionId(), draft }), 1);
+export async function drawRequest(code: string, secret: string): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/draw`, postInit(secret, { actionId: newActionId() }));
   return parseView(response);
 }
 
-export async function submitBuildRequest(code: string, secret: string, draft: BuildDraft): Promise<LobbyView> {
-  const response = await request(`/api/lobby/${code}/submit`, postInit(secret, { actionId: newActionId(), draft }));
+export async function rerollRequest(code: string, secret: string): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/reroll`, postInit(secret, { actionId: newActionId() }));
   return parseView(response);
 }
 
-export async function releaseRequest(code: string, secret: string, force: boolean): Promise<LobbyView> {
-  const response = await request(`/api/lobby/${code}/release`, postInit(secret, { actionId: newActionId(), force }));
+export async function lockRequest(code: string, secret: string): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/lock`, postInit(secret, { actionId: newActionId() }));
+  return parseView(response);
+}
+
+export async function submitBuildRequest(code: string, secret: string, build: LobbyBuild): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/build`, postInit(secret, { actionId: newActionId(), build }));
+  return parseView(response);
+}
+
+export async function readyRequest(code: string, secret: string, stage: number): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/ready`, postInit(secret, { actionId: newActionId(), stage }));
+  return parseView(response);
+}
+
+export async function advanceRequest(code: string, secret: string, stage: number): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/advance`, postInit(secret, { actionId: newActionId(), stage }));
+  return parseView(response);
+}
+
+export async function rematchRequest(code: string, secret: string): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/rematch`, postInit(secret, { actionId: newActionId() }));
   return parseView(response);
 }
 

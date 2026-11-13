@@ -1,14 +1,10 @@
 import { cleanName } from '../../src/shared/mp/codes.js';
 import { CreateBodySchema } from '../../src/shared/mp/schemas.js';
-import { DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../../src/shared/mp/types.js';
+import type { LobbySettings } from '../../src/shared/mp/types.js';
 import { errorResponse, jsonResponse, methodNotAllowed, readBody, secretFromRequest } from '../../src/server/http.js';
 import { createLobby } from '../../src/server/lobby.js';
 
-const DEFAULT_SETTINGS: LobbySettings = {
-  era: 'current',
-  positions: ['guard', 'big'],
-  revealSeconds: DEFAULT_REVEAL_SECONDS,
-};
+const DEFAULT_SETTINGS: LobbySettings = { era: 'current', mode: 'normal' };
 
 export async function POST(request: Request): Promise<Response> {
   const secret = secretFromRequest(request);

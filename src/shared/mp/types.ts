@@ -1,29 +1,23 @@
 import type { Era, Pick, Position } from '../engine/types.js';
+import type { LeagueView } from './league.js';
 
-export type LobbyPhase = 'lobby' | 'building' | 'season' | 'barrier' | 'playoffs' | 'finished';
+export type LobbyPhase = 'lobby' | 'draw' | 'building' | 'preview' | 'season' | 'awards' | 'playin' | 'playoffs' | 'recap';
 
-export type ParticipantStatus =
-  | 'joined'
-  | 'building'
-  | 'qualified'
-  | 'eliminated'
-  | 'playoffs'
-  | 'done'
-  | 'left';
+export type ParticipantStatus = 'joined' | 'building' | 'ready' | 'left';
+
+export type LeagueMode = 'normal' | 'salary' | 'squad';
 
 export const CAPACITY = 8;
 export const AWAY_MS = 60_000;
 export const HOST_IDLE_MS = 45_000;
-export const DEFAULT_REVEAL_SECONDS = 5;
-export const BARRIER_HOLD_SECONDS = 3;
-export const MAX_ROUNDS = 5;
 export const ATTRS_PER_BUILD = 10;
 export const EVENT_LIMIT = 30;
+export const SALARY_CARDS = 5;
+export const SQUAD_PLAYERS = 5;
 
 export interface LobbySettings {
   era: Era;
-  positions: Position[];
-  revealSeconds: number;
+  mode: LeagueMode;
 }
 
 export interface BuildDraft {
@@ -38,36 +32,63 @@ export interface BuildDraft {
   latest?: { attr: string; playerName: string } | null;
 }
 
+export interface SalaryCardPick {
+  id: string;
+  name: string;
+  team: string;
+  price: number;
+  attrs: Record<string, number>;
+  fullAttrs: Record<string, number>;
+  posGroup: Position;
+}
+
+export interface NormalBuild {
+  kind: 'normal';
+  position: Position;
+  era: Era;
+  picks: Record<string, Pick>;
+}
+
+export interface SalaryBuild {
+  kind: 'salary';
+  position: Position;
+  cards: SalaryCardPick[];
+}
+
+export interface SquadPlayerBuild {
+  slot: string;
+  position: Position;
+  picks: Record<string, Pick>;
+}
+
+export interface SquadBuild {
+  kind: 'squad';
+  players: SquadPlayerBuild[];
+}
+
+export type LobbyBuild = NormalBuild | SalaryBuild | SquadBuild;
+
 export interface BuildSummary {
   filled: number;
   total: number;
   latest: string | null;
-}
-
-export interface SeasonSummary {
-  wins: number;
-  losses: number;
   ovr: number;
-  seed: number;
-  ppg: number;
-  rpg: number;
-  apg: number;
-  madePlayoffs: boolean;
-  champion: boolean;
-  archetype: string;
-  team: string;
-  qualified: boolean;
-  finishRank: number | null;
-  finishLabel: string | null;
 }
 
-export interface RoundView {
+export interface TeamAssignmentView {
+  seat: number;
   name: string;
-  opponent: string;
-  won: boolean;
+  team: string;
+  rerollUsed: boolean;
+  isMe: boolean;
+}
+
+export interface ParticipantSeasonView {
   wins: number;
   losses: number;
-  label: string | null;
+  seed: number | null;
+  finish: string | null;
+  champion: boolean;
 }
 
 export interface ParticipantView {
@@ -79,11 +100,12 @@ export interface ParticipantView {
   status: ParticipantStatus;
   joinedAt: string;
   lastSeen: string;
-  build: BuildDraft | null;
+  team: string | null;
+  rerollUsed: boolean;
+  build: LobbyBuild | null;
   summary: BuildSummary | null;
-  season: SeasonSummary | null;
-  rounds: RoundView[];
-  roundsTotal: number;
+  ready: boolean;
+  season: ParticipantSeasonView | null;
 }
 
 export interface EventView {
@@ -95,13 +117,10 @@ export interface EventView {
   at: string;
 }
 
-export interface StandingEntry {
-  seat: number;
-  name: string;
-  isMe: boolean;
-  record: string;
-  ovr: number;
-  finishLabel: string | null;
+export interface ReadyView {
+  ready: number;
+  present: number;
+  mine: boolean;
 }
 
 export interface LobbyView {
@@ -112,14 +131,20 @@ export interface LobbyView {
   capacity: number;
   seatsTaken: number;
   hostSeat: number | null;
-  playoffsStartedAt: string | null;
-  revealSeconds: number;
-  roundsRevealed: number;
-  roundsTotal: number;
+  stage: number;
+  stageName: string;
+  stageTotal: number;
+  stageCursor: number;
+  checkpoint: boolean;
+  stageStartedAt: string | null;
   participants: ParticipantView[];
   me: ParticipantView;
   events: EventView[];
-  standings: StandingEntry[] | null;
+  teams: TeamAssignmentView[];
+  salaryBoard: SalaryCardPick[][] | null;
+  salaryBudget: number | null;
+  league: LeagueView | null;
+  ready: ReadyView;
   serverTime: string;
 }
 
@@ -128,6 +153,8 @@ export interface ParticipantProgress {
   status: ParticipantStatus;
   away: boolean;
   summary: BuildSummary | null;
+  team: string | null;
+  ready: boolean;
 }
 
 export interface LobbyDelta {
@@ -140,19 +167,4 @@ export interface LobbyDelta {
 export interface ApiErrorBody {
   error: string;
   reason: 'not_found' | 'full' | 'started' | 'forbidden' | 'conflict' | 'invalid' | 'server';
-}
-
-export function finishRankOf(input: {
-  champion: boolean;
-  madePlayoffs: boolean;
-  seriesRounds: number;
-  playedPlayIn: boolean;
-}): number {
-  if (input.champion) return 1;
-  if (input.seriesRounds >= 4) return 2;
-  if (input.seriesRounds === 3) return 3;
-  if (input.seriesRounds === 2) return 4;
-  if (input.seriesRounds === 1) return 5;
-  if (input.playedPlayIn || input.madePlayoffs) return 6;
-  return 9;
 }
