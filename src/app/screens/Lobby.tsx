@@ -295,6 +295,7 @@ export function Lobby(props: Props) {
   const retained = present;
   const retainedReady = retained.filter((entry) => entry.ready).length;
   const autoFilled = view.participants.filter((entry) => entry.summary?.auto).length;
+  const missingBuilds = view.participants.filter((entry) => entry.status !== 'left' && !entry.summary).length;
   const awayRetained = retained.filter((entry) => entry.away && !entry.isMe);
   const leaguePhase =
     view.phase === 'season' ||
@@ -332,7 +333,7 @@ export function Lobby(props: Props) {
                 {view.code}
               </div>
               <div class="tiny muted">Share this link · 2–8 friends</div>
-              <div class="tiny" data-testid="lobby-invite-link">
+              <div class="tiny invite-link" data-testid="lobby-invite-link">
                 {inviteUrl(window.location.origin, view.code)}
               </div>
             </div>
@@ -356,7 +357,7 @@ export function Lobby(props: Props) {
         {view.phase === 'lobby' ? (
           me.isHost ? (
             <div class="card" style={{ display: 'grid', gap: '6px' }}>
-              <span class="tiny muted">Mode · shared</span>
+              <span class="tiny muted">Mode</span>
               <div class="seg">
                 <button aria-pressed={settings.mode === 'normal'} onClick={() => setSettings({ ...settings, mode: 'normal' })}>
                   Normal
@@ -368,7 +369,7 @@ export function Lobby(props: Props) {
                   Squad
                 </button>
               </div>
-              <span class="tiny muted">Era · shared</span>
+              <span class="tiny muted">Era</span>
               <div class="seg">
                 <button aria-pressed={settings.era === 'current'} onClick={() => setSettings({ ...settings, era: 'current' })}>
                   Current
@@ -445,6 +446,11 @@ export function Lobby(props: Props) {
                 </div>
               );
             })}
+            {missingBuilds > 0 ? (
+              <div class="tiny muted" style={{ marginTop: '4px' }}>
+                Missing builds auto-fill on start.
+              </div>
+            ) : null}
             <div class="tiny muted" style={{ marginTop: '4px' }}>{readyLabel(view.ready)}</div>
           </div>
         ) : null}
@@ -525,42 +531,44 @@ export function Lobby(props: Props) {
 
         {view.phase === 'building' && me.status !== 'ready' ? (
           view.settings.mode === 'normal' ? (
-            <div class="row">
-              <div class="seg" style={{ flex: 1 }}>
-                <button aria-pressed={position === 'guard'} onClick={() => setPosition('guard')}>
-                  Guard
-                </button>
-                <button aria-pressed={position === 'big'} onClick={() => setPosition('big')}>
-                  Big
+            <div class="stack">
+              <div class="row">
+                <div class="seg" style={{ flex: 1 }}>
+                  <button aria-pressed={position === 'guard'} onClick={() => setPosition('guard')}>
+                    Guard
+                  </button>
+                  <button aria-pressed={position === 'big'} onClick={() => setPosition('big')}>
+                    Big
+                  </button>
+                </div>
+                <button class="btn" data-testid="open-builder" onClick={openNormal}>
+                  {run && isBuildComplete(run) ? 'Review build' : run && Object.keys(run.picks).length ? `Continue · ${Object.keys(run.picks).length}/10` : 'Build your player'}
                 </button>
               </div>
-              <button class="btn" data-testid="open-builder" onClick={openNormal}>
-                {run && isBuildComplete(run) ? 'Review build' : run && Object.keys(run.picks).length ? `Continue · ${Object.keys(run.picks).length}/10` : 'Build your player'}
-              </button>
               {me.isHost ? (
-                <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
+                <button class="btn btn-ghost btn-small" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
                   Lock now
                 </button>
               ) : null}
             </div>
           ) : view.settings.mode === 'salary' ? (
-            <div class="row">
+            <div class="stack">
               <button class="btn" data-testid="open-builder" onClick={() => setScreen('salary')}>
                 Open salary board
               </button>
               {me.isHost ? (
-                <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
+                <button class="btn btn-ghost btn-small" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
                   Lock now
                 </button>
               ) : null}
             </div>
           ) : (
-            <div class="row">
+            <div class="stack">
               <button class="btn" data-testid="open-builder" onClick={() => setScreen('squad')}>
                 Build your five
               </button>
               {me.isHost ? (
-                <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
+                <button class="btn btn-ghost btn-small" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
                   Lock now
                 </button>
               ) : null}
@@ -569,12 +577,12 @@ export function Lobby(props: Props) {
         ) : null}
 
         {view.phase === 'building' && me.status === 'ready' ? (
-          <div class="row">
+          <div class="stack">
             <button class="btn" disabled>
               Waiting for the others
             </button>
             {me.isHost ? (
-              <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
+              <button class="btn btn-ghost btn-small" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
                 Lock now
               </button>
             ) : null}
@@ -584,7 +592,7 @@ export function Lobby(props: Props) {
         {view.phase === 'preview' ? (
           <div class="row">
             <button class="btn" disabled={busy || view.ready.mine} onClick={() => void ready()} data-testid="preview-ready">
-              {view.ready.mine ? 'Ready' : 'Ready for the season'}
+              Ready
             </button>
             {me.isHost ? (
               <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="start-season-now">
@@ -597,7 +605,7 @@ export function Lobby(props: Props) {
         {view.phase === 'rematch' ? (
           <div class="row">
             <button class="btn" disabled={busy || view.ready.mine} onClick={() => void ready()} data-testid="rematch-ready">
-              {view.ready.mine ? 'Ready' : 'Ready for the next league'}
+              Ready
             </button>
             {me.isHost ? (
               <button

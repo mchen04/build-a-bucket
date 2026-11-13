@@ -588,7 +588,7 @@ async function advanceStage(lobbyId: string, stage: number): Promise<void> {
   if (!updated[0]) return;
   await db().query(
     `insert into events (lobby_id, kind, payload) values ($1::uuid, 'checkpoint', jsonb_build_object('detail', $2::text))`,
-    [lobbyId, `checkpoint ${next}`],
+    [lobbyId, 'Checkpoint'],
   );
 }
 
@@ -1269,7 +1269,7 @@ advanced as (
 ),
 log as (
   insert into events (lobby_id, kind, payload)
-  select id, 'checkpoint', jsonb_build_object('detail', 'checkpoint ' || ($3 + 1)::text) from advanced
+  select id, 'checkpoint', jsonb_build_object('detail', 'Checkpoint') from advanced
 )
 select
   (select id from l) as lobby_id,

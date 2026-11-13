@@ -28,25 +28,35 @@ export function phaseLabel(phase: LobbyPhase): string {
 export function statusLine(participant: ParticipantView, phase: LobbyPhase): string {
   if (participant.status === 'left') return 'left';
   if (participant.away) return 'away';
+  if (phase === 'preview' || phase === 'rematch') return participant.ready ? 'ready' : 'waiting';
+  if (phase === 'building') {
+    if (participant.summary) return `${participant.summary.filled}/${participant.summary.total}`;
+    if (participant.status === 'ready') return 'ready';
+    return participant.team ?? 'building';
+  }
+  if (phase === 'draw') return participant.team ?? 'drawing';
+  if (phase === 'lobby') return 'in';
   if (participant.season) {
     const record = `${participant.season.wins}-${participant.season.losses}`;
     if (participant.season.finish) return `${participant.season.finish} · ${record}`;
     if (participant.season.seed) return `${record} · #${participant.season.seed}`;
     return record;
   }
-  if (participant.team) return participant.team;
-  if (participant.status === 'ready') return 'ready';
-  if (participant.summary) return `${participant.summary.filled}/${participant.summary.total}`;
-  return phase === 'lobby' ? 'ready' : '—';
+  return participant.team ?? '—';
 }
 
 export function shortStatus(participant: ParticipantView, phase: LobbyPhase): string {
   if (participant.status === 'left') return 'left';
   if (participant.away) return 'away';
-  if (participant.team) return participant.team;
-  if (participant.status === 'ready') return 'ready';
-  if (participant.summary) return `${participant.summary.filled}/${participant.summary.total}`;
-  return phase === 'lobby' ? 'ready' : '—';
+  if (phase === 'building') {
+    if (participant.summary) return `${participant.summary.filled}/${participant.summary.total}`;
+    if (participant.status === 'ready') return 'ready';
+    return participant.team ?? 'building';
+  }
+  if (phase === 'preview' || phase === 'rematch') return participant.ready ? 'ready' : 'waiting';
+  if (phase === 'draw') return participant.team ?? 'drawing';
+  if (phase === 'lobby') return 'in';
+  return participant.team ?? '—';
 }
 
 export function readyLabel(ready: ReadyView): string {
