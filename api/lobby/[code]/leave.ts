@@ -1,6 +1,6 @@
-import { ActionBodySchema } from '../../../src/shared/mp/schemas';
-import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, readBody } from '../../../src/server/http';
-import { leaveLobby } from '../../../src/server/lobby';
+import { ActionBodySchema } from '../../../src/shared/mp/schemas.js';
+import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, readBody } from '../../../src/server/http.js';
+import { leaveLobby } from '../../../src/server/lobby.js';
 
 export async function POST(request: Request): Promise<Response> {
   const route = lobbyRoute(request);

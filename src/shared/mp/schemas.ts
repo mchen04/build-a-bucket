@@ -1,5 +1,5 @@
 import * as v from 'valibot';
-import { PickSchema } from '../data/schemas';
+import { PickSchema } from '../data/schemas.js';
 
 export const NameSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(16));
 export const SecretSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{32}$/));

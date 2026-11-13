@@ -1,8 +1,8 @@
-import { cleanName } from '../../src/shared/mp/codes';
-import { CreateBodySchema } from '../../src/shared/mp/schemas';
-import { DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../../src/shared/mp/types';
-import { errorResponse, jsonResponse, methodNotAllowed, readBody, secretFromRequest } from '../../src/server/http';
-import { createLobby } from '../../src/server/lobby';
+import { cleanName } from '../../src/shared/mp/codes.js';
+import { CreateBodySchema } from '../../src/shared/mp/schemas.js';
+import { DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../../src/shared/mp/types.js';
+import { errorResponse, jsonResponse, methodNotAllowed, readBody, secretFromRequest } from '../../src/server/http.js';
+import { createLobby } from '../../src/server/lobby.js';
 
 const DEFAULT_SETTINGS: LobbySettings = {
   era: 'current',

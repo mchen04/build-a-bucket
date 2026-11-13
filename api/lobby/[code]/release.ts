@@ -1,6 +1,6 @@
-import { ReleaseBodySchema } from '../../../src/shared/mp/schemas';
-import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, readBody } from '../../../src/server/http';
-import { releasePlayoffs } from '../../../src/server/lobby';
+import { ReleaseBodySchema } from '../../../src/shared/mp/schemas.js';
+import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, readBody } from '../../../src/server/http.js';
+import { releasePlayoffs } from '../../../src/server/lobby.js';
 
 export async function POST(request: Request): Promise<Response> {
   const route = lobbyRoute(request);

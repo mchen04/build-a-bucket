@@ -1,5 +1,5 @@
-import { ovrFromValues } from './ovr';
-import { archetypeFor } from './archetype';
+import { ovrFromValues } from './ovr.js';
+import { archetypeFor } from './archetype.js';
 import {
   ALLTIME_FINALS_OPPS,
   ALLTIME_TEAMS,
@@ -15,8 +15,8 @@ import {
   MVP_BENCHMARKS_CURRENT,
   PER_LEAGUE,
   WEST,
-} from './rules';
-import { clamp, round1, seededRng, uniform, type Rng } from './rng';
+} from './rules.js';
+import { clamp, round1, seededRng, uniform, type Rng } from './rng.js';
 import type {
   AwardWinner,
   Build,
@@ -30,7 +30,7 @@ import type {
   SeasonResult,
   SeriesRound,
   StandingRow,
-} from './types';
+} from './types.js';
 
 type TeamTable = Record<string, { off: number; def: number }>;
 

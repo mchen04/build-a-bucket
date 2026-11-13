@@ -1,5 +1,5 @@
-import { BIG_ATTRS, GUARD_ATTRS } from './rules';
-import type { Pick, Position } from './types';
+import { BIG_ATTRS, GUARD_ATTRS } from './rules.js';
+import type { Pick, Position } from './types.js';
 
 type Getter = (attr: string) => number;
 

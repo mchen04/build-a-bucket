@@ -1,5 +1,5 @@
-import { OVR_WEIGHTS } from './rules';
-import type { Pick, Position } from './types';
+import { OVR_WEIGHTS } from './rules.js';
+import type { Pick, Position } from './types.js';
 
 export function computeOvr(picks: Record<string, Pick>, position: Position): number {
   return ovrFromValues(

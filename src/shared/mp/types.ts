@@ -1,4 +1,4 @@
-import type { Era, Pick, Position } from '../engine/types';
+import type { Era, Pick, Position } from '../engine/types.js';
 
 export type LobbyPhase = 'lobby' | 'building' | 'season' | 'barrier' | 'playoffs' | 'finished';
 

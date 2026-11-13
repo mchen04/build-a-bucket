@@ -1,11 +1,11 @@
 import * as v from 'valibot';
-import { loadCatalog, poolFor, type Catalog } from '../shared/data/loader';
-import { ATTR_LABELS, BIG_ATTRS, CURRENT_TEAMS, GUARD_ATTRS, gradeFor } from '../shared/engine/rules';
-import { seededRng } from '../shared/engine/rng';
-import { simulateSeason } from '../shared/engine/season';
-import type { Build, PlayoffRound, SeasonResult, SeriesRound } from '../shared/engine/types';
-import { cleanName, generateCode, hashSecret } from '../shared/mp/codes';
-import { BuildDraftSchema, SettingsSchema } from '../shared/mp/schemas';
+import { loadCatalog, poolFor, type Catalog } from '../shared/data/loader.js';
+import { ATTR_LABELS, BIG_ATTRS, CURRENT_TEAMS, GUARD_ATTRS, gradeFor } from '../shared/engine/rules.js';
+import { seededRng } from '../shared/engine/rng.js';
+import { simulateSeason } from '../shared/engine/season.js';
+import type { Build, PlayoffRound, SeasonResult, SeriesRound } from '../shared/engine/types.js';
+import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
+import { BuildDraftSchema, SettingsSchema } from '../shared/mp/schemas.js';
 import {
   AWAY_MS,
   BARRIER_HOLD_SECONDS,
@@ -25,9 +25,9 @@ import {
   type RoundView,
   type SeasonSummary,
   type StandingEntry,
-} from '../shared/mp/types';
-import { SeasonSchema } from '../shared/data/schemas';
-import { db, errorMessage, isUniqueViolation } from './db';
+} from '../shared/mp/types.js';
+import { SeasonSchema } from '../shared/data/schemas.js';
+import { db, errorMessage, isUniqueViolation } from './db.js';
 
 export type Outcome = { ok: true; view: LobbyView } | { ok: false; status: number; error: ApiErrorBody };
 

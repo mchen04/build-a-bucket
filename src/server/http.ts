@@ -1,6 +1,6 @@
 import * as v from 'valibot';
-import { isCode, normalizeCode } from '../shared/mp/codes';
-import type { ApiErrorBody } from '../shared/mp/types';
+import { isCode, normalizeCode } from '../shared/mp/codes.js';
+import type { ApiErrorBody } from '../shared/mp/types.js';
 
 export function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

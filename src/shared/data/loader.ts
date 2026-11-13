@@ -1,8 +1,8 @@
 import JSON5 from 'json5';
 import * as v from 'valibot';
-import { DATA_BASE } from '../engine/rules';
-import type { Player, Position, Era, Team } from '../engine/types';
-import { HeadshotSchema, PlayerListSchema, SalaryLegendListSchema, TeamListSchema } from './schemas';
+import { DATA_BASE } from '../engine/rules.js';
+import type { Player, Position, Era, Team } from '../engine/types.js';
+import { HeadshotSchema, PlayerListSchema, SalaryLegendListSchema, TeamListSchema } from './schemas.js';
 
 export interface Catalog {
   teams: Team[];

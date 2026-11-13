@@ -1,5 +1,5 @@
-import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, noContent } from '../../../src/server/http';
-import { readLobby } from '../../../src/server/lobby';
+import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, noContent } from '../../../src/server/http.js';
+import { readLobby } from '../../../src/server/lobby.js';
 
 export async function GET(request: Request): Promise<Response> {
   const route = lobbyRoute(request);
