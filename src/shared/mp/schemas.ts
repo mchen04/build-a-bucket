@@ -5,8 +5,6 @@ import { ATTRS_PER_BUILD } from './types.js';
 const ParticipantStatusSchema = v.picklist([
   'joined',
   'building',
-  'built',
-  'season_done',
   'qualified',
   'eliminated',
   'playoffs',

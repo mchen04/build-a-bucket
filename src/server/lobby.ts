@@ -474,7 +474,7 @@ export async function readLobby(input: { code: string; secret: string }): Promis
     }
     return { ok: true, view };
   } catch (error) {
-    return { ok: false, status: 503, error: { error: serverError(error) } };
+    return { ok: false, status: 503, error: serverError(error) };
   }
 }
 
@@ -547,7 +547,7 @@ export async function createLobby(input: {
       return { ok: true, code: row.code, seat: seatRow.seat, participantId: seatRow.id, view: outcome.view };
     } catch (error) {
       if (isUniqueViolation(error)) continue;
-      return { ok: false, status: 503, error: { error: serverError(error) } };
+      return { ok: false, status: 503, error: serverError(error) };
     }
   }
   return { ok: false, status: 503, error: { error: 'Could not allocate a lobby code.', reason: 'server' } };
@@ -644,7 +644,7 @@ export async function joinLobby(input: {
         await new Promise((resolve) => setTimeout(resolve, 10 + attempt * 10));
         continue;
       }
-      return { ok: false, status: 503, error: { error: serverError(error) } };
+      return { ok: false, status: 503, error: serverError(error) };
     }
   }
   return { ok: false, status: 503, error: { error: 'Could not take a seat.', reason: 'server' } };
@@ -713,7 +713,7 @@ export async function startLobby(input: {
     }
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
-    return { ok: false, status: 503, error: { error: serverError(error) } };
+    return { ok: false, status: 503, error: serverError(error) };
   }
 }
 
@@ -840,7 +840,7 @@ export async function syncDraft(input: {
     if (!written.ok) return written;
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
-    return { ok: false, status: 503, error: { error: serverError(error) } };
+    return { ok: false, status: 503, error: serverError(error) };
   }
 }
 
@@ -901,7 +901,7 @@ export async function leaveLobby(input: { code: string; secret: string; actionId
     const outcome = await readLobby({ code: input.code, secret: input.secret });
     return outcome.ok ? outcome : { ok: true, view: null };
   } catch (error) {
-    return { ok: false, status: 503, error: { error: serverError(error) } };
+    return { ok: false, status: 503, error: serverError(error) };
   }
 }
 
@@ -941,14 +941,9 @@ released as (
 ),
 marked as (
   update participants p
-  set status = case when p.status = 'qualified' then 'playoffs' else 'done' end,
-    playoffs = case when p.season is null then null else jsonb_build_object(
-      'qualified', coalesce((p.season->>'madePlayoffs')::boolean, false),
-      'champion', coalesce((p.season->>'champion')::boolean, false),
-      'rounds', coalesce(jsonb_array_length(p.season->'playoffRounds'), 0)
-    ) end
+  set status = case when p.status = 'qualified' then 'playoffs' else 'done' end
   where p.lobby_id = (select id from l)
-    and p.status in ('qualified', 'eliminated', 'built', 'season_done')
+    and p.status in ('qualified', 'eliminated')
     and exists (select 1 from released)
   returning p.id
 ),
@@ -964,7 +959,6 @@ select
   (select n from pending) as pending,
   (select count(*)::int from released) as released,
   (select count(*)::int from marked) as marked,
-  (select active from hold) as holding,
   exists (select 1 from act) as action_ok
 `;
 
@@ -984,7 +978,6 @@ export async function releasePlayoffs(input: {
       pending: number;
       released: number;
       marked: number;
-      holding: boolean;
       action_ok: boolean;
     }>(RELEASE_SQL, [
       input.code,
@@ -1014,16 +1007,9 @@ export async function releasePlayoffs(input: {
           : { error: `Waiting on ${row.pending} player${row.pending === 1 ? '' : 's'}.`, reason: 'conflict' },
       };
     }
-    if (row.released === 0 && row.holding) {
-      return readLobby({ code: input.code, secret: input.secret });
-    }
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
-    return { ok: false, status: 503, error: { error: serverError(error) } };
+    return { ok: false, status: 503, error: serverError(error) };
   }
 }
 
-export async function lobbyExists(code: string): Promise<boolean> {
-  const rows = await db().query<{ id: string }>('select id from lobbies where code = $1', [code]);
-  return rows.length > 0;
-}

@@ -76,7 +76,7 @@ describe('delta merge', () => {
       serverTime: '2026-01-01T00:00:05.000Z',
       participants: [
         { seat: 1, status: 'building', away: false, summary: { filled: 9, total: 10, latest: 'Michael Jordan' } },
-        { seat: 2, status: 'built', away: true, summary: { filled: 10, total: 10, latest: 'Larry Bird' } },
+        { seat: 2, status: 'playoffs', away: true, summary: { filled: 10, total: 10, latest: 'Larry Bird' } },
       ],
       events: [event(11, { seat: 2, name: 'P2' })],
     };
@@ -84,7 +84,7 @@ describe('delta merge', () => {
     expect(merged.version).toBe(7);
     expect(merged.serverTime).toBe(delta.serverTime);
     expect(merged.participants[0]?.summary?.filled).toBe(9);
-    expect(merged.participants[1]?.status).toBe('built');
+    expect(merged.participants[1]?.status).toBe('playoffs');
     expect(merged.participants[1]?.away).toBe(true);
     expect(merged.participants[1]?.joinedAt).toBe(base.participants[1]?.joinedAt);
     expect(merged.me.seat).toBe(1);

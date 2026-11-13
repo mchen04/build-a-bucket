@@ -37,9 +37,6 @@ export function statusLine(participant: ParticipantView, phase: LobbyPhase): str
       const latest = participant.summary?.latest;
       return latest ? `${filled}/10 · ${latest}` : `${filled}/10`;
     }
-    case 'built':
-    case 'season_done':
-      return 'simming…';
     case 'qualified':
     case 'eliminated':
       if (!season) return 'simming…';
@@ -62,9 +59,6 @@ export function shortStatus(participant: ParticipantView, phase: LobbyPhase): st
       return phase === 'lobby' ? 'ready' : '—';
     case 'building':
       return `${participant.summary?.filled ?? 0}/10`;
-    case 'built':
-    case 'season_done':
-      return 'sim';
     case 'qualified':
       return 'in';
     case 'eliminated':

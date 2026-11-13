@@ -31,13 +31,18 @@ create table if not exists participants (
   status text not null default 'joined',
   build jsonb,
   season jsonb,
-  playoffs jsonb,
   constraint participants_status_check check (
-    status in ('joined', 'building', 'built', 'season_done', 'qualified', 'eliminated', 'playoffs', 'done', 'left')
+    status in ('joined', 'building', 'qualified', 'eliminated', 'playoffs', 'done', 'left')
   ),
   constraint participants_seat_check check (seat between 1 and 8),
   unique (lobby_id, seat),
   unique (lobby_id, token_hash)
+);
+
+alter table participants drop column if exists playoffs;
+alter table participants drop constraint if exists participants_status_check;
+alter table participants add constraint participants_status_check check (
+  status in ('joined', 'building', 'qualified', 'eliminated', 'playoffs', 'done', 'left')
 );
 
 create table if not exists events (

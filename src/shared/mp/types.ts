@@ -5,8 +5,6 @@ export type LobbyPhase = 'lobby' | 'building' | 'season' | 'barrier' | 'playoffs
 export type ParticipantStatus =
   | 'joined'
   | 'building'
-  | 'built'
-  | 'season_done'
   | 'qualified'
   | 'eliminated'
   | 'playoffs'
