@@ -5,7 +5,7 @@ description: Drive the Build a Bucket rebuild (Preact web app plus Vercel lobby 
 
 # Verify Build a Bucket
 
-The app is a mobile web game: one home screen with single-player Play, Daily Challenge, Salary Cap, Squad Builder, Career, and multiplayer lobbies (2 to 8 players, invite codes). The lobby API lives under `api/lobby/**` as Web-standard handlers backed by Neon Postgres. Everything is driven through one helper:
+The app is a mobile web game: one home screen with single-player Play, Daily Challenge, Salary Cap, Squad Builder, and one shared multiplayer NBA league (2 to 8 players, invite codes). The lobby API lives under `api/lobby/**` as Web-standard handlers backed by Neon Postgres. Everything is driven through one helper:
 
 ```
 node .claude/skills/verify-build-a-bucket/scripts/control.mjs <command> [options]

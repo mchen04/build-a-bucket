@@ -62,4 +62,3 @@ read at commit `92cb2a155bb2261cd68038ac366b994ad5dbb873`; the original's code i
 - The original's posting and boards need login and its own service; results stay on the device.
 - Squad Builder box scores come from our engine's stat model; the strength, record, seed, playoff run and the
   honour composite and thresholds follow the original's algorithm.
-- Blacktop, Compete and Versus are not rebuilt and stay visible limitations on the home screen.

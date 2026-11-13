@@ -209,38 +209,6 @@ export async function loadCatalog(): Promise<Catalog> {
   };
 }
 
-export function parseAges(source: string): Record<string, number> | null {
-  const table = JSON5.parse(extractLiteral(source, 'BIRTH_NBA')) as Record<string, unknown> | null;
-  if (!table || typeof table !== 'object') return null;
-  const clean: Record<string, number> = {};
-  for (const [name, year] of Object.entries(table)) {
-    if (typeof year === 'number' && Number.isFinite(year)) clean[name] = year;
-  }
-  return Object.keys(clean).length ? clean : null;
-}
-
-export async function loadCareerAges(): Promise<Record<string, number> | null> {
-  const path = 'src/data/player-ages.js';
-  const cached = await readCached(`${DATA_BASE}/${path}`);
-  if (cached !== null) {
-    const ages = tryAges(cached);
-    if (ages) return ages;
-  }
-  try {
-    return parseAges(await fetchSource(path));
-  } catch {
-    return null;
-  }
-}
-
-function tryAges(source: string): Record<string, number> | null {
-  try {
-    return parseAges(source);
-  } catch {
-    return null;
-  }
-}
-
 export function poolFor(catalog: Catalog, position: Position, era: Era): Player[] {
   if (era === 'alltime') return position === 'guard' ? catalog.legendGuards : catalog.legendBigs;
   return position === 'guard' ? catalog.currentGuards : catalog.currentBigs;

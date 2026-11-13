@@ -31,25 +31,8 @@ const loadDaily = () => import('./screens/Daily').then((module) => module.Daily)
 const loadSalary = () => import('./modes/SalaryMode').then((module) => module.SalaryMode);
 const loadSquad = () => import('./modes/SquadMode').then((module) => module.SquadMode);
 const loadLobby = () => import('./modes/LobbyMode').then((module) => module.LobbyMode);
-const loadCareer = () => import('./modes/CareerMode').then((module) => module.CareerMode);
 
-type Flow = 'classic' | 'daily' | 'squad' | 'salary' | 'career';
-
-function careerHint(): string {
-  try {
-    const raw = localStorage.getItem('bab:career:v1');
-    if (!raw) return 'Draft day to the Hall';
-    const parsed = JSON.parse(raw) as { slots?: unknown };
-    const slots = Array.isArray(parsed?.slots) ? parsed.slots : [];
-    const active = slots.find(
-      (entry) => entry && typeof entry === 'object' && (entry as { phase?: string }).phase !== 'retired',
-    ) as { name?: string; year?: number } | undefined;
-    if (!active) return 'Draft day to the Hall';
-    return `Resume ${active.name ?? 'your player'} · year ${(active.year ?? 0) + 1}`;
-  } catch {
-    return 'Draft day to the Hall';
-  }
-}
+type Flow = 'classic' | 'daily' | 'squad' | 'salary';
 
 function savedMpEntry(): MpEntry | null {
   try {
@@ -372,9 +355,6 @@ export function App() {
     if (flow === 'salary') {
       return <LazyScreen load={loadSalary} screenProps={{ catalog, plan, onExit: () => setFlow('classic') }} />;
     }
-    if (flow === 'career') {
-      return <LazyScreen load={loadCareer} screenProps={{ catalog, onExit: () => setFlow('classic') }} />;
-    }
     if (!run) {
       return (
         <Home
@@ -386,8 +366,6 @@ export function App() {
           onDaily={openDaily}
           onSalary={() => setFlow('salary')}
           onSquad={() => setFlow('squad')}
-          onCareer={() => setFlow('career')}
-          careerLabel={careerHint()}
           dailyLabel={`${plan.pos.toUpperCase()} · ${plan.mode === 'all-time' ? 'ALL-TIME' : 'CURRENT'}${daily?.done ? (daily.forfeit ? ' · left today' : ` · ${daily.ovr} OVR`) : ''}`}
           dailyStatus={plan.key}
         />

@@ -15,7 +15,7 @@ This directory is the maintained source for verifying what a phone user can do i
 - Prefer accessible names, then `data-testid` handles; the CSS handles `.spin-big`, `.chip`, `.slot.filled` and `.bottom .btn` are the stable builder controls.
 - Run `overflow` on every core screen: the product promise is no vertical scroll at 390x844.
 - Cover both engines for UI changes: `--device iphone` (WebKit) and `--device pixel` (Chromium).
-- Seeded modes (Daily, Salary Cap, Squad, Career rolls) depend on the New York date; read the date shown on screen rather than computing it.
+- Seeded modes (Daily, Salary Cap, Squad) depend on the New York date; read the date shown on screen rather than computing it.
 
 ## Proof and skip reporting
 
@@ -26,9 +26,8 @@ This directory is the maintained source for verifying what a phone user can do i
 ## Features
 
 - [Single-player Play](./play.md): build ten traits, team spin, season with Moments, playoffs, final report, resume after reload.
-- [Multiplayer lobby](./lobby.md): create, join by code, capacity, live activity, barrier, synchronized playoffs, standings, reconnect.
+- [Multiplayer lobby](./lobby.md): create, join by code, unique team draw and reroll, shared 82-game season, checkpoints, play-in, playoffs, recap, rematch, reconnect.
 - [Daily Challenge](./daily.md): shared date-seeded spins, resume, one run per day.
 - [Salary Cap](./salary.md): daily budget grid with lock, infinite run.
 - [Squad Builder](./squad.md): five builds, one shared season.
-- [Career](./career.md): save slots, draft, seasons, retirement, history.
 - [Whole-stack performance](./perf.md): cold load versus the original, lobby API under a full lobby.
