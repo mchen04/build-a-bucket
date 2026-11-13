@@ -1,9 +1,6 @@
 import * as v from 'valibot';
-import { loadCatalog, poolFor, type Catalog } from '../shared/data/loader.js';
-import { ATTR_LABELS, BIG_ATTRS, CURRENT_TEAMS, GUARD_ATTRS, gradeFor } from '../shared/engine/rules.js';
-import { seededRng } from '../shared/engine/rng.js';
-import { simulateSeason } from '../shared/engine/season.js';
-import type { Build, PlayoffRound, SeasonResult, SeriesRound } from '../shared/engine/types.js';
+import { ATTR_LABELS, gradeFor } from '../shared/engine/rules.js';
+import type { PlayoffRound, SeasonResult, SeriesRound } from '../shared/engine/types.js';
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
 import { BuildDraftSchema, SettingsSchema } from '../shared/mp/schemas.js';
 import {
@@ -11,12 +8,14 @@ import {
   BARRIER_HOLD_SECONDS,
   CAPACITY,
   DEFAULT_REVEAL_SECONDS,
+  EVENT_LIMIT,
   HOST_IDLE_MS,
   MAX_ROUNDS,
   finishRankOf,
   type ApiErrorBody,
   type BuildDraft,
   type EventView,
+  type LobbyDelta,
   type LobbyPhase,
   type LobbySettings,
   type LobbyView,
@@ -41,7 +40,6 @@ const CREATE_DEFAULT_SETTINGS: LobbySettings = {
   revealSeconds: DEFAULT_REVEAL_SECONDS,
 };
 
-const TEAM_SHORTS = new Set(Object.keys(CURRENT_TEAMS));
 const ATTRS_PER_BUILD = 10;
 
 interface RawLobby {
@@ -81,19 +79,7 @@ interface ReadRow {
   events: RawEvent[];
 }
 
-let catalogPromise: Promise<Catalog> | null = null;
-
-function catalog(): Promise<Catalog> {
-  if (!catalogPromise) {
-    catalogPromise = loadCatalog().catch((error: unknown) => {
-      catalogPromise = null;
-      throw error;
-    });
-  }
-  return catalogPromise;
-}
-
-function parseSettings(raw: unknown): LobbySettings {
+export function parseSettings(raw: unknown): LobbySettings {
   const parsed = v.safeParse(SettingsSchema, raw);
   return parsed.success ? parsed.output : CREATE_DEFAULT_SETTINGS;
 }
@@ -108,45 +94,6 @@ function parseDraft(raw: unknown): BuildDraft | null {
   if (!raw) return null;
   const parsed = v.safeParse(BuildDraftSchema, raw);
   return parsed.success ? (parsed.output as unknown as BuildDraft) : null;
-}
-
-export function validateDraft(draft: BuildDraft, settings: LobbySettings, data: Catalog): string | null {
-  if (draft.era !== settings.era) {
-    return `This lobby plays ${settings.era === 'current' ? 'current' : 'all-time'} players.`;
-  }
-  if (!settings.positions.includes(draft.position)) {
-    return `This lobby is set to ${settings.positions.join(' / ')} builds.`;
-  }
-  const keys: readonly string[] = draft.position === 'guard' ? GUARD_ATTRS : BIG_ATTRS;
-  const pool = poolFor(data, draft.position, draft.era);
-  const index = new Map(pool.map((player) => [`${player.name}|${player.team}`, player]));
-  for (const attr of keys) {
-    const pick = draft.picks[attr];
-    if (!pick) return `Missing a pick for ${attr}.`;
-    if (pick.attr !== attr) return `The ${attr} pick is inconsistent.`;
-    const player = index.get(`${pick.playerName}|${pick.team}`);
-    if (!player) return `${pick.playerName} is not in the ${draft.era} ${draft.position} pool.`;
-    const value = player.attrs[attr];
-    if (value === undefined) return `${pick.playerName} has no ${attr} rating.`;
-    if (value !== pick.val) return `The ${attr} pick does not match ${pick.playerName}'s rating.`;
-  }
-  for (const attr of Object.keys(draft.picks)) {
-    if (!keys.includes(attr)) return `${attr} is not a ${draft.position} trait.`;
-  }
-  if (!draft.team) return 'Pick a team before submitting.';
-  if (!TEAM_SHORTS.has(draft.team)) return `Unknown team ${draft.team}.`;
-  return null;
-}
-
-function runSeason(draft: BuildDraft, playerName: string, seed: string): SeasonResult {
-  const build: Build = { position: draft.position, era: draft.era, picks: draft.picks };
-  return simulateSeason({
-    build,
-    team: draft.team as string,
-    playerName,
-    rng: seededRng(seed),
-    displayRng: seededRng(`${seed}:display`),
-  });
 }
 
 function pickDetail(draft: BuildDraft): string | null {
@@ -356,8 +303,22 @@ select
   ) order by p.seat), '[]'::json) from participants p where p.lobby_id = (select id from l)) as participants,
   (select coalesce(json_agg(json_build_object(
     'id', e.id, 'kind', e.kind, 'payload', e.payload, 'participant_id', e.participant_id, 'at', e.created_at
-  ) order by e.id desc), '[]'::json) from (select * from events where lobby_id = (select id from l) order by id desc limit 30) e) as events
+  ) order by e.id desc), '[]'::json) from (select * from events where lobby_id = (select id from l) order by id desc limit ${EVENT_LIMIT}) e) as events
 `;
+
+export function buildLobbyDelta(view: LobbyView, sinceEvent: number): LobbyDelta {
+  return {
+    version: view.version,
+    serverTime: view.serverTime,
+    participants: view.participants.map((entry) => ({
+      seat: entry.seat,
+      status: entry.status,
+      away: entry.away,
+      summary: entry.summary,
+    })),
+    events: view.events.filter((event) => event.id > sinceEvent),
+  };
+}
 
 const HOST_SQL = `
 with candidate as (
@@ -741,11 +702,6 @@ written as (
     )
   returning p.id, p.seat, p.name
 ),
-bump as (
-  update lobbies lob set version = lob.version + 1, updated_at = now()
-  from written where lob.id = (select id from l)
-  returning lob.version
-),
 log as (
   insert into events (lobby_id, participant_id, kind, payload)
   select (select id from l), w.id, $7::text,
@@ -761,7 +717,7 @@ select
   exists (select 1 from act) as action_ok
 `;
 
-async function writeBuild(input: {
+export async function writeBuild(input: {
   code: string;
   secret: string;
   actionId: string;
@@ -824,39 +780,6 @@ export async function syncDraft(input: {
 }): Promise<Outcome> {
   try {
     const written = await writeBuild({ ...input, status: 'building', season: null });
-    if (!written.ok) return written;
-    return readLobby({ code: input.code, secret: input.secret });
-  } catch (error) {
-    return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
-  }
-}
-
-export async function submitBuild(input: {
-  code: string;
-  secret: string;
-  actionId: string;
-  draft: BuildDraft;
-}): Promise<Outcome> {
-  try {
-    const data = await catalog();
-    const lobbyRows = await db().query<{ settings: unknown; phase: LobbyPhase; name: string | null }>(
-      `select l.settings, l.phase, (select p.name from participants p where p.lobby_id = l.id and p.token_hash = $2) as name
-       from lobbies l where l.code = $1`,
-      [input.code, await hashSecret(input.secret)],
-    );
-    const lobby = lobbyRows[0];
-    if (!lobby) {
-      return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
-    }
-    if (!lobby.name) {
-      return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
-    }
-    const problem = validateDraft(input.draft, parseSettings(lobby.settings), data);
-    if (problem) return { ok: false, status: 400, error: { error: problem, reason: 'invalid' } };
-    const seed = `${input.code}:${input.draft.position}:${input.draft.picks.jumpShot?.playerName ?? 'x'}:${input.actionId}`;
-    const season = runSeason(input.draft, lobby.name, seed);
-    const status: ParticipantStatus = season.madePlayoffs ? 'qualified' : 'eliminated';
-    const written = await writeBuild({ ...input, status, season });
     if (!written.ok) return written;
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {

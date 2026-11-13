@@ -1,6 +1,18 @@
 import * as v from 'valibot';
 import { PickSchema } from '../data/schemas.js';
 
+const ParticipantStatusSchema = v.picklist([
+  'joined',
+  'building',
+  'built',
+  'season_done',
+  'qualified',
+  'eliminated',
+  'playoffs',
+  'done',
+  'left',
+]);
+
 export const NameSchema = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(16));
 export const SecretSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{32}$/));
 export const ActionIdSchema = v.pipe(v.string(), v.uuid());
@@ -62,17 +74,7 @@ export const ParticipantViewSchema = v.object({
   isHost: v.boolean(),
   isMe: v.boolean(),
   away: v.boolean(),
-  status: v.picklist([
-    'joined',
-    'building',
-    'built',
-    'season_done',
-    'qualified',
-    'eliminated',
-    'playoffs',
-    'done',
-    'left',
-  ]),
+  status: ParticipantStatusSchema,
   joinedAt: v.string(),
   lastSeen: v.string(),
   build: v.nullable(BuildDraftSchema),
@@ -89,6 +91,20 @@ export const EventViewSchema = v.object({
   name: v.nullable(v.string()),
   detail: v.nullable(v.string()),
   at: v.string(),
+});
+
+export const ParticipantProgressSchema = v.object({
+  seat: v.number(),
+  status: ParticipantStatusSchema,
+  away: v.boolean(),
+  summary: v.nullable(BuildSummarySchema),
+});
+
+export const LobbyDeltaSchema = v.object({
+  version: v.number(),
+  serverTime: v.string(),
+  participants: v.array(ParticipantProgressSchema),
+  events: v.array(EventViewSchema),
 });
 
 export const StandingEntrySchema = v.object({

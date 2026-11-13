@@ -19,6 +19,7 @@ export const HOST_IDLE_MS = 45_000;
 export const DEFAULT_REVEAL_SECONDS = 5;
 export const BARRIER_HOLD_SECONDS = 3;
 export const MAX_ROUNDS = 5;
+export const EVENT_LIMIT = 30;
 
 export interface LobbySettings {
   era: Era;
@@ -121,6 +122,20 @@ export interface LobbyView {
   events: EventView[];
   standings: StandingEntry[] | null;
   serverTime: string;
+}
+
+export interface ParticipantProgress {
+  seat: number;
+  status: ParticipantStatus;
+  away: boolean;
+  summary: BuildSummary | null;
+}
+
+export interface LobbyDelta {
+  version: number;
+  serverTime: string;
+  participants: ParticipantProgress[];
+  events: EventView[];
 }
 
 export interface ApiErrorBody {

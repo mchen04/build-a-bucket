@@ -1,7 +1,7 @@
 import * as v from 'valibot';
 import { newActionId } from '../../shared/mp/codes';
-import { ApiErrorSchema, LobbyEnvelopeSchema } from '../../shared/mp/schemas';
-import type { BuildDraft, LobbySettings, LobbyView } from '../../shared/mp/types';
+import { ApiErrorSchema, LobbyDeltaSchema, LobbyEnvelopeSchema } from '../../shared/mp/schemas';
+import type { BuildDraft, LobbyDelta, LobbySettings, LobbyView } from '../../shared/mp/types';
 
 const TIMEOUT_MS = 8000;
 const RETRIES = 3;
@@ -54,24 +54,41 @@ async function request(path: string, init: RequestInit, retries = RETRIES): Prom
   throw new MpError(lastError instanceof Error ? lastError.message : 'Network error', 0, 'server');
 }
 
-async function parseView(response: Response): Promise<LobbyView> {
-  if (!response.ok) {
-    let message = `Request failed (${response.status}).`;
-    let reason = 'server';
-    try {
-      const parsed = v.safeParse(ApiErrorSchema, await response.json());
-      if (parsed.success) {
-        message = parsed.output.error;
-        reason = parsed.output.reason;
-      }
-    } catch {
-      message = `Request failed (${response.status}).`;
+export type LobbyUpdate = { kind: 'view'; view: LobbyView } | { kind: 'delta'; delta: LobbyDelta };
+
+async function failure(response: Response): Promise<MpError> {
+  let message = `Request failed (${response.status}).`;
+  let reason = 'server';
+  try {
+    const parsed = v.safeParse(ApiErrorSchema, await response.json());
+    if (parsed.success) {
+      message = parsed.output.error;
+      reason = parsed.output.reason;
     }
-    throw new MpError(message, response.status, reason);
+  } catch {
+    message = `Request failed (${response.status}).`;
   }
+  return new MpError(message, response.status, reason);
+}
+
+async function parseView(response: Response): Promise<LobbyView> {
+  if (!response.ok) throw await failure(response);
   const parsed = v.safeParse(LobbyEnvelopeSchema, await response.json());
   if (!parsed.success) throw new MpError('That lobby sent an unexpected response.', 500, 'server');
   return parsed.output.lobby as unknown as LobbyView;
+}
+
+async function parseUpdate(response: Response): Promise<LobbyUpdate> {
+  if (!response.ok) throw await failure(response);
+  const body = (await response.json()) as { lobby?: unknown; delta?: unknown };
+  if (body.lobby !== undefined) {
+    const parsed = v.safeParse(LobbyEnvelopeSchema, body);
+    if (!parsed.success) throw new MpError('That lobby sent an unexpected response.', 500, 'server');
+    return { kind: 'view', view: parsed.output.lobby as unknown as LobbyView };
+  }
+  const parsed = v.safeParse(LobbyDeltaSchema, body.delta);
+  if (!parsed.success) throw new MpError('That lobby sent an unexpected response.', 500, 'server');
+  return { kind: 'delta', delta: parsed.output as unknown as LobbyDelta };
 }
 
 function authHeaders(secret: string): Record<string, string> {
@@ -96,10 +113,18 @@ export async function joinLobbyRequest(code: string, name: string, secret: strin
   return parseView(response);
 }
 
-export async function fetchLobbyRequest(code: string, secret: string, since: number): Promise<LobbyView | null> {
-  const response = await request(`/api/lobby/${code}?since=${since}`, { headers: authHeaders(secret) }, 0);
+export async function fetchLobbyRequest(
+  code: string,
+  secret: string,
+  since: number,
+  token: string,
+  events: number,
+): Promise<LobbyUpdate | null> {
+  const query = new URLSearchParams({ since: String(since), events: String(events) });
+  if (token) query.set('token', token);
+  const response = await request(`/api/lobby/${code}?${query.toString()}`, { headers: authHeaders(secret) }, 0);
   if (response.status === 204) return null;
-  return parseView(response);
+  return parseUpdate(response);
 }
 
 export async function startLobbyRequest(code: string, secret: string, settings: LobbySettings): Promise<LobbyView> {

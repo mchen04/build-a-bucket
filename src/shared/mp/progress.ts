@@ -1,0 +1,25 @@
+import { EVENT_LIMIT, type LobbyDelta, type LobbyView, type ParticipantProgress, type ParticipantView } from './types.js';
+
+export function progressToken(view: Pick<LobbyView, 'events' | 'participants'>): string {
+  const latest = view.events[0]?.id ?? 0;
+  const away = view.participants.reduce((count, entry) => count + (entry.away ? 1 : 0), 0);
+  const filled = view.participants.reduce((count, entry) => count + (entry.summary?.filled ?? 0), 0);
+  return `${latest}:${away}:${filled}`;
+}
+
+export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
+  const progress = new Map<number, ParticipantProgress>(delta.participants.map((entry) => [entry.seat, entry]));
+  const participants: ParticipantView[] = view.participants.map((entry) => {
+    const next = progress.get(entry.seat);
+    if (!next) return entry;
+    return { ...entry, status: next.status, away: next.away, summary: next.summary };
+  });
+  return {
+    ...view,
+    version: delta.version,
+    serverTime: delta.serverTime,
+    participants,
+    me: participants.find((entry) => entry.isMe) ?? view.me,
+    events: [...delta.events, ...view.events].slice(0, EVENT_LIMIT),
+  };
+}

@@ -13,7 +13,8 @@ import { loadCatalog, poolFor } from '../src/shared/data/loader';
 import { BIG_ATTRS, GUARD_ATTRS } from '../src/shared/engine/rules';
 import type { Era, Pick, Position } from '../src/shared/engine/types';
 import { generateSecret, newActionId } from '../src/shared/mp/codes';
-import type { BuildDraft, LobbySettings, LobbyView } from '../src/shared/mp/types';
+import { progressToken } from '../src/shared/mp/progress';
+import type { BuildDraft, LobbyDelta, LobbySettings, LobbyView } from '../src/shared/mp/types';
 
 const BASE = 'http://localhost:4173/api';
 const SETTINGS: LobbySettings = { era: 'current', positions: ['guard', 'big'], revealSeconds: 2 };
@@ -47,8 +48,12 @@ function authed(secret: string, path: string, body: unknown): Request {
   });
 }
 
-function poll(secret: string, code: string, since?: number): Request {
-  const suffix = since === undefined ? '' : `?since=${since}`;
+function poll(secret: string, code: string, since?: number, token?: string, events?: number): Request {
+  const query = new URLSearchParams();
+  if (since !== undefined) query.set('since', String(since));
+  if (token !== undefined) query.set('token', token);
+  if (events !== undefined) query.set('events', String(events));
+  const suffix = query.toString() === '' ? '' : `?${query.toString()}`;
   return new Request(`${BASE}/lobby/${code}${suffix}`, { headers: { authorization: `Bearer ${secret}` } });
 }
 
@@ -649,6 +654,39 @@ describe('lobby lifecycle', () => {
     const extra = await join(lobby.code, 'Extra');
     expect(extra.response.status).toBe(409);
     expect((await read<{ error: string }>(extra.response)).error).toMatch(/full/i);
+  });
+
+  it('sends draft progress as a delta without moving the version peers hold', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const guestView = await view(lobby.code, guest.seat.secret);
+    const token = progressToken(guestView);
+    const newest = guestView.events[0]?.id ?? 0;
+
+    const still = await viewHandler(poll(guest.seat.secret, lobby.code, guestView.version, token, newest));
+    expect(still.status).toBe(204);
+
+    const full = await draftFor('guard', 'current', 'high');
+    const partial: BuildDraft = {
+      ...full,
+      picks: Object.fromEntries(Object.entries(full.picks).slice(0, 2)),
+      spinIndex: 2,
+      latest: { attr: 'jumpShot', playerName: 'Stephen Curry' },
+    };
+    const synced = await buildHandler(
+      authed(lobby.host.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: partial }),
+    );
+    expect(synced.status).toBe(200);
+    expect((await read<{ lobby: LobbyView }>(synced)).lobby.version).toBe(guestView.version);
+
+    const peer = await viewHandler(poll(guest.seat.secret, lobby.code, guestView.version, token, newest));
+    expect(peer.status).toBe(200);
+    const delta = (await read<{ delta: LobbyDelta }>(peer)).delta;
+    expect(delta.version).toBe(guestView.version);
+    expect(delta.participants.find((entry) => entry.seat === 1)?.summary?.filled).toBe(2);
+    expect(delta.events.some((entry) => entry.kind === 'pick')).toBe(true);
+    expect((await view(lobby.code, guest.seat.secret)).me.build).toBeNull();
   });
 });
 

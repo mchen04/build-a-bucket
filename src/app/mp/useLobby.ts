@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { mergeDelta, progressToken } from '../../shared/mp/progress';
 import type { LobbyView } from '../../shared/mp/types';
-import { fetchLobbyRequest, isFatal, MpError } from './api';
+import { fetchLobbyRequest, isFatal, MpError, type LobbyUpdate } from './api';
 import type { MpSession } from './session';
 
 export type LobbyStatus = 'loading' | 'live' | 'reconnecting' | 'gone';
@@ -18,6 +19,9 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
   const [status, setStatus] = useState<LobbyStatus>('loading');
   const [error, setError] = useState<string | null>(null);
   const version = useRef(0);
+  const token = useRef('');
+  const events = useRef(0);
+  const open = useRef<LobbyView | null>(null);
   const failures = useRef(0);
   const timer = useRef<number | null>(null);
   const alive = useRef(true);
@@ -27,12 +31,28 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
   goneRef.current = onGone;
 
   const apply = useCallback((next: LobbyView) => {
+    open.current = next;
     version.current = next.version;
+    token.current = progressToken(next);
+    events.current = next.events[0]?.id ?? 0;
     failures.current = 0;
     setView(next);
     setStatus('live');
     setError(null);
   }, []);
+
+  const absorb = useCallback(
+    (update: LobbyUpdate) => {
+      if (update.kind === 'view') {
+        apply(update.view);
+        return;
+      }
+      const base = open.current;
+      if (!base) return;
+      apply(mergeDelta(base, update.delta));
+    },
+    [apply],
+  );
 
   const tickRef = useRef<() => void>(() => undefined);
 
@@ -49,9 +69,9 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
       const current = sessionRef.current;
       if (!current || !alive.current) return;
       try {
-        const next = await fetchLobbyRequest(current.code, current.secret, version.current);
+        const next = await fetchLobbyRequest(current.code, current.secret, version.current, token.current, events.current);
         if (!alive.current) return;
-        if (next) apply(next);
+        if (next) absorb(next);
         else setStatus('live');
         schedule(document.hidden ? 5000 : 1000);
       } catch (caught) {
@@ -80,7 +100,7 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
       document.removeEventListener('visibilitychange', onVisibility);
       if (timer.current !== null) window.clearTimeout(timer.current);
     };
-  }, [session, apply, schedule]);
+  }, [session, absorb, schedule]);
 
   const act = useCallback(
     async (action: (code: string, secret: string) => Promise<LobbyView>) => {
