@@ -43,10 +43,9 @@ function validateDraftProgress(draft: BuildDraft, settings: LobbySettings, data:
   }
   const latest = draft.latest;
   if (latest) {
-    if (!keys.includes(latest.attr)) return `${latest.attr} is not a ${draft.position} trait.`;
-    if (!pool.some((player) => player.name === latest.playerName)) {
-      return `${latest.playerName} is not in the ${draft.era} ${draft.position} pool.`;
-    }
+    const pick = draft.picks[latest.attr];
+    if (!pick) return 'The latest pick is not in the build.';
+    if (pick.playerName !== latest.playerName) return 'The latest pick does not match the build.';
   }
   return null;
 }

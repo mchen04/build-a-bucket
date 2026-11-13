@@ -352,11 +352,12 @@ describeDb('lobby lifecycle', () => {
     const guest = await join(lobby.code, 'Guest');
     expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
     const draft = await draftFor('guard', 'current', 'high');
+    const latest = draft.picks['jumpShot'] as Pick;
     const partial: BuildDraft = {
       ...draft,
       picks: Object.fromEntries(Object.entries(draft.picks).slice(0, 4)),
       spinIndex: 4,
-      latest: { attr: 'jumpShot', playerName: 'Stephen Curry' },
+      latest: { attr: 'jumpShot', playerName: latest.playerName },
     };
     const synced = await buildHandler(
       authed(guest.seat.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: partial }),
@@ -380,11 +381,12 @@ describeDb('lobby lifecycle', () => {
     const guest = await join(lobby.code, 'Guest');
     expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
     const draft = await draftFor('guard', 'current', 'high');
+    const latest = draft.picks['jumpShot'] as Pick;
     const partial: BuildDraft = {
       ...draft,
       picks: Object.fromEntries(Object.entries(draft.picks).slice(0, 3)),
       spinIndex: 3,
-      latest: { attr: 'jumpShot', playerName: 'Stephen Curry' },
+      latest: { attr: 'jumpShot', playerName: latest.playerName },
     };
     const synced = await buildHandler(
       authed(guest.seat.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: partial }),
@@ -392,7 +394,7 @@ describeDb('lobby lifecycle', () => {
     expect(synced.status).toBe(200);
     const hostView = await view(lobby.code, lobby.host.secret);
     const other = hostView.participants.find((entry) => entry.seat === 2);
-    expect(other?.summary).toEqual({ filled: 3, total: 10, latest: 'Stephen Curry' });
+    expect(other?.summary).toEqual({ filled: 3, total: 10, latest: latest.playerName });
     expect(other?.build).toBeNull();
     expect(other?.status).toBe('building');
     expect(hostView.me.build).toBeNull();
@@ -440,7 +442,7 @@ describeDb('lobby lifecycle', () => {
     expect(finalView.participants.find((participantEntry) => participantEntry.seat === 1)?.summary).toBeNull();
   });
 
-  it('rejects a latest pick that is not a real player', async () => {
+  it('rejects a latest pick that does not match the build', async () => {
     const lobby = await newLobby('Host');
     expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
     const draft = await draftFor('guard', 'current', 'high');
@@ -448,13 +450,18 @@ describeDb('lobby lifecycle', () => {
     const sync = (body: BuildDraft) =>
       buildHandler(authed(lobby.host.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: body }));
 
-    const forged = await sync({ ...draft, latest: { attr: entry[0], playerName: 'Nobody At All' } });
+    const catalog = await loadCatalog();
+    const other = poolFor(catalog, 'guard', 'current').find(
+      (player) => player.name !== entry[1].playerName && player.attrs[entry[0]] !== undefined,
+    );
+    expect(other).toBeDefined();
+    const forged = await sync({ ...draft, latest: { attr: entry[0], playerName: other?.name ?? '' } });
     expect(forged.status).toBe(400);
-    expect((await read<{ error: string }>(forged)).error).toMatch(/pool/i);
+    expect((await read<{ error: string }>(forged)).error).toMatch(/latest/i);
 
     const missing = await sync({ ...draft, latest: { attr: 'agent', playerName: entry[1].playerName } });
     expect(missing.status).toBe(400);
-    expect((await read<{ error: string }>(missing)).error).toMatch(/trait/i);
+    expect((await read<{ error: string }>(missing)).error).toMatch(/latest/i);
 
     const honest = await sync({ ...draft, latest: { attr: entry[0], playerName: entry[1].playerName } });
     expect(honest.status).toBe(200);
@@ -1095,11 +1102,12 @@ describeDb('lobby lifecycle', () => {
     expect(still.status).toBe(204);
 
     const full = await draftFor('guard', 'current', 'high');
+    const latest = full.picks['jumpShot'] as Pick;
     const partial: BuildDraft = {
       ...full,
       picks: Object.fromEntries(Object.entries(full.picks).slice(0, 2)),
       spinIndex: 2,
-      latest: { attr: 'jumpShot', playerName: 'Stephen Curry' },
+      latest: { attr: 'jumpShot', playerName: latest.playerName },
     };
     const synced = await buildHandler(
       authed(lobby.host.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: partial }),
