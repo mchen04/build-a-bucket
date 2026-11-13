@@ -1,4 +1,4 @@
-import { computeOvr } from './ovr';
+import { ovrFromValues } from './ovr';
 import { archetypeFor } from './archetype';
 import {
   ALLTIME_FINALS_OPPS,
@@ -16,13 +16,17 @@ import {
   PER_LEAGUE,
   WEST,
 } from './rules';
-import { clamp, round1, uniform, type Rng } from './rng';
+import { clamp, round1, seededRng, uniform, type Rng } from './rng';
 import type {
   AwardWinner,
   Build,
+  Pick as BucketPick,
+  Era,
   GameLine,
+  MomentEffect,
   PlayInRound,
   PlayoffRound,
+  Position,
   SeasonResult,
   SeriesRound,
   StandingRow,
@@ -362,41 +366,30 @@ export interface SeasonOptions {
   displayRng?: Rng;
 }
 
-export function simulateSeason(options: SeasonOptions): SeasonResult {
-  const { build, team, playerName } = options;
-  const rng = options.rng ?? Math.random;
-  const displayRng = options.displayRng ?? Math.random;
-  const position = build.position;
-  const allTime = build.era === 'alltime';
-  const table = allTime ? ALLTIME_TEAMS : CURRENT_TEAMS;
-  const finalsOpps = allTime ? ALLTIME_FINALS_OPPS : CURRENT_FINALS_OPPS;
-  const ovr = computeOvr(build.picks, position);
-  const row = table[team] ?? { off: 68, def: 65 };
-  const off = row.off;
-  const def = row.def;
-  const v = (off + def) / 200;
-  const base = clamp(0.2 + ((v - 0.59) / 0.24) * 0.57, 0.13, 0.77);
-  const classic = !allTime;
-  const strength = classic ? 0.5 + (base - 0.5) * 0.8 : base;
-  const boost = (ovr - 82) / 17;
-  const eraFactor = allTime ? 0.45 : 1;
-  const boostValue = boost >= 0
-    ? Math.min(allTime ? 0.09 : classic ? 0.3 : 0.2, boost * (classic ? 0.32 : 0.2) * eraFactor)
-    : Math.max(allTime ? -0.05 : -0.1, boost * 0.1 * eraFactor);
-  const winProb = Math.min(allTime ? 0.91 : 0.87, Math.max(0.12, strength + boostValue));
+export interface RolledStats {
+  ppg: number;
+  rpg: number;
+  apg: number;
+  spg: number;
+  bpg: number;
+  fgPct: number;
+  threePct: number;
+  ftPct: number;
+  tov: number;
+  per: number;
+}
 
-  const attrs: Record<string, number> = {};
-  for (const [attr, pick] of Object.entries(build.picks)) attrs[attr] = pick.val;
-  const get = (attr: string) => attrs[attr] ?? 5;
+export function rollStats(values: Record<string, number>, position: Position, rng: Rng): RolledStats {
+  const get = (attr: string) => values[attr] ?? 5;
   const js = get('jumpShot');
   const fin = get('finishing');
   const pm = get('playmaking');
   const hnd = get('handles');
   const pas = get('passing');
   const intD = get('interiorDefense');
-  const reb = get('rebounding');
   const perD = get('perimeterDefense');
   const spd = get('speed');
+  const reb = get('rebounding');
   const bnc = get('bounce');
   const size = get('size');
   const iq = get('basketballIQ');
@@ -463,38 +456,247 @@ export function simulateSeason(options: SeasonOptions): SeasonResult {
       }),
     ),
   );
+  return { ppg, rpg, apg, spg, bpg, fgPct, threePct, ftPct, tov, per };
+}
 
-  let wins = 0;
-  let losses = 0;
-  const games: GameLine[] = [];
-  const gameLog: string[] = [];
-  let bestGame: GameLine | null = null;
-  const opponents = [...EAST, ...WEST].filter((short) => short !== team);
-  for (let index = 0; index < 82; index++) {
-    const won = rng() < winProb;
-    if (won) wins++;
-    else losses++;
-    gameLog.push(won ? 'W' : 'L');
+export interface TeamMods {
+  off: number;
+  def: number;
+}
+
+export const NO_MODS: TeamMods = { off: 0, def: 0 };
+
+export function teamPower(team: string, era: Era, mods: TeamMods = NO_MODS): number {
+  const table = era === 'alltime' ? ALLTIME_TEAMS : CURRENT_TEAMS;
+  const row = (table as TeamTable)[team] ?? { off: 68, def: 65 };
+  return (row.off + mods.off * 3.3 + row.def + mods.def * 3.3) / 200;
+}
+
+export function winProbFor(ovr: number, team: string, era: Era, mods: TeamMods = NO_MODS): number {
+  const allTime = era === 'alltime';
+  const classic = !allTime;
+  const base = clamp(0.2 + ((teamPower(team, era, mods) - 0.59) / 0.24) * 0.57, 0.13, 0.77);
+  const strength = classic ? 0.5 + (base - 0.5) * 0.8 : base;
+  const boost = (ovr - 82) / 17;
+  const eraFactor = allTime ? 0.45 : 1;
+  const boostValue = boost >= 0
+    ? Math.min(allTime ? 0.09 : classic ? 0.3 : 0.2, boost * (classic ? 0.32 : 0.2) * eraFactor)
+    : Math.max(allTime ? -0.05 : -0.1, boost * 0.1 * eraFactor);
+  return Math.min(allTime ? 0.91 : 0.87, Math.max(0.12, strength + boostValue));
+}
+
+export function valuesFromPicks(picks: Record<string, BucketPick>): Record<string, number> {
+  return Object.fromEntries(Object.entries(picks).map(([attr, pick]) => [attr, pick.val]));
+}
+
+export interface MomentDecision {
+  momentId: string;
+  optionId: string;
+  tag: string | null;
+  line: string | null;
+}
+
+export interface SeasonDraft {
+  v: 1;
+  team: string;
+  position: Position;
+  era: Era;
+  attrs: Record<string, number>;
+  mods: TeamMods;
+  ovr: number;
+  winProb: number;
+  rolled: RolledStats;
+  games: GameLine[];
+  sat: number[];
+  satUntil: number;
+  pending: MomentEffect | null;
+  stops: number[];
+  stopIndex: number;
+  decisions: MomentDecision[];
+  phase: 'moment' | 'done';
+}
+
+export function seasonStops(seed: string): number[] {
+  const rng = seededRng(`stops-${seed}`);
+  const count = 2 + (rng() < 0.4 ? 1 : 0);
+  const lo = 8;
+  const hi = 76;
+  const gap = 14;
+  const stops: number[] = [];
+  for (let draw = 0; draw < 200 && stops.length < count; draw++) {
+    const candidate = lo + Math.floor(rng() * (hi - lo + 1));
+    if (stops.every((stop) => Math.abs(stop - candidate) >= gap)) stops.push(candidate);
+  }
+  stops.sort((a, b) => a - b);
+  stops.push(82);
+  return stops;
+}
+
+function refresh(draft: SeasonDraft, rng: Rng): void {
+  draft.ovr = ovrFromValues(draft.attrs, draft.position);
+  draft.winProb = winProbFor(draft.ovr, draft.team, draft.era, draft.mods);
+  draft.rolled = rollStats(draft.attrs, draft.position, rng);
+}
+
+export function startSeason(options: {
+  build: Build;
+  team: string;
+  seed: string;
+  rng: Rng;
+  moments?: boolean;
+}): SeasonDraft {
+  const attrs = valuesFromPicks(options.build.picks);
+  const draft: SeasonDraft = {
+    v: 1,
+    team: options.team,
+    position: options.build.position,
+    era: options.build.era,
+    attrs,
+    mods: { ...NO_MODS },
+    ovr: ovrFromValues(attrs, options.build.position),
+    winProb: 0,
+    rolled: rollStats(attrs, options.build.position, options.rng),
+    games: [],
+    sat: [],
+    satUntil: 0,
+    pending: null,
+    stops: options.moments === false ? [] : seasonStops(options.seed),
+    stopIndex: 0,
+    decisions: [],
+    phase: 'done',
+  };
+  draft.winProb = winProbFor(draft.ovr, draft.team, draft.era, draft.mods);
+  continueDraft(draft, options.rng);
+  return draft;
+}
+
+function playGames(draft: SeasonDraft, count: number, rng: Rng): void {
+  const opponents = [...EAST, ...WEST].filter((short) => short !== draft.team);
+  const power = teamPower(draft.team, draft.era, draft.mods);
+  for (let played = 0; played < count && draft.games.length < 82; played++) {
+    const index = draft.games.length;
+    const sat = index < draft.satUntil;
+    const prob = sat ? clamp(power - 0.05, 0.2, 0.7) : draft.winProb;
+    const won = rng() < prob;
     const scoreBase = 94 + Math.floor(rng() * 22);
     const margin = 3 + Math.floor(rng() * 17);
     const mySc = won ? scoreBase + margin : scoreBase;
     const oppSc = won ? scoreBase : scoreBase + margin;
     const opponent = opponents[Math.floor(rng() * opponents.length)] ?? 'BOS';
-    const pts = Math.max(0, Math.round(ppg + uniform(rng, -7, 10)));
-    const reb = Math.max(0, Math.round(rpg + uniform(rng, -3, 3)));
-    const ast = Math.max(0, Math.round(apg + uniform(rng, -2, 2.5)));
+    const pts = sat ? 0 : Math.max(0, Math.round(draft.rolled.ppg + uniform(rng, -7, 10)));
+    const reb = sat ? 0 : Math.max(0, Math.round(draft.rolled.rpg + uniform(rng, -3, 3)));
+    const ast = sat ? 0 : Math.max(0, Math.round(draft.rolled.apg + uniform(rng, -2, 2.5)));
     const home = rng() < 0.5;
-    const line: GameLine = { g: index + 1, won, home, opponent, mySc, oppSc, pts, reb, ast };
-    games.push(line);
-    if (!bestGame || pts > bestGame.pts) bestGame = line;
+    draft.games.push({ g: index + 1, won, home, opponent, mySc, oppSc, pts, reb, ast });
+    if (sat && !draft.sat.includes(index)) draft.sat.push(index);
+    if (draft.pending && index + 1 >= draft.satUntil) {
+      const pending = draft.pending;
+      draft.pending = null;
+      applyEffect(draft, pending, rng);
+    }
   }
+}
+
+function continueDraft(draft: SeasonDraft, rng: Rng): void {
+  while (draft.stopIndex < draft.stops.length) {
+    const stop = draft.stops[draft.stopIndex] as number;
+    playGames(draft, stop - draft.games.length, rng);
+    draft.phase = 'moment';
+    return;
+  }
+  playGames(draft, 82 - draft.games.length, rng);
+  draft.phase = 'done';
+}
+
+interface EffectOutcome {
+  line: string | null;
+  tag: string | null;
+}
+
+function applyEffect(draft: SeasonDraft, effect: MomentEffect, rng: Rng): EffectOutcome {
+  if (effect.gamble) {
+    const hit = rng() < effect.gamble.p;
+    const branch = hit ? effect.gamble.hit : effect.gamble.miss;
+    const line = (hit ? effect.gamble.hitLine : effect.gamble.missLine) ?? null;
+    const inner = applyEffect(draft, branch, rng);
+    return { line: inner.line ?? line, tag: inner.tag ?? branch.tag ?? null };
+  }
+  let changed = false;
+  if (effect.attr) {
+    for (const [attr, delta] of Object.entries(effect.attr)) {
+      draft.attrs[attr] = clamp((draft.attrs[attr] ?? 5) + delta, 1, 11);
+    }
+    changed = true;
+  }
+  if (effect.team) {
+    draft.mods = { off: draft.mods.off + (effect.team.off ?? 0), def: draft.mods.def + (effect.team.def ?? 0) };
+    changed = true;
+  }
+  if (changed) refresh(draft, rng);
+  if (effect.sit !== undefined) {
+    const left = 82 - draft.games.length;
+    draft.satUntil = draft.games.length + (effect.sit < 0 ? left : Math.min(effect.sit, left));
+    draft.pending = effect.then ?? null;
+    return { line: null, tag: effect.tag ?? null };
+  }
+  if (effect.then) {
+    const inner = applyEffect(draft, effect.then, rng);
+    return { line: inner.line, tag: inner.tag ?? effect.tag ?? null };
+  }
+  return { line: null, tag: effect.tag ?? null };
+}
+
+export function chooseMoment(
+  draft: SeasonDraft,
+  choice: { momentId: string; optionId: string; effect: MomentEffect },
+  rng: Rng,
+): SeasonDraft {
+  const next: SeasonDraft = {
+    ...draft,
+    attrs: { ...draft.attrs },
+    mods: { ...draft.mods },
+    games: [...draft.games],
+    sat: [...draft.sat],
+    decisions: [...draft.decisions],
+  };
+  const outcome = applyEffect(next, choice.effect, rng);
+  next.decisions.push({
+    momentId: choice.momentId,
+    optionId: choice.optionId,
+    tag: outcome.tag,
+    line: outcome.line,
+  });
+  next.stopIndex += 1;
+  continueDraft(next, rng);
+  return next;
+}
+
+export function finalizeDraft(draft: SeasonDraft, options: { playerName: string; rng: Rng; displayRng: Rng }): SeasonResult {
+  const { team, position, era } = draft;
+  const allTime = era === 'alltime';
+  const table = (allTime ? ALLTIME_TEAMS : CURRENT_TEAMS) as TeamTable;
+  const finalsOpps = allTime ? ALLTIME_FINALS_OPPS : CURRENT_FINALS_OPPS;
+  const rng = options.rng;
+  const games = draft.games;
+  const wins = games.filter((game) => game.won).length;
+  const losses = games.length - wins;
+  const gameLog = games.map((game) => (game.won ? 'W' : 'L'));
+  let bestGame: GameLine | null = null;
+  for (const game of games) if (!bestGame || game.pts > bestGame.pts) bestGame = game;
+
+  const logged = (field: 'pts' | 'reb' | 'ast') =>
+    games.length ? round1(games.reduce((sum, game) => sum + game[field], 0) / games.length) : 0;
+  const rolled = draft.rolled;
+  const ppg = draft.decisions.length ? logged('pts') : rolled.ppg;
+  const rpg = draft.decisions.length ? logged('reb') : rolled.rpg;
+  const apg = draft.decisions.length ? logged('ast') : rolled.apg;
 
   const conference: 'east' | 'west' = EAST_SET.has(team) ? 'east' : 'west';
   const { seed, standings } = buildStandings(wins, team, conference, rng, table);
   let playoffRounds: PlayoffRound[] = [];
   let champion = false;
   if (seed <= 10) {
-    const playoffProb = Math.min(allTime ? 0.89 : 0.85, winProb + 0.04);
+    const playoffProb = Math.min(allTime ? 0.89 : 0.85, draft.winProb + 0.04);
     const result = playPlayoffs(seed, playoffProb, conference, standings, rng, table, finalsOpps);
     playoffRounds = result.rounds;
     champion = result.champion;
@@ -512,7 +714,7 @@ export function simulateSeason(options: SeasonOptions): SeasonResult {
     ),
   );
   const mvp = madePlayoffs && playerScore > Math.max(...benchmarks);
-  const dpoyScore = spg * 10 + bpg * 8 + (seed <= 4 ? 4 : seed <= 8 ? 2 : 0);
+  const dpoyScore = rolled.spg * 10 + rolled.bpg * 8 + (seed <= 4 ? 4 : seed <= 8 ? 2 : 0);
   const dpoyThreshold = 26 + rng() * 10;
   const dpoy = dpoyScore >= dpoyThreshold && !mvp;
   const finalsRound = playoffRounds.find((round): round is SeriesRound => round.type === 'series' && round.roundIndex === 3);
@@ -520,29 +722,35 @@ export function simulateSeason(options: SeasonOptions): SeasonResult {
   const finalsSeries = finalsRound ? `${finalsRound.wins}-${finalsRound.losses}` : null;
 
   const display = displayAwards(
-    { ppg, rpg, apg, spg, bpg, ovr, team },
-    build.era,
-    playerName,
-    displayRng,
+    { ppg, rpg, apg, spg: rolled.spg, bpg: rolled.bpg, ovr: draft.ovr, team },
+    era,
+    options.playerName,
+    options.displayRng,
   );
-  const rank = goatRank({ ovr, ppg, rpg, apg, spg, bpg, champion }, display.mvp, display.dpoy);
+  const rank = goatRank({ ovr: draft.ovr, ppg, rpg, apg, spg: rolled.spg, bpg: rolled.bpg, champion }, display.mvp, display.dpoy);
+  const picks = Object.fromEntries(
+    Object.entries(draft.attrs).map(([attr, val]) => [
+      attr,
+      { attr, val, playerName: '', playerShort: '', team },
+    ]),
+  ) as Build['picks'];
 
   return {
-    ovr,
-    archetype: archetypeFor(ovr, build.picks, position),
+    ovr: draft.ovr,
+    archetype: archetypeFor(draft.ovr, picks, position),
     wins,
     losses,
     position,
     ppg,
     rpg,
     apg,
-    spg,
-    bpg,
-    tov,
-    fgPct,
-    threePct,
-    ftPct,
-    per,
+    spg: rolled.spg,
+    bpg: rolled.bpg,
+    tov: rolled.tov,
+    fgPct: rolled.fgPct,
+    threePct: rolled.threePct,
+    ftPct: rolled.ftPct,
+    per: rolled.per,
     games,
     gameLog,
     bestGame,
@@ -561,4 +769,17 @@ export function simulateSeason(options: SeasonOptions): SeasonResult {
     displayDpoy: display.dpoy,
     goatRank: rank,
   };
+}
+
+export function simulateSeason(options: SeasonOptions): SeasonResult {
+  const rng = options.rng ?? Math.random;
+  const displayRng = options.displayRng ?? Math.random;
+  const draft = startSeason({
+    build: options.build,
+    team: options.team,
+    seed: options.build.era,
+    rng,
+    moments: false,
+  });
+  return finalizeDraft(draft, { playerName: options.playerName, rng, displayRng });
 }

@@ -82,6 +82,35 @@ export interface SeriesRound {
 
 export type PlayoffRound = PlayInRound | SeriesRound;
 
+export interface MomentEffect {
+  attr?: Record<string, number>;
+  team?: { off?: number; def?: number };
+  sit?: number;
+  tag?: string;
+  window?: number;
+  dur?: number;
+  xp?: number;
+  deals?: boolean;
+  then?: MomentEffect;
+  gamble?: { p: number; hit: MomentEffect; miss: MomentEffect; hitLine?: string; missLine?: string };
+}
+
+export interface MomentOption {
+  id: string;
+  label: string;
+  flavor?: string;
+  effect: MomentEffect;
+}
+
+export interface MomentCard {
+  id: string;
+  kicker: string;
+  title: string;
+  body: string;
+  stop: number;
+  options: MomentOption[];
+}
+
 export interface AwardWinner {
   name: string;
   short: string;

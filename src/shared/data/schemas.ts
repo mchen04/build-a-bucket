@@ -122,6 +122,44 @@ export const RunSchema = v.object({
   current: v.nullable(v.object({ team: v.string(), playerName: v.string() })),
   team: v.nullable(v.string()),
   season: v.nullable(SeasonSchema),
+  draft: v.nullable(
+    v.object({
+      v: v.literal(1),
+      team: v.string(),
+      position: v.picklist(['guard', 'big']),
+      era: v.picklist(['current', 'alltime']),
+      attrs: v.record(v.string(), v.number()),
+      mods: v.object({ off: v.number(), def: v.number() }),
+      ovr: v.number(),
+      winProb: v.number(),
+      rolled: v.any(),
+      games: v.array(GameLineSchema),
+      sat: v.array(v.number()),
+      satUntil: v.number(),
+      pending: v.nullable(v.any()),
+      stops: v.array(v.number()),
+      stopIndex: v.number(),
+      decisions: v.array(v.any()),
+      phase: v.picklist(['moment', 'done']),
+    }),
+  ),
+  moment: v.nullable(
+    v.object({
+      id: v.string(),
+      kicker: v.string(),
+      title: v.string(),
+      body: v.string(),
+      stop: v.number(),
+      options: v.array(
+        v.object({
+          id: v.string(),
+          label: v.string(),
+          flavor: v.optional(v.string()),
+          effect: v.any(),
+        }),
+      ),
+    }),
+  ),
   screen: v.picklist(['builder', 'team', 'season', 'playoffs', 'end']),
 });
 

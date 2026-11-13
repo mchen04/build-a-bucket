@@ -34,7 +34,7 @@ export class DataError extends Error {
   }
 }
 
-async function fetchText(path: string): Promise<string> {
+export async function fetchSource(path: string): Promise<string> {
   const url = `${DATA_BASE}/${path}`;
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -138,12 +138,12 @@ function parseExport<T>(source: string, name: string, schema: v.GenericSchema<T>
 
 export async function loadCatalog(): Promise<Catalog> {
   const [guardsText, bigsText, legendGuardsText, legendBigsText, teamsText, headshotsText] = await Promise.all([
-    fetchText(FILES.guards),
-    fetchText(FILES.bigs),
-    fetchText(FILES.legendGuards),
-    fetchText(FILES.legendBigs),
-    fetchText(FILES.teams),
-    fetchText(FILES.headshots),
+    fetchSource(FILES.guards),
+    fetchSource(FILES.bigs),
+    fetchSource(FILES.legendGuards),
+    fetchSource(FILES.legendBigs),
+    fetchSource(FILES.teams),
+    fetchSource(FILES.headshots),
   ]);
   let headshots: Record<string, string> = {};
   try {

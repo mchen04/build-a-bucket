@@ -1,5 +1,6 @@
 import { ATTR_LABELS, BIG_ATTRS, GUARD_ATTRS } from './engine/rules';
-import type { Era, Pick, Player, Position, SeasonResult } from './engine/types';
+import type { SeasonDraft } from './engine/season';
+import type { Era, MomentCard, Pick, Player, Position, SeasonResult } from './engine/types';
 
 export type Screen = 'builder' | 'team' | 'season' | 'playoffs' | 'end';
 
@@ -15,6 +16,8 @@ export interface RunState {
   current: { team: string; playerName: string } | null;
   team: string | null;
   season: SeasonResult | null;
+  draft: SeasonDraft | null;
+  moment: MomentCard | null;
   screen: Screen;
 }
 
@@ -31,6 +34,8 @@ export function createRun(seed: string, position: Position, era: Era): RunState 
     current: null,
     team: null,
     season: null,
+    draft: null,
+    moment: null,
     screen: 'builder',
   };
 }

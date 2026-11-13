@@ -2,13 +2,20 @@ import { OVR_WEIGHTS } from './rules';
 import type { Pick, Position } from './types';
 
 export function computeOvr(picks: Record<string, Pick>, position: Position): number {
+  return ovrFromValues(
+    Object.fromEntries(Object.entries(picks).map(([attr, pick]) => [attr, pick.val])),
+    position,
+  );
+}
+
+export function ovrFromValues(values: Record<string, number>, position: Position): number {
   const weights = OVR_WEIGHTS[position];
   let weighted = 0;
   let total = 0;
-  for (const [attr, pick] of Object.entries(picks)) {
+  for (const [attr, value] of Object.entries(values)) {
     const weight = weights[attr];
     if (weight === undefined) continue;
-    weighted += pick.val * weight;
+    weighted += value * weight;
     total += weight;
   }
   if (total === 0) return 0;

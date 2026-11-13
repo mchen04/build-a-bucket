@@ -426,6 +426,62 @@ button {
   gap: 6px;
 }
 
+.recent {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pill {
+  font-size: 10px;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  white-space: nowrap;
+}
+
+.pill.win {
+  color: var(--good);
+  border-color: rgba(61, 220, 151, 0.4);
+}
+
+.pill.loss {
+  color: var(--bad);
+  border-color: rgba(255, 93, 108, 0.35);
+}
+
+.table-seed {
+  width: 20px;
+  flex: none;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.table-team {
+  width: 44px;
+  flex: none;
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.table-wins {
+  flex: 1;
+  text-align: right;
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.table-note {
+  width: 32px;
+  flex: none;
+  text-align: right;
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--accent);
+}
+
 .stat {
   background: var(--panel);
   border: 1px solid var(--line);
