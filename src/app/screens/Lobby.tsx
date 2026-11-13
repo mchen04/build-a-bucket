@@ -258,6 +258,7 @@ export function Lobby(props: Props) {
   const standings = view.standings ?? [];
   const champion = view.participants.find((entry) => entry.season?.champion) ?? null;
   const building = phase === 'building' || phase === 'season';
+  const canBuild = building || (phase === 'barrier' && !me.season);
 
   return (
     <div class="screen">
@@ -348,7 +349,7 @@ export function Lobby(props: Props) {
           )
         ) : null}
 
-        {building ? (
+        {canBuild ? (
           me.season ? (
             <div class="card">
               <div class="tiny muted">Season · no moments</div>
@@ -377,7 +378,7 @@ export function Lobby(props: Props) {
           </div>
         ) : null}
 
-        {building && !run && view.settings.positions.length > 1 ? (
+        {canBuild && !run && view.settings.positions.length > 1 ? (
           <div class="card">
             <span class="tiny muted">Your build</span>
             <div class="seg">
@@ -485,7 +486,7 @@ export function Lobby(props: Props) {
           )
         ) : null}
 
-        {building ? (
+        {canBuild ? (
           me.season ? (
             <button class="btn" disabled>
               Waiting for the others
@@ -501,7 +502,7 @@ export function Lobby(props: Props) {
           )
         ) : null}
 
-        {phase === 'barrier' ? (
+        {phase === 'barrier' && me.season ? (
           me.isHost && awayWaiting ? (
             <button class="btn" disabled={busy} onClick={() => void forceRelease()} data-testid="force-playoffs">
               Start playoffs now

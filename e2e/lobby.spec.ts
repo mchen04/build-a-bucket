@@ -112,6 +112,13 @@ function readyToken(text: string): string {
   return /(\d+\/\d+ ready)/.exec(text)?.[1] ?? '';
 }
 
+async function ageLastSeen(code: string, seat: number, minutes: number): Promise<void> {
+  await db().query(
+    'update participants set last_seen = now() - make_interval(mins => $3::int) where lobby_id = (select id from lobbies where code = $1) and seat = $2',
+    [code, seat, minutes],
+  );
+}
+
 test('drives an eight player lobby from invite code to final standings', async ({ browser }) => {
   test.setTimeout(300_000);
   const contexts: BrowserContext[] = [];
@@ -288,6 +295,66 @@ test('drives an eight player lobby from invite code to final standings', async (
     for (const [index, count] of releaseCounts.entries()) {
       expect(count, `page ${index} stops asking for a release while the barrier holds`).toBeLessThanOrEqual(3);
     }
+  } finally {
+    for (const context of contexts) await context.close();
+  }
+});
+
+test('lets a returning player finish at the barrier and starts the playoffs', async ({ browser }) => {
+  test.setTimeout(300_000);
+  const contexts: BrowserContext[] = [];
+  const hostContext = await browser.newContext({ ...PROFILE });
+  const guestContext = await browser.newContext({ ...PROFILE });
+  contexts.push(hostContext, guestContext);
+  const host = await hostContext.newPage();
+  const guest = await guestContext.newPage();
+  try {
+    await host.goto('/');
+    await host.locator('[data-testid="mp-name"]').fill('Ava');
+    await host.locator('[data-testid="create-lobby"]').click();
+    await expect(host.locator('[data-testid="lobby-code"]')).toBeVisible();
+    const code = ((await host.locator('[data-testid="lobby-code"]').textContent()) ?? '').trim();
+    createdCodes.push(code);
+
+    await guest.goto('/');
+    await guest.locator('[data-testid="mp-name"]').fill('Ben');
+    await guest.locator('[data-testid="mp-code"]').fill(code);
+    await guest.locator('[data-testid="join-lobby"]').click();
+    await expect(guest.locator('[data-testid="lobby-code"]')).toBeVisible();
+
+    await host.locator('[data-testid="start-season"]').click();
+    await expect(host.locator('[data-testid="open-builder"]')).toBeVisible();
+    await expect(guest.locator('[data-testid="open-builder"]')).toBeVisible();
+
+    await host.locator('[data-testid="open-builder"]').click();
+    await spinAndPick(host);
+    await guest.locator('[data-testid="open-builder"]').click();
+    await spinAndPick(guest);
+    await guest.waitForTimeout(800);
+
+    await guest.goto('about:blank');
+    await ageLastSeen(code, 2, 5);
+    await finishBuild(host, 9, 'Ava');
+    await expect(host.locator('[data-testid="barrier-state"]')).toContainText(/ready/, { timeout: 30_000 });
+    await host.screenshot({ path: `${SHOTS}/barrier-return-host.png` });
+
+    await host.goto('about:blank');
+    await ageLastSeen(code, 1, 5);
+
+    await guest.goto('/');
+    await expect(guest.locator('[data-testid="lobby-status"]')).toHaveText('Barrier', { timeout: 30_000 });
+    await expect(guest.locator('[data-testid="open-builder"]')).toBeVisible({ timeout: 30_000 });
+    await guest.screenshot({ path: `${SHOTS}/barrier-return-guest.png` });
+
+    await finishBuild(guest, 9, 'Ben');
+    await expect(guest.locator('[data-testid="my-result"]')).toBeVisible({ timeout: 60_000 });
+    expect((await guest.locator('[data-testid="my-result"]').textContent()) ?? '').toMatch(/in the playoffs|· out/);
+    await expect(guest.locator('[data-testid="lobby-status"]')).toHaveText('Playoffs', { timeout: 60_000 });
+    await guest.screenshot({ path: `${SHOTS}/barrier-return-playoffs.png` });
+
+    await host.goto('/');
+    await expect(host.locator('[data-testid="lobby-status"]')).toHaveText('Playoffs', { timeout: 60_000 });
+    await expect(host.locator('[data-testid="next-reveal"]')).toBeVisible();
   } finally {
     for (const context of contexts) await context.close();
   }

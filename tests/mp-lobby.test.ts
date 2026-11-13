@@ -607,6 +607,43 @@ describeDb('lobby lifecycle', () => {
     expect(lateView.me.season).toBeNull();
   });
 
+  it('lets a returning participant finish during the barrier', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    await ageLastSeen(lobby.code, 2, 5);
+
+    const before = await view(lobby.code, lobby.host.secret);
+    expect(before.phase).toBe('barrier');
+    expect(before.participants.find((entry) => entry.seat === 2)?.away).toBe(true);
+
+    const returned = await view(lobby.code, guest.seat.secret);
+    expect(returned.phase).toBe('barrier');
+    expect(returned.me.season).toBeNull();
+    expect(returned.participants.find((entry) => entry.seat === 2)?.away).toBe(false);
+
+    const late = await submit(lobby.code, guest.seat.secret, await draftFor('guard', 'current', 'low'));
+    expect(late.status, 'a present participant can submit during the barrier').toBe(200);
+    const after = (await read<{ lobby: LobbyView }>(late)).lobby;
+    expect(after.me.season).not.toBeNull();
+    expect(['qualified', 'eliminated']).toContain(after.me.status);
+
+    await sleep(HOLD_WAIT);
+    const released = await release(lobby.code, lobby.host.secret);
+    expect(released.status).toBe(200);
+    const opened = (await read<{ lobby: LobbyView }>(released)).lobby;
+    expect(opened.phase).toBe('playoffs');
+    const back = opened.participants.find((entry) => entry.seat === 2);
+    expect(back?.season).not.toBeNull();
+    if (back?.season?.qualified) {
+      expect(back?.status).toBe('playoffs');
+    } else {
+      expect(back?.status).toBe('done');
+      expect(back?.rounds).toHaveLength(0);
+    }
+  });
+
   it('leaves a lobby that already left the building phase alone', async () => {
     const lobby = await newLobby('Host');
     expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
