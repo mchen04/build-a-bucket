@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { Catalog } from '../../shared/data/loader';
-import { DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../../shared/mp/types';
+import { BARRIER_HOLD_SECONDS, DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../../shared/mp/types';
 import type { Position } from '../../shared/engine/types';
 import { isBuildComplete, type RunState } from '../../shared/run';
 import { TopBar } from '../components';
@@ -47,6 +47,7 @@ export function Lobby(props: Props) {
   const [now, setNow] = useState(() => Date.now());
   const seeded = useRef(false);
   const submitted = useRef(false);
+  const releasedAt = useRef(0);
 
   useEffect(() => {
     const handle = window.setInterval(() => setNow(Date.now()), 1000);
@@ -103,9 +104,16 @@ export function Lobby(props: Props) {
     : false;
 
   useEffect(() => {
-    if (!view || view.phase !== 'barrier' || awaiting > 0) return;
-    void act((code, secret) => releaseRequest(code, secret, false)).catch(() => undefined);
-  }, [view, awaiting, act]);
+    if (!view || view.phase !== 'barrier' || awaiting > 0) return undefined;
+    let handle = 0;
+    const attempt = () => {
+      releasedAt.current = Date.now();
+      void act((code, secret) => releaseRequest(code, secret, false)).catch(() => undefined);
+      handle = window.setTimeout(attempt, BARRIER_HOLD_SECONDS * 1000);
+    };
+    handle = window.setTimeout(attempt, Math.max(0, releasedAt.current + BARRIER_HOLD_SECONDS * 1000 - Date.now()));
+    return () => window.clearTimeout(handle);
+  }, [view?.version, view?.phase, awaiting, act]);
 
   const start = async () => {
     setBusy(true);

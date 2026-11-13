@@ -112,10 +112,17 @@ test('drives an eight player lobby from invite code to final standings', async (
   test.setTimeout(300_000);
   const contexts: BrowserContext[] = [];
   const pages: Page[] = [];
+  const releaseCounts: number[] = PLAYERS.map(() => 0);
+  let countingReleases = false;
   for (let index = 0; index < PLAYERS.length; index++) {
     const context = await browser.newContext({ ...PROFILE });
     contexts.push(context);
     const page = await context.newPage();
+    page.on('request', (request) => {
+      if (countingReleases && request.method() === 'POST' && request.url().includes('/release')) {
+        releaseCounts[index] = (releaseCounts[index] ?? 0) + 1;
+      }
+    });
     page.on('console', (message) => {
       if (message.type() === 'error') console.log(`[page ${index}] console error: ${message.text()}`);
     });
@@ -200,6 +207,7 @@ test('drives an eight player lobby from invite code to final standings', async (
     await reloader.locator('[data-testid="open-builder"]').click();
     await expect(reloader.locator('.slot.filled')).toHaveCount(5);
 
+    countingReleases = true;
     mark('all players build');
     await Promise.all(pages.map((page, index) => finishBuild(page, index === RELOADER ? 5 : 10, PLAYERS[index] as string)));
     mark('every build submitted');
@@ -268,6 +276,10 @@ test('drives an eight player lobby from invite code to final standings', async (
     const standings = await host.locator('[data-testid="standings"] .table-row').allTextContents();
     console.log(`standings:\n${standings.join('\n')}`);
     console.log(`rounds seen per page: ${firstSeen.map((timeline) => [...timeline.keys()].sort().join('/')).join(' | ')}`);
+    console.log(`release attempts per page: ${releaseCounts.join(', ')}`);
+    for (const [index, count] of releaseCounts.entries()) {
+      expect(count, `page ${index} stops asking for a release while the barrier holds`).toBeLessThanOrEqual(3);
+    }
   } finally {
     for (const context of contexts) await context.close();
   }
