@@ -1,0 +1,31 @@
+{
+  "name": "build-a-bucket",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "json5": "^2.2.3",
+    "preact": "^10.27.2",
+    "valibot": "^1.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@preact/preset-vite": "^2.10.2",
+    "@types/node": "^24.3.0",
+    "eslint": "^9.35.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.42.0",
+    "vite": "^7.1.4",
+    "vitest": "^3.2.4"
+  }
+}

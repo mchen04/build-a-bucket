@@ -1,7 +1,8 @@
+node_modules
+dist
 .env*
-!.env.example
-node_modules/
-dist/
-.vercel/
-test-results/
-playwright-report/
+.vercel
+*.local
+playwright-report
+test-results
+.DS_Store
