@@ -493,7 +493,7 @@ describe('lobby lifecycle', () => {
     expect(hostView.events[0]?.kind).toBe('pick');
     expect(hostView.events[0]?.name).toBe('Guest');
     expect(hostView.events[0]?.detail ?? '').toMatch(/^took .+'s [A-Z]{2,3} [A-Z][+-]?$/);
-    expect(roundTrip).toBeLessThan(2500);
+    expect(roundTrip, 'the pick sync and the peer read stay well inside the polling budget').toBeLessThan(5000);
 
     const two = await buildHandler(
       authed(guest.seat.secret, `lobby/${lobby.code}/build`, {

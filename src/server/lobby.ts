@@ -610,7 +610,7 @@ export async function joinLobby(input: {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
   const name = cleanName(input.name) || 'Player';
-  for (let attempt = 0; attempt < 8; attempt++) {
+  for (let attempt = 0; attempt < 12; attempt++) {
     try {
       const rows = await sql.query<{
         lobby_id: string | null;
@@ -633,7 +633,7 @@ export async function joinLobby(input: {
       return readLobby({ code: input.code, secret: input.secret });
     } catch (error) {
       if (isUniqueViolation(error)) {
-        await new Promise((resolve) => setTimeout(resolve, 5 + attempt * 7));
+        await new Promise((resolve) => setTimeout(resolve, 10 + attempt * 10));
         continue;
       }
       return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
