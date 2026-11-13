@@ -305,8 +305,9 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
   await page.getByTestId('salary-shuffle-row-1').click();
   await expect(page.getByTestId('salary-shuffle-row-1')).toHaveCount(0);
   await expect(page.getByTestId('salary-grade-shooting-1')).toHaveCount(0);
-  const moved = page.locator('.sc-cell', { hasText: scoutedName });
+  const moved = page.locator('.sc-cell:has(.sc-grade)');
   await expect(moved).toHaveCount(1);
+  await expect(moved.locator('.sc-name')).toHaveText(scoutedName);
   const movedAttrs = JSON.parse((await moved.getAttribute('data-attrs')) ?? '{}') as Record<string, number>;
   const movedValues = Object.values(movedAttrs);
   const movedMean = movedValues.reduce((sum, value) => sum + value, 0) / movedValues.length;

@@ -189,6 +189,7 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
 
   return (
     <Salary
+      key={mode === 'daily' ? `daily:${plan.key}` : `infinite:${seed}`}
       mode={mode}
       dateStr={mode === 'daily' ? plan.key : `#${seed}`}
       cap={cap}
