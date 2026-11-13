@@ -20,6 +20,8 @@ export function phaseLabel(phase: LobbyPhase): string {
       return 'Playoffs';
     case 'recap':
       return 'Recap';
+    case 'rematch':
+      return 'Play again';
   }
 }
 

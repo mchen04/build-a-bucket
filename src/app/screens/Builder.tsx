@@ -84,6 +84,7 @@ export function Builder(props: Props) {
       props.onChange({
         ...run,
         current: { team: target.team, playerName: target.player.name },
+        currentRespin: { team: teamRespin, player: playerRespin },
         teamRespinUsed: teamRespin ? true : run.teamRespinUsed,
         playerRespinUsed: playerRespin ? true : run.playerRespinUsed,
       });

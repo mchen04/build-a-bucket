@@ -1,7 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import type { Catalog } from '../../shared/data/loader';
-import { randomSeed } from '../../shared/engine/rng';
 import { computeOvr } from '../../shared/engine/ovr';
 import { SQUAD_SLOTS } from '../../shared/engine/squad';
 import type { Era } from '../../shared/engine/types';
@@ -14,6 +13,7 @@ interface Props {
   catalog: Catalog;
   era: Era;
   team: string | null;
+  buildSeed: string;
   busy: boolean;
   header?: ComponentChildren;
   onBack: () => void;
@@ -28,10 +28,10 @@ export function LobbySquad(props: Props) {
 
   const activeSlot = SQUAD_SLOTS.find((entry) => entry.id === slot) ?? null;
   const activeRun = slot ? runs[slot] ?? null : null;
-  const players = SQUAD_SLOTS.map((entry) => {
+  const players: (SquadPlayerBuild | null)[] = SQUAD_SLOTS.map((entry) => {
     const run = runs[entry.id];
     return run && isBuildComplete(run)
-      ? { slot: entry.id, position: run.position, picks: run.picks }
+      ? { slot: entry.id, position: run.position, picks: run.picks, spins: run.history }
       : null;
   });
   const complete = players.every((entry) => entry !== null);
@@ -54,7 +54,7 @@ export function LobbySquad(props: Props) {
     const entry = SQUAD_SLOTS.find((candidate) => candidate.id === slotId);
     if (!entry) return;
     if (!runs[slotId]) {
-      setRuns((current) => ({ ...current, [slotId]: createRun(randomSeed(), entry.pos, props.era) }));
+      setRuns((current) => ({ ...current, [slotId]: createRun(`${props.buildSeed}:${slotId}`, entry.pos, props.era) }));
     }
     setSlot(slotId);
   };

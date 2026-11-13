@@ -6,6 +6,14 @@ export interface SpinTarget {
   player: Player;
 }
 
+export interface SpinRecord {
+  attr: string;
+  team: string;
+  playerName: string;
+  teamRespin: boolean;
+  playerRespin: boolean;
+}
+
 export function teamCandidates(pool: readonly Player[]): string[] {
   return [...new Set(pool.map((player) => player.team))].sort((a, b) => a.localeCompare(b));
 }

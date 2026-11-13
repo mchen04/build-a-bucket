@@ -167,6 +167,21 @@ export async function rematchRequest(code: string, secret: string): Promise<Lobb
   return parseView(response);
 }
 
+export async function powerRequest(
+  code: string,
+  secret: string,
+  power: 'shuffle' | 'scout',
+  target: { kind: 'column'; index: number } | { kind: 'row'; tier: number } | { cardId: string },
+): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/power`, postInit(secret, { actionId: newActionId(), power, target }));
+  return parseView(response);
+}
+
+export async function removePlayerRequest(code: string, secret: string, seat: number): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/remove`, postInit(secret, { actionId: newActionId(), seat }));
+  return parseView(response);
+}
+
 export async function leaveLobbyRequest(code: string, secret: string): Promise<void> {
   const response = await request(`/api/lobby/${code}/leave`, postInit(secret, { actionId: newActionId() }));
   if (response.ok || response.status === 403 || response.status === 404) return;

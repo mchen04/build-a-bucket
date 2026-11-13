@@ -16,6 +16,7 @@ function participant(overrides: Partial<ParticipantView> = {}): ParticipantView 
     rerollUsed: false,
     build: null,
     summary: null,
+    buildSeed: null,
     ready: false,
     season: null,
     ...overrides,
@@ -37,6 +38,7 @@ describe('phase labels', () => {
     expect(phaseLabel('playin')).toBe('Play-In');
     expect(phaseLabel('playoffs')).toBe('Playoffs');
     expect(phaseLabel('recap')).toBe('Recap');
+    expect(phaseLabel('rematch')).toBe('Play again');
   });
 });
 
@@ -64,8 +66,8 @@ describe('participant status', () => {
 
   it('shows build progress before a team exists', () => {
     expect(statusLine(participant({ status: 'ready' }), 'building')).toBe('ready');
-    expect(statusLine(participant({ summary: { filled: 4, total: 10, latest: null, ovr: 0 } }), 'building')).toBe('4/10');
-    expect(shortStatus(participant({ summary: { filled: 4, total: 10, latest: null, ovr: 0 } }), 'building')).toBe('4/10');
+    expect(statusLine(participant({ summary: { filled: 4, total: 10, latest: null, ovr: 0, auto: false } }), 'building')).toBe('4/10');
+    expect(shortStatus(participant({ summary: { filled: 4, total: 10, latest: null, ovr: 0, auto: false } }), 'building')).toBe('4/10');
   });
 
   it('labels readiness', () => {

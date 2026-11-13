@@ -1,7 +1,18 @@
+import type { SpinRecord } from '../engine/spin.js';
 import type { Era, Pick, Position } from '../engine/types.js';
 import type { LeagueView } from './league.js';
 
-export type LobbyPhase = 'lobby' | 'draw' | 'building' | 'preview' | 'season' | 'awards' | 'playin' | 'playoffs' | 'recap';
+export type LobbyPhase =
+  | 'lobby'
+  | 'draw'
+  | 'building'
+  | 'preview'
+  | 'season'
+  | 'awards'
+  | 'playin'
+  | 'playoffs'
+  | 'recap'
+  | 'rematch';
 
 export type ParticipantStatus = 'joined' | 'building' | 'ready' | 'left';
 
@@ -47,6 +58,7 @@ export interface NormalBuild {
   position: Position;
   era: Era;
   picks: Record<string, Pick>;
+  spins?: SpinRecord[];
 }
 
 export interface SalaryBuild {
@@ -59,6 +71,7 @@ export interface SquadPlayerBuild {
   slot: string;
   position: Position;
   picks: Record<string, Pick>;
+  spins?: SpinRecord[];
 }
 
 export interface SquadBuild {
@@ -73,6 +86,13 @@ export interface BuildSummary {
   total: number;
   latest: string | null;
   ovr: number;
+  auto: boolean;
+}
+
+export interface SalaryPowersView {
+  shuffle: boolean;
+  scout: boolean;
+  scouted: Record<string, string>;
 }
 
 export interface TeamAssignmentView {
@@ -104,6 +124,7 @@ export interface ParticipantView {
   rerollUsed: boolean;
   build: LobbyBuild | null;
   summary: BuildSummary | null;
+  buildSeed: string | null;
   ready: boolean;
   season: ParticipantSeasonView | null;
 }
@@ -143,6 +164,7 @@ export interface LobbyView {
   teams: TeamAssignmentView[];
   salaryBoard: SalaryCardPick[][] | null;
   salaryBudget: number | null;
+  salaryPowers: SalaryPowersView | null;
   league: LeagueView | null;
   ready: ReadyView;
   serverTime: string;

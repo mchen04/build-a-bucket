@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { Catalog } from '../../shared/data/loader';
 import type { Position } from '../../shared/engine/types';
+import { inviteUrl } from '../../shared/mp/invite';
 import type {
   LobbySettings,
   LobbyView,
@@ -17,8 +18,10 @@ import {
   drawRequest,
   leaveLobbyRequest,
   lockRequest,
+  powerRequest,
   readyRequest,
   rematchRequest,
+  removePlayerRequest,
   rerollRequest,
   startLobbyRequest,
   submitBuildRequest,
@@ -119,6 +122,11 @@ export function Lobby(props: Props) {
   const lock = () => runAction((code, secret) => lockRequest(code, secret));
   const ready = () => (view ? runAction((code, secret) => readyRequest(code, secret, view.stage)) : undefined);
   const advance = () => (view ? runAction((code, secret) => advanceRequest(code, secret, view.stage)) : undefined);
+  const remove = (seat: number) => runAction((code, secret) => removePlayerRequest(code, secret, seat));
+  const power = (
+    kind: 'shuffle' | 'scout',
+    target: { kind: 'column'; index: number } | { kind: 'row'; tier: number } | { cardId: string },
+  ) => runAction((code, secret) => powerRequest(code, secret, kind, target));
   const rematch = () => {
     updateRun(null);
     return runAction((code, secret) => rematchRequest(code, secret));
@@ -126,15 +134,22 @@ export function Lobby(props: Props) {
 
   const openNormal = () => {
     if (!view) return;
+    const seed = view.me.buildSeed ?? `${view.code}:${view.me.seat}:${view.settings.era}`;
     const local = readLocalDraft(view.code);
-    if (local && local.era === view.settings.era) setRun(local);
-    else updateRun({ ...createRun(`${view.code}:${view.me.seat}:${view.settings.era}`, position, view.settings.era), team: view.me.team });
+    if (local && local.era === view.settings.era && local.seed === seed) setRun(local);
+    else updateRun({ ...createRun(seed, position, view.settings.era), team: view.me.team });
     setScreen('build');
   };
 
   const submitNormal = async () => {
     if (!run) return;
-    const build: NormalBuild = { kind: 'normal', position: run.position, era: run.era, picks: run.picks };
+    const build: NormalBuild = {
+      kind: 'normal',
+      position: run.position,
+      era: run.era,
+      picks: run.picks,
+      spins: run.history,
+    };
     setBusy(true);
     setNotice(null);
     try {
@@ -190,11 +205,17 @@ export function Lobby(props: Props) {
   };
 
   const copyCode = async () => {
+    const code = view?.code ?? '';
     try {
-      await navigator.clipboard.writeText(view?.code ?? '');
-      setNotice('Invite code copied.');
+      await navigator.clipboard.writeText(inviteUrl(window.location.origin, code));
+      setNotice('Invite link copied.');
     } catch {
-      setNotice('Copy failed — read the code aloud.');
+      try {
+        await navigator.clipboard.writeText(code);
+        setNotice('Invite code copied.');
+      } catch {
+        setNotice('Copy failed — read the code aloud.');
+      }
     }
   };
 
@@ -245,10 +266,12 @@ export function Lobby(props: Props) {
       <LobbySalary
         board={view.salaryBoard}
         budget={view.salaryBudget}
+        powers={view.salaryPowers}
         busy={busy}
         header={peerStrip}
         onBack={() => setScreen('lobby')}
         onSubmit={(cards) => void submitSalary(cards)}
+        onPower={(kind, target) => void power(kind, target)}
       />
     );
   }
@@ -259,6 +282,7 @@ export function Lobby(props: Props) {
         catalog={catalog}
         era={view.settings.era}
         team={me.team}
+        buildSeed={me.buildSeed ?? `${view.code}:${me.seat}:${view.settings.era}`}
         busy={busy}
         header={peerStrip}
         onBack={() => setScreen('lobby')}
@@ -268,11 +292,22 @@ export function Lobby(props: Props) {
   }
 
   const present = view.participants.filter((entry) => entry.status !== 'left');
-  const leaguePhase = view.phase === 'season' || view.phase === 'awards' || view.phase === 'playin' || view.phase === 'playoffs' || view.phase === 'recap';
+  const retained = present;
+  const retainedReady = retained.filter((entry) => entry.ready).length;
+  const autoFilled = view.participants.filter((entry) => entry.summary?.auto).length;
+  const awayRetained = retained.filter((entry) => entry.away && !entry.isMe);
+  const leaguePhase =
+    view.phase === 'season' ||
+    view.phase === 'awards' ||
+    view.phase === 'playin' ||
+    view.phase === 'playoffs' ||
+    view.phase === 'recap';
   const nextReveal =
     view.stageStartedAt === null || view.league === null || view.league.stageTotal === 0
       ? 0
-      : Math.max(0, Date.parse(view.stageStartedAt) + view.league.stageTotal * 1200 - now);
+      : view.league.phase === 'playoffs'
+        ? Math.max(0, Date.parse(view.stageStartedAt) + view.league.stageTotal * 1500 - now)
+        : Math.max(0, Date.parse(view.stageStartedAt) + Math.ceil(view.league.stageTotal / 3) * 1200 - now);
 
   return (
     <div class="screen">
@@ -296,7 +331,10 @@ export function Lobby(props: Props) {
               <div class="code" data-testid="lobby-code">
                 {view.code}
               </div>
-              <div class="tiny muted">One shared NBA season · 2–8 friends</div>
+              <div class="tiny muted">Share this link · 2–8 friends</div>
+              <div class="tiny" data-testid="lobby-invite-link">
+                {inviteUrl(window.location.origin, view.code)}
+              </div>
             </div>
             <div class="tiny muted" style={{ textAlign: 'right' }}>
               {view.seatsTaken}/{view.capacity} in
@@ -386,6 +424,11 @@ export function Lobby(props: Props) {
                 : `${view.ready.ready}/${view.ready.present} builds in`}
             </div>
             {me.team ? <div class="tiny muted">Your team · {me.team}</div> : null}
+            {autoFilled > 0 ? (
+              <div class="tiny muted" data-testid="auto-filled">
+                {autoFilled} build{autoFilled === 1 ? '' : 's'} auto-filled for away players
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -398,10 +441,37 @@ export function Lobby(props: Props) {
                 <div class="tiny" key={entry.seat} style={{ fontWeight: entry.isMe ? 800 : 500 }}>
                   {entry.name} · {entry.team}
                   {participant?.summary ? ` · OVR ${participant.summary.ovr}` : ''}
+                  {participant?.summary?.auto ? ' · auto-filled' : ''}
                 </div>
               );
             })}
             <div class="tiny muted" style={{ marginTop: '4px' }}>{readyLabel(view.ready)}</div>
+          </div>
+        ) : null}
+
+        {view.phase === 'rematch' ? (
+          <div class="card" data-testid="rematch-gate">
+            <div class="tiny muted">Play again</div>
+            <div style={{ fontWeight: 800, fontSize: '13px', marginTop: '2px' }}>
+              {view.ready.mine ? 'You are ready' : 'Ready up for the next league'}
+            </div>
+            <div class="tiny muted">
+              {retainedReady}/{retained.length} ready · every retained player must ready
+            </div>
+            {me.isHost && awayRetained.length ? (
+              <div style={{ marginTop: '4px' }}>
+                {awayRetained.map((entry) => (
+                  <div class="row" key={entry.seat} style={{ alignItems: 'center' }}>
+                    <span class="tiny" style={{ flex: 1 }}>
+                      {entry.name} is away
+                    </span>
+                    <button class="btn btn-ghost btn-small" disabled={busy} onClick={() => void remove(entry.seat)}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -417,8 +487,15 @@ export function Lobby(props: Props) {
       <div class="bottom">
         {view.phase === 'lobby' ? (
           me.isHost ? (
-            <button class="btn" disabled={busy} onClick={() => void start()} data-testid="start-season">
-              Start league · {view.seatsTaken} player{view.seatsTaken === 1 ? '' : 's'}
+            <button
+              class="btn"
+              disabled={busy || view.seatsTaken < 2}
+              onClick={() => void start()}
+              data-testid="start-season"
+            >
+              {view.seatsTaken < 2
+                ? 'Waiting for a second player'
+                : `Start league · ${view.seatsTaken} player${view.seatsTaken === 1 ? '' : 's'}`}
             </button>
           ) : (
             <button class="btn" disabled>
@@ -428,22 +505,22 @@ export function Lobby(props: Props) {
         ) : null}
 
         {view.phase === 'draw' ? (
-          me.team ? (
-            <div class="row">
+          <div class="row">
+            {me.team ? (
               <button class="btn" disabled={busy || me.rerollUsed} onClick={() => void reroll()} data-testid="reroll-team">
                 {me.rerollUsed ? 'Reroll used' : 'Reroll team'}
               </button>
-              {me.isHost ? (
-                <button class="btn btn-ghost" disabled={busy} onClick={() => void lock()} data-testid="lock-teams">
-                  Lock teams
-                </button>
-              ) : null}
-            </div>
-          ) : (
-            <button class="btn" disabled={busy} onClick={() => void draw()} data-testid="draw-team">
-              Draw team
-            </button>
-          )
+            ) : (
+              <button class="btn" disabled={busy} onClick={() => void draw()} data-testid="draw-team">
+                Draw team
+              </button>
+            )}
+            {me.isHost ? (
+              <button class="btn btn-ghost" disabled={busy} onClick={() => void lock()} data-testid="lock-teams">
+                Lock teams
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
         {view.phase === 'building' && me.status !== 'ready' ? (
@@ -460,22 +537,48 @@ export function Lobby(props: Props) {
               <button class="btn" data-testid="open-builder" onClick={openNormal}>
                 {run && isBuildComplete(run) ? 'Review build' : run && Object.keys(run.picks).length ? `Continue · ${Object.keys(run.picks).length}/10` : 'Build your player'}
               </button>
+              {me.isHost ? (
+                <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
+                  Lock now
+                </button>
+              ) : null}
             </div>
           ) : view.settings.mode === 'salary' ? (
-            <button class="btn" data-testid="open-builder" onClick={() => setScreen('salary')}>
-              Open salary board
-            </button>
+            <div class="row">
+              <button class="btn" data-testid="open-builder" onClick={() => setScreen('salary')}>
+                Open salary board
+              </button>
+              {me.isHost ? (
+                <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
+                  Lock now
+                </button>
+              ) : null}
+            </div>
           ) : (
-            <button class="btn" data-testid="open-builder" onClick={() => setScreen('squad')}>
-              Build your five
-            </button>
+            <div class="row">
+              <button class="btn" data-testid="open-builder" onClick={() => setScreen('squad')}>
+                Build your five
+              </button>
+              {me.isHost ? (
+                <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
+                  Lock now
+                </button>
+              ) : null}
+            </div>
           )
         ) : null}
 
         {view.phase === 'building' && me.status === 'ready' ? (
-          <button class="btn" disabled>
-            Waiting for the others
-          </button>
+          <div class="row">
+            <button class="btn" disabled>
+              Waiting for the others
+            </button>
+            {me.isHost ? (
+              <button class="btn btn-ghost" disabled={busy} onClick={() => void advance()} data-testid="lock-now">
+                Lock now
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
         {view.phase === 'preview' ? (
@@ -491,13 +594,35 @@ export function Lobby(props: Props) {
           </div>
         ) : null}
 
+        {view.phase === 'rematch' ? (
+          <div class="row">
+            <button class="btn" disabled={busy || view.ready.mine} onClick={() => void ready()} data-testid="rematch-ready">
+              {view.ready.mine ? 'Ready' : 'Ready for the next league'}
+            </button>
+            {me.isHost ? (
+              <button
+                class="btn btn-ghost"
+                disabled={busy || retainedReady < retained.length || retained.length < 2}
+                onClick={() => void advance()}
+                data-testid="rematch-start"
+              >
+                Open the draw
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {view.phase === 'recap' ? (
           <div class="row">
             {me.isHost ? (
               <button class="btn" disabled={busy} onClick={() => void rematch()} data-testid="rematch">
-                Rematch
+                Play again
               </button>
-            ) : null}
+            ) : (
+              <button class="btn" disabled>
+                Waiting for the host
+              </button>
+            )}
             <button class="btn btn-ghost" onClick={() => void exit(false)} data-testid="leave-lobby">
               Close the lobby
             </button>

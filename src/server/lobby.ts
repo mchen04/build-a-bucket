@@ -1,12 +1,11 @@
 import * as v from 'valibot';
 import { LEAGUE_TEAMS, simulateLeague, type HumanTeamInput, type LeagueResult } from '../shared/engine/league.js';
+import { seededRng } from '../shared/engine/rng.js';
+import type { SalCard } from '../shared/engine/salary.js';
+import { scoutGrade, shuffleColumn, shuffleRow, type ShuffleTarget } from '../shared/engine/salaryPowers.js';
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
 import { isCheckpoint, revealLeague, stageCursorAt, stageGamesTotal } from '../shared/mp/league.js';
-import {
-  BuildSummarySchema,
-  LobbyBuildSchema,
-  SettingsSchema,
-} from '../shared/mp/schemas.js';
+import { BuildSummarySchema, LobbyBuildSchema, SettingsSchema } from '../shared/mp/schemas.js';
 import {
   AWAY_MS,
   CAPACITY,
@@ -25,9 +24,18 @@ import {
   type ParticipantView,
   type ReadyView,
   type SalaryCardPick,
+  type SalaryPowersView,
   type TeamAssignmentView,
 } from '../shared/mp/types.js';
-import { catalog, powerFromBuild, salaryBoardFor, validateBuild, type SalaryBoard } from './league.js';
+import {
+  autoBuild,
+  buildSeedFor,
+  catalog,
+  powerFromBuild,
+  salaryBoardFor,
+  validateBuild,
+  type SalaryBoard,
+} from './league.js';
 import { db, isUniqueViolation, serverError } from './db.js';
 
 export type Outcome = { ok: true; view: LobbyView } | { ok: false; status: number; error: ApiErrorBody };
@@ -66,6 +74,8 @@ interface RawLobby {
   season_secret: string;
 }
 
+type LobbyRow = Omit<RawLobby, 'league'>;
+
 interface RawParticipant {
   id: string;
   name: string;
@@ -81,6 +91,7 @@ interface RawParticipant {
   preview_ready: boolean;
   team: string | null;
   reroll_used: boolean;
+  salary_powers: unknown;
 }
 
 interface RawEvent {
@@ -97,16 +108,11 @@ interface ReadRow {
   events: RawEvent[];
 }
 
-interface LobbyContextRow {
-  id: string;
-  phase: LobbyPhase;
-  mode: string;
-  era: string;
-  season_secret: string;
-  host_participant: string | null;
-  stage: number | string;
-  stage_cursor: number | string;
-  stage_started_at: string | null;
+interface SalaryPowersState {
+  shuffle: boolean;
+  scout: boolean;
+  grid: SalCard[][] | null;
+  scouted: Record<string, string>;
 }
 
 export function parseSettings(raw: unknown): LobbySettings {
@@ -123,7 +129,7 @@ function parseBuild(raw: unknown): LobbyBuild | null {
 function parseSummary(raw: unknown): BuildSummary | null {
   if (!raw) return null;
   const parsed = v.safeParse(BuildSummarySchema, raw);
-  return parsed.success ? parsed.output : null;
+  return parsed.success ? (parsed.output as BuildSummary) : null;
 }
 
 function parseLeague(raw: unknown): LeagueResult | null {
@@ -131,6 +137,20 @@ function parseLeague(raw: unknown): LeagueResult | null {
   const candidate = raw as Partial<LeagueResult>;
   if (!Array.isArray(candidate.games) || !candidate.standings || !Array.isArray(candidate.humans)) return null;
   return candidate as LeagueResult;
+}
+
+function parsePowers(raw: unknown): SalaryPowersState {
+  if (!raw || typeof raw !== 'object') return { shuffle: false, scout: false, grid: null, scouted: {} };
+  const candidate = raw as Partial<SalaryPowersState>;
+  return {
+    shuffle: candidate.shuffle === true,
+    scout: candidate.scout === true,
+    grid: Array.isArray(candidate.grid) ? (candidate.grid as SalCard[][]) : null,
+    scouted:
+      candidate.scouted && typeof candidate.scouted === 'object'
+        ? (candidate.scouted as Record<string, string>)
+        : {},
+  };
 }
 
 function toEventViews(row: ReadRow): EventView[] {
@@ -150,22 +170,19 @@ function toEventViews(row: ReadRow): EventView[] {
   });
 }
 
-function salaryView(board: SalaryBoard | null): { salaryBoard: SalaryCardPick[][] | null; salaryBudget: number | null } {
-  if (!board) return { salaryBoard: null, salaryBudget: null };
-  return {
-    salaryBoard: board.grid.map((column) =>
-      column.map((card) => ({
-        id: card.id,
-        name: card.name,
-        team: card.team,
-        price: card.price,
-        attrs: card.attrs,
-        fullAttrs: card.fullAttrs,
-        posGroup: card.posGroup,
-      })),
-    ),
-    salaryBudget: board.budget,
-  };
+function salaryGridView(grid: SalCard[][] | null): SalaryCardPick[][] | null {
+  if (!grid) return null;
+  return grid.map((column) =>
+    column.map((card) => ({
+      id: card.id,
+      name: card.name,
+      team: card.team,
+      price: card.price,
+      attrs: card.attrs,
+      fullAttrs: card.fullAttrs,
+      posGroup: card.posGroup,
+    })),
+  );
 }
 
 function buildView(row: ReadRow, now: number, board: SalaryBoard | null): LobbyView | null {
@@ -191,7 +208,7 @@ function buildView(row: ReadRow, now: number, board: SalaryBoard | null): LobbyV
   const present = row.participants.filter((entry) => entry.status !== 'left' && now - Date.parse(entry.last_seen) <= AWAY_MS);
   const participants: ParticipantView[] = row.participants.map((entry) => {
     const ready =
-      raw.phase === 'preview'
+      raw.phase === 'preview' || raw.phase === 'rematch'
         ? entry.preview_ready
         : league
           ? Number(entry.ready_stage) >= stage
@@ -213,6 +230,7 @@ function buildView(row: ReadRow, now: number, board: SalaryBoard | null): LobbyV
       rerollUsed: entry.reroll_used,
       build: entry.is_me ? parseBuild(entry.build) : null,
       summary: parseSummary(entry.build_summary),
+      buildSeed: entry.is_me ? buildSeedFor(raw.season_secret, entry.id) : null,
       ready,
       season:
         league && human
@@ -230,12 +248,20 @@ function buildView(row: ReadRow, now: number, board: SalaryBoard | null): LobbyV
   if (!me) return null;
   const readyView: ReadyView = {
     ready: present.filter((entry) =>
-      raw.phase === 'preview' ? entry.preview_ready : league ? Number(entry.ready_stage) >= stage : entry.status === 'ready',
+      raw.phase === 'preview' || raw.phase === 'rematch'
+        ? entry.preview_ready
+        : league
+          ? Number(entry.ready_stage) >= stage
+          : entry.status === 'ready',
     ).length,
     present: present.length,
     mine: me.ready,
   };
-  const salary = settings.mode === 'salary' && raw.phase === 'building' && !league ? salaryView(board) : salaryView(null);
+  const powers = parsePowers(meRow.salary_powers);
+  const salaryOpen = settings.mode === 'salary' && raw.phase === 'building' && !league && board !== null;
+  const salaryPowers: SalaryPowersView | null = salaryOpen
+    ? { shuffle: powers.shuffle, scout: powers.scout, scouted: powers.scouted }
+    : null;
   return {
     code: raw.code,
     phase: raw.phase,
@@ -254,7 +280,9 @@ function buildView(row: ReadRow, now: number, board: SalaryBoard | null): LobbyV
     me,
     events: toEventViews(row),
     teams,
-    ...salary,
+    salaryBoard: salaryOpen && board ? salaryGridView(powers.grid ?? board.grid) : null,
+    salaryBudget: salaryOpen && board ? board.budget : null,
+    salaryPowers,
     league: leagueView,
     ready: readyView,
     serverTime: new Date(now).toISOString(),
@@ -300,7 +328,8 @@ select
     'build', case when p.token_hash = $2 then p.build else null end,
     'build_kind', p.build_kind, 'build_summary', p.build_summary,
     'ready_stage', p.ready_stage, 'preview_ready', p.preview_ready,
-    'team', t.team, 'reroll_used', coalesce(t.reroll_used, false)
+    'team', t.team, 'reroll_used', coalesce(t.reroll_used, false),
+    'salary_powers', case when p.token_hash = $2 then p.salary_powers else null end
   ) order by p.seat), '[]'::json) from participants p
     left join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
     where p.lobby_id = (select id from l)) as participants,
@@ -309,6 +338,19 @@ select
   ) order by e.id desc), '[]'::json) from (
     select * from events where lobby_id = (select id from l) order by id desc limit ${EVENT_LIMIT}
   ) e) as events
+`;
+
+const LOBBY_ROW_SQL = `
+select id, code, phase, host_participant, settings, version, mode, era, stage, stage_cursor,
+  stage_started_at, locked_at, rematch, season_secret
+from lobbies where code = $1
+`;
+
+const EVENTS_SQL = `
+select coalesce(json_agg(json_build_object(
+  'id', e.id, 'kind', e.kind, 'payload', e.payload, 'participant_id', e.participant_id, 'at', e.created_at
+) order by e.id desc), '[]'::json) as events
+from (select * from events where lobby_id = (select id from lobbies where code = $1) order by id desc limit ${EVENT_LIMIT}) e
 `;
 
 const HOST_SQL = `
@@ -339,6 +381,112 @@ select m.id, m.host_participant, 'host_changed',
 from moved m
 `;
 
+const AUTO_LOCK_SQL = `
+with l as (select id, phase from lobbies where code = $1 for update),
+present as (
+  select p.id, t.team from participants p
+  left join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
+  where p.lobby_id = (select id from l) and p.status <> 'left'
+    and p.last_seen > now() - make_interval(secs => $2::int)
+),
+missing as (
+  select id, row_number() over (order by seat) as rn from (
+    select p.id, p.seat from participants p
+    where p.lobby_id = (select id from l) and p.status <> 'left'
+      and not exists (select 1 from lobby_teams t where t.lobby_id = p.lobby_id and t.participant_id = p.id)
+    for update
+  ) locked
+),
+free as (
+  select team, row_number() over (order by random()) as rn
+  from unnest($3::text[]) as candidate(team)
+  where not exists (select 1 from lobby_teams t where t.lobby_id = (select id from l) and t.team = candidate.team)
+),
+assigned as (
+  insert into lobby_teams (lobby_id, participant_id, team)
+  select (select id from l), m.id, f.team
+  from missing m join free f on f.rn = m.rn
+  where (select phase from l) = 'draw'
+  on conflict do nothing
+  returning participant_id
+),
+locked as (
+  update lobbies set phase = 'building', locked_at = coalesce(locked_at, now()),
+    version = version + 1, updated_at = now()
+  where id = (select id from l) and phase = 'draw'
+    and (select count(*) from present) >= 2
+    and not exists (select 1 from present where team is null)
+  returning id
+),
+log as (
+  insert into events (lobby_id, kind, payload)
+  select id, 'locked', jsonb_build_object('detail', 'locked the teams') from locked
+)
+select (select count(*)::int from locked) as locked
+`;
+
+const BUILDING_PREVIEW_SQL = `
+update lobbies set phase = 'preview', version = version + 1, updated_at = now()
+where id = $1::uuid and phase = 'building'
+  and not exists (
+    select 1 from participants p
+    where p.lobby_id = $1::uuid and p.status <> 'left'
+      and p.last_seen > now() - make_interval(secs => $2::int)
+      and p.status <> 'ready'
+  )
+returning id
+`;
+
+const REMATCH_DRAW_SQL = `
+update lobbies set phase = 'draw', version = version + 1, updated_at = now()
+where id = $1::uuid and phase = 'rematch'
+  and (select count(*) from participants p where p.lobby_id = $1::uuid and p.status <> 'left') >= 2
+  and not exists (
+    select 1 from participants p where p.lobby_id = $1::uuid and p.status <> 'left' and not p.preview_ready
+  )
+returning id
+`;
+
+async function autoCompleteMissing(
+  lobby: { id: string; season_secret: string; mode: string; era: string },
+  data: Awaited<ReturnType<typeof catalog>>,
+): Promise<void> {
+  const settings: LobbySettings = {
+    era: lobby.era === 'alltime' ? 'alltime' : 'current',
+    mode: lobby.mode as LeagueMode,
+  };
+  const rows = await db().query<{ id: string; name: string; team: string; build: unknown }>(
+    `select p.id, p.name, t.team, p.build
+     from participants p join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
+     where p.lobby_id = $1::uuid and p.status <> 'left'`,
+    [lobby.id],
+  );
+  for (const row of rows) {
+    if (row.build) continue;
+    const check = autoBuild(settings, data, row.team, buildSeedFor(lobby.season_secret, row.id), lobby.season_secret);
+    if (!check.ok) continue;
+    const updated = await db().query<{ id: string }>(
+      `update participants set build = $2::jsonb, build_kind = $3, build_summary = $4::jsonb,
+         status = 'ready', last_seen = now()
+       where id = $1::uuid and build is null and status <> 'left'
+         and exists (
+           select 1 from lobbies l
+           where l.id = (select p2.lobby_id from participants p2 where p2.id = $1::uuid)
+             and l.phase in ('building', 'preview')
+         )
+       returning id`,
+      [row.id, JSON.stringify(check.build), check.build.kind, JSON.stringify(check.summary)],
+    );
+    if (updated[0]) {
+      await db().query(
+        `insert into events (lobby_id, participant_id, kind, payload)
+         values ($1::uuid, $2::uuid, 'auto_build', jsonb_build_object('name', $3::text, 'detail', 'build auto-filled'))`,
+        [lobby.id, row.id, row.name],
+      );
+    }
+  }
+}
+
 async function maintain(row: ReadRow): Promise<void> {
   const raw = row.lobby;
   if (!raw) return;
@@ -350,12 +498,19 @@ async function maintain(row: ReadRow): Promise<void> {
     await db().query(HOST_SQL, [raw.code, Math.floor(HOST_IDLE_MS / 1000)]);
   }
   if (raw.phase === 'draw') {
+    if (active.length < 2 || active.some((entry) => !entry.team)) return;
+    await db().query(AUTO_LOCK_SQL, [raw.code, Math.floor(AWAY_MS / 1000), LEAGUE_TEAMS]);
     return;
   }
   if (raw.phase === 'building') {
-    if (active.length > 0 && active.every((entry) => entry.status === 'ready')) {
+    if (active.length === 0 || !active.every((entry) => entry.status === 'ready')) return;
+    const data = await catalog();
+    await autoCompleteMissing(raw, data);
+    const updated = await db().query<{ id: string }>(BUILDING_PREVIEW_SQL, [raw.id, Math.floor(AWAY_MS / 1000)]);
+    if (updated[0]) {
       await db().query(
-        "update lobbies set phase = 'preview', version = version + 1, updated_at = now() where id = $1::uuid and phase = 'building'",
+        `insert into events (lobby_id, kind, payload)
+         values ($1::uuid, 'preview', jsonb_build_object('detail', 'opened the team preview'))`,
         [raw.id],
       );
     }
@@ -367,6 +522,18 @@ async function maintain(row: ReadRow): Promise<void> {
     }
     return;
   }
+  if (raw.phase === 'rematch') {
+    if (present.length < 2 || !present.every((entry) => entry.preview_ready)) return;
+    const updated = await db().query<{ id: string }>(REMATCH_DRAW_SQL, [raw.id]);
+    if (updated[0]) {
+      await db().query(
+        `insert into events (lobby_id, kind, payload)
+         values ($1::uuid, 'draw', jsonb_build_object('detail', 'opened the team draw'))`,
+        [raw.id],
+      );
+    }
+    return;
+  }
   if (raw.phase !== 'season' && raw.phase !== 'awards' && raw.phase !== 'playin' && raw.phase !== 'playoffs') return;
   const league = parseLeague(raw.league);
   if (!league) return;
@@ -374,11 +541,11 @@ async function maintain(row: ReadRow): Promise<void> {
   const startedAt = raw.stage_started_at ? Date.parse(raw.stage_started_at) : null;
   const cursor = Math.max(Number(raw.stage_cursor), stageCursorAt(league, stage, startedAt, now));
   if (cursor > Number(raw.stage_cursor)) {
-    await db().query('update lobbies set stage_cursor = $2, version = version + 1, updated_at = now() where id = $1::uuid and stage = $3', [
-      raw.id,
-      cursor,
-      stage,
-    ]);
+    await db().query(
+      `update lobbies set stage_cursor = greatest(stage_cursor, $2), version = version + 1, updated_at = now()
+       where id = $1::uuid and stage = $3`,
+      [raw.id, cursor, stage],
+    );
   }
   const total = stageGamesTotal(league, stage);
   if (!isCheckpoint(cursor, total)) return;
@@ -394,9 +561,10 @@ function needsMaintenance(row: ReadRow, now: number): boolean {
   if (!host || host.status === 'left' || now - Date.parse(host.last_seen) > HOST_IDLE_MS) return true;
   const present = row.participants.filter((entry) => entry.status !== 'left');
   const active = present.filter((entry) => now - Date.parse(entry.last_seen) <= AWAY_MS);
-  if (raw.phase === 'draw') return false;
+  if (raw.phase === 'draw') return active.length >= 2 && active.every((entry) => entry.team);
   if (raw.phase === 'building') return active.length > 0 && active.every((entry) => entry.status === 'ready');
   if (raw.phase === 'preview') return active.length > 0 && active.every((entry) => entry.preview_ready);
+  if (raw.phase === 'rematch') return present.length >= 2 && present.every((entry) => entry.preview_ready);
   if (raw.phase !== 'season' && raw.phase !== 'awards' && raw.phase !== 'playin' && raw.phase !== 'playoffs') return false;
   const league = parseLeague(raw.league);
   if (!league) return false;
@@ -411,11 +579,13 @@ function needsMaintenance(row: ReadRow, now: number): boolean {
 
 async function advanceStage(lobbyId: string, stage: number): Promise<void> {
   const next = Math.min(10, stage + 1);
-  await db().query(
-    `update lobbies set stage = $2, stage_cursor = 0, stage_started_at = now(), phase = $3, version = version + 1, updated_at = now()
-     where id = $1::uuid and stage = $4`,
+  const updated = await db().query<{ id: string }>(
+    `update lobbies set stage = $2, stage_cursor = 0, stage_started_at = now(), phase = $3,
+       version = version + 1, updated_at = now()
+     where id = $1::uuid and stage = $4 returning id`,
     [lobbyId, next, NEXT_PHASE[next] ?? 'recap', stage],
   );
+  if (!updated[0]) return;
   await db().query(
     `insert into events (lobby_id, kind, payload) values ($1::uuid, 'checkpoint', jsonb_build_object('detail', $2::text))`,
     [lobbyId, `checkpoint ${next}`],
@@ -435,8 +605,18 @@ export async function readLobby(input: { code: string; secret: string }): Promis
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
     if (needsMaintenance(row, Date.now())) {
+      const before = row.lobby;
       await maintain(row);
-      row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]))[0];
+      const fresh = await sql.query<LobbyRow>(LOBBY_ROW_SQL, [input.code]);
+      if (fresh[0]) {
+        if (fresh[0].phase !== before.phase) {
+          row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]))[0] ?? row;
+        } else {
+          row = { ...row, lobby: { ...before, ...fresh[0] } };
+          const events = await sql.query<{ events: RawEvent[] }>(EVENTS_SQL, [input.code]);
+          row = { ...row, events: events[0]?.events ?? row.events };
+        }
+      }
       if (!row?.lobby) {
         return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
       }
@@ -530,45 +710,42 @@ export async function createLobby(input: {
 }
 
 const JOIN_SQL = `
-with l as (select id, phase from lobbies where code = $1),
-mine as (
-  select p.seat, p.status from participants p
-  where p.lobby_id = (select id from l) and p.token_hash = $2
-),
+with l as (select id, phase from lobbies where code = $1 for update),
+mine as (select p.id, p.seat, p.status from participants p where p.lobby_id = (select id from l) and p.token_hash = $2),
 free_seat as (
   select s as seat from generate_series(1, $4::int) s
   where not exists (select 1 from participants p where p.lobby_id = (select id from l) and p.seat = s)
   order by s limit 1
 ),
-target as (select coalesce((select seat from mine), (select seat from free_seat)) as seat),
+rejoined as (
+  update participants p set name = $3, last_seen = now(),
+    status = case when p.status = 'left' then 'joined' else p.status end
+  where p.id = (select id from mine) returning p.id, p.seat
+),
 seated as (
   insert into participants (lobby_id, token_hash, name, seat, status)
-  select l.id, $2, $3, t.seat, case when m.seat is null then 'joined' else m.status end
-  from l, target t
-  left join mine m on true
-  where t.seat is not null and (l.phase in ('lobby', 'draw') or m.seat is not null)
-  on conflict (lobby_id, token_hash) do update
-    set name = excluded.name, last_seen = now()
+  select l.id, $2, $3, f.seat, 'joined'
+  from l, free_seat f
+  where (select id from mine) is null and l.phase = 'lobby'
   returning id, seat
+),
+joined as (select * from rejoined union all select * from seated),
+bump as (
+  update lobbies lob set version = lob.version + 1, updated_at = now()
+  from joined j where lob.id = (select id from l) returning lob.id
 ),
 log as (
   insert into events (lobby_id, participant_id, kind, payload)
-  select l.id, s.id, 'joined', jsonb_build_object('seat', s.seat, 'name', $3::text, 'detail', 'joined the lobby')
-  from l, seated s
-  where (select seat from mine) is null
-),
-bump as (
-  update lobbies lob set version = lob.version + 1, updated_at = now()
-  from seated s where lob.id = (select id from l)
-  returning lob.version
+  select (select id from l), s.id, 'joined',
+    jsonb_build_object('seat', s.seat, 'name', $3::text, 'detail', 'joined the lobby')
+  from seated s
 )
 select
   (select id from l) as lobby_id,
   (select phase from l) as phase,
-  (select seat from mine) as existing_seat,
+  (select id from mine) as existing_id,
   (select seat from free_seat) as free_seat,
-  (select seat from target) as seat,
-  (select id from seated) as participant_id
+  (select count(*)::int from seated) as seated
 `;
 
 export async function joinLobby(input: { code: string; name: string; secret: string; actionId: string }): Promise<Outcome> {
@@ -580,17 +757,16 @@ export async function joinLobby(input: { code: string; name: string; secret: str
       const rows = await sql.query<{
         lobby_id: string | null;
         phase: LobbyPhase | null;
-        existing_seat: number | null;
+        existing_id: string | null;
         free_seat: number | null;
-        seat: number | null;
-        participant_id: string | null;
+        seated: number;
       }>(JOIN_SQL, [input.code, tokenHash, name, CAPACITY]);
       const row = rows[0];
       if (!row?.lobby_id) {
         return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
       }
-      if (row.participant_id === null && row.existing_seat === null) {
-        if (row.phase !== 'lobby' && row.phase !== 'draw') {
+      if (row.existing_id === null && row.seated === 0) {
+        if (row.phase !== 'lobby') {
           return { ok: false, status: 409, error: { error: 'That lobby already started.', reason: 'started' } };
         }
         return { ok: false, status: 409, error: { error: `Lobby is full (${CAPACITY}/${CAPACITY}).`, reason: 'full' } };
@@ -608,24 +784,20 @@ export async function joinLobby(input: { code: string; name: string; secret: str
 }
 
 const START_SQL = `
-with l as (select id, phase, host_participant from lobbies where code = $1),
+with l as (select id, phase, host_participant from lobbies where code = $1 for update),
 me as (select p.id, p.seat, p.name from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
-act as (
-  insert into actions (participant_id, action_id, lobby_id)
-  select me.id, $3::uuid, (select id from l) from me
-  on conflict (participant_id, action_id) do nothing
-  returning participant_id
-),
+players as (select count(*)::int as n from participants p where p.lobby_id = (select id from l) and p.status <> 'left'),
 started as (
-  update lobbies lob set phase = 'draw', settings = $4::jsonb, mode = $5, era = $6, version = lob.version + 1, updated_at = now()
-  from l, me
-  where lob.id = l.id and lob.phase = 'lobby' and lob.host_participant = me.id and exists (select 1 from act)
+  update lobbies lob set phase = 'draw', settings = $3::jsonb, mode = $4, era = $5,
+    version = lob.version + 1, updated_at = now()
+  from l, me, players
+  where lob.id = l.id and l.phase = 'lobby' and l.host_participant = me.id and players.n >= 2
   returning lob.id
 ),
 log as (
   insert into events (lobby_id, participant_id, kind, payload)
   select (select id from l), (select id from me), 'started',
-    jsonb_build_object('seat', (select seat from me), 'name', (select name from participants where id = (select id from me)), 'detail', $7::text)
+    jsonb_build_object('seat', (select seat from me), 'name', (select name from me), 'detail', $6::text)
   from started
 )
 select
@@ -633,8 +805,8 @@ select
   (select phase from l) as phase,
   (select host_participant from l) as host,
   (select id from me) as me_id,
-  (select count(*)::int from started) as started,
-  exists (select 1 from act) as action_ok
+  (select n from players) as players,
+  (select count(*)::int from started) as started
 `;
 
 export async function startLobby(input: {
@@ -651,12 +823,11 @@ export async function startLobby(input: {
       phase: LobbyPhase | null;
       host: string | null;
       me_id: string | null;
+      players: number;
       started: number;
-      action_ok: boolean;
     }>(START_SQL, [
       input.code,
       tokenHash,
-      input.actionId,
       JSON.stringify(input.settings),
       input.settings.mode,
       input.settings.era,
@@ -669,11 +840,11 @@ export async function startLobby(input: {
     if (!row.me_id) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
-    if (row.started === 0 && row.action_ok && row.phase !== 'lobby' && row.phase !== 'draw') {
-      return { ok: false, status: 409, error: { error: 'This lobby already started.', reason: 'started' } };
-    }
-    if (row.started === 0 && row.action_ok && row.host !== row.me_id) {
+    if (row.started === 0 && row.phase === 'lobby' && row.host !== row.me_id) {
       return { ok: false, status: 403, error: { error: 'Only the host can start the league.', reason: 'forbidden' } };
+    }
+    if (row.started === 0 && row.phase === 'lobby' && row.players < 2) {
+      return { ok: false, status: 409, error: { error: 'A league needs at least 2 players.', reason: 'conflict' } };
     }
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
@@ -691,64 +862,72 @@ async function recordAction(code: string, tokenHash: string, actionId: string): 
   );
 }
 
-interface DrawContext {
-  lobby_id: string;
-  phase: LobbyPhase;
-  me_id: string | null;
-  team: string | null;
-  reroll_used: boolean;
-}
-
-async function drawContext(code: string, tokenHash: string): Promise<DrawContext | null> {
-  const rows = await db().query<DrawContext>(
-    `select l.id as lobby_id, l.phase, p.id as me_id, t.team, coalesce(t.reroll_used, false) as reroll_used
-     from lobbies l
-     left join participants p on p.lobby_id = l.id and p.token_hash = $2 and p.status <> 'left'
-     left join lobby_teams t on t.lobby_id = l.id and t.participant_id = p.id
-     where l.code = $1`,
-    [code, tokenHash],
-  );
-  return rows[0] ?? null;
-}
-
-async function claimedTeams(lobbyId: string): Promise<Set<string>> {
-  const rows = await db().query<{ team: string }>('select team from lobby_teams where lobby_id = $1::uuid', [lobbyId]);
-  return new Set(rows.map((row) => row.team));
-}
-
-function pickFree(taken: Set<string>, exclude: string | null): string | null {
-  const free = LEAGUE_TEAMS.filter((team) => team !== exclude && !taken.has(team));
-  if (!free.length) return null;
-  return free[Math.floor(Math.random() * free.length)] ?? null;
-}
+const DRAW_SQL = `
+with l as (select id, phase from lobbies where code = $1 for update),
+me as (select p.id, p.seat, p.name from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
+existing as (select team from lobby_teams where lobby_id = (select id from l) and participant_id = (select id from me)),
+taken as (select team from lobby_teams where lobby_id = (select id from l)),
+pick as (
+  select team from unnest($3::text[]) as candidate(team)
+  where not exists (select 1 from taken t where t.team = candidate.team)
+  order by random() limit 1
+),
+inserted as (
+  insert into lobby_teams (lobby_id, participant_id, team)
+  select (select id from l), (select id from me), (select team from pick)
+  where (select id from me) is not null and (select phase from l) = 'draw'
+    and not exists (select 1 from existing)
+  on conflict do nothing
+  returning team
+),
+bump as (
+  update lobbies set version = version + 1, updated_at = now()
+  where id = (select id from l) and exists (select 1 from inserted) returning id
+),
+log as (
+  insert into events (lobby_id, participant_id, kind, payload)
+  select (select id from l), (select id from me), 'draw',
+    jsonb_build_object('seat', (select seat from me), 'name', (select name from me), 'detail', 'drew the ' || (select team from inserted))
+  from inserted
+)
+select
+  (select id from l) as lobby_id,
+  (select phase from l) as phase,
+  (select id from me) as me_id,
+  (select team from existing) as existing_team,
+  (select team from pick) as pick,
+  (select count(*)::int from inserted) as inserted
+`;
 
 export async function drawTeam(input: { code: string; secret: string; actionId: string }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
   await recordAction(input.code, tokenHash, input.actionId);
   for (let attempt = 0; attempt < 12; attempt++) {
-    const context = await drawContext(input.code, tokenHash);
-    if (!context) {
-      return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
-    }
-    if (!context.me_id) {
-      return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
-    }
-    if (context.team) return readLobby({ code: input.code, secret: input.secret });
-    if (context.phase !== 'draw') {
-      return { ok: false, status: 409, error: { error: 'The team draw is closed.', reason: 'conflict' } };
-    }
-    const pick = pickFree(await claimedTeams(context.lobby_id), null);
-    if (!pick) {
-      return { ok: false, status: 409, error: { error: 'Every team is claimed.', reason: 'conflict' } };
-    }
     try {
-      const inserted = await sql.query<{ team: string }>(
-        `insert into lobby_teams (lobby_id, participant_id, team) values ($1::uuid, $2::uuid, $3)
-         on conflict do nothing returning team`,
-        [context.lobby_id, context.me_id, pick],
-      );
-      if (inserted[0]) return readLobby({ code: input.code, secret: input.secret });
+      const rows = await sql.query<{
+        lobby_id: string | null;
+        phase: LobbyPhase | null;
+        me_id: string | null;
+        existing_team: string | null;
+        pick: string | null;
+        inserted: number;
+      }>(DRAW_SQL, [input.code, tokenHash, LEAGUE_TEAMS]);
+      const row = rows[0];
+      if (!row?.lobby_id) {
+        return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+      }
+      if (!row.me_id) {
+        return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
+      }
+      if (row.existing_team) return readLobby({ code: input.code, secret: input.secret });
+      if (row.phase !== 'draw') {
+        return { ok: false, status: 409, error: { error: 'The team draw is closed.', reason: 'conflict' } };
+      }
+      if (!row.pick) {
+        return { ok: false, status: 409, error: { error: 'Every team is claimed.', reason: 'conflict' } };
+      }
+      if (row.inserted > 0) return readLobby({ code: input.code, secret: input.secret });
     } catch (error) {
       if (!isUniqueViolation(error)) return { ok: false, status: 503, error: serverError(error) };
     }
@@ -756,37 +935,77 @@ export async function drawTeam(input: { code: string; secret: string; actionId: 
   return { ok: false, status: 503, error: { error: 'Could not draw a team.', reason: 'server' } };
 }
 
+const REROLL_SQL = `
+with l as (select id, phase from lobbies where code = $1 for update),
+me as (select p.id, p.seat, p.name from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
+current as (select team, reroll_used from lobby_teams where lobby_id = (select id from l) and participant_id = (select id from me)),
+taken as (select team from lobby_teams where lobby_id = (select id from l)),
+pick as (
+  select team from unnest($3::text[]) as candidate(team)
+  where candidate.team <> (select team from current)
+    and not exists (select 1 from taken t where t.team = candidate.team)
+  order by random() limit 1
+),
+updated as (
+  update lobby_teams set team = (select team from pick), reroll_used = true
+  where lobby_id = (select id from l) and participant_id = (select id from me)
+    and not reroll_used and team = (select team from current)
+    and (select phase from l) = 'draw' and (select team from pick) is not null
+  returning team
+),
+bump as (
+  update lobbies set version = version + 1, updated_at = now()
+  where id = (select id from l) and exists (select 1 from updated) returning id
+),
+log as (
+  insert into events (lobby_id, participant_id, kind, payload)
+  select (select id from l), (select id from me), 'reroll',
+    jsonb_build_object('seat', (select seat from me), 'name', (select name from me), 'detail', 'rerolled to the ' || (select team from updated))
+  from updated
+)
+select
+  (select id from l) as lobby_id,
+  (select phase from l) as phase,
+  (select id from me) as me_id,
+  (select team from current) as current_team,
+  (select reroll_used from current) as reroll_used,
+  (select team from pick) as pick,
+  (select count(*)::int from updated) as updated
+`;
+
 export async function rerollTeam(input: { code: string; secret: string; actionId: string }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
   await recordAction(input.code, tokenHash, input.actionId);
   for (let attempt = 0; attempt < 12; attempt++) {
-    const context = await drawContext(input.code, tokenHash);
-    if (!context) {
-      return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
-    }
-    if (!context.me_id) {
-      return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
-    }
-    if (context.reroll_used) return readLobby({ code: input.code, secret: input.secret });
-    if (context.phase !== 'draw') {
-      return { ok: false, status: 409, error: { error: 'The team draw is closed.', reason: 'conflict' } };
-    }
-    if (!context.team) {
-      return { ok: false, status: 409, error: { error: 'Draw a team first.', reason: 'conflict' } };
-    }
-    const pick = pickFree(await claimedTeams(context.lobby_id), context.team);
-    if (!pick) {
-      return { ok: false, status: 409, error: { error: 'Every team is claimed.', reason: 'conflict' } };
-    }
     try {
-      const updated = await sql.query<{ team: string }>(
-        `update lobby_teams set team = $3, reroll_used = true
-         where lobby_id = $1::uuid and participant_id = $2::uuid and not reroll_used and team = $4
-         returning team`,
-        [context.lobby_id, context.me_id, pick, context.team],
-      );
-      if (updated[0]) return readLobby({ code: input.code, secret: input.secret });
+      const rows = await sql.query<{
+        lobby_id: string | null;
+        phase: LobbyPhase | null;
+        me_id: string | null;
+        current_team: string | null;
+        reroll_used: boolean | null;
+        pick: string | null;
+        updated: number;
+      }>(REROLL_SQL, [input.code, tokenHash, LEAGUE_TEAMS]);
+      const row = rows[0];
+      if (!row?.lobby_id) {
+        return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+      }
+      if (!row.me_id) {
+        return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
+      }
+      if (!row.current_team) {
+        return { ok: false, status: 409, error: { error: 'Draw a team first.', reason: 'conflict' } };
+      }
+      if (row.reroll_used) return readLobby({ code: input.code, secret: input.secret });
+      if (row.phase !== 'draw') {
+        return { ok: false, status: 409, error: { error: 'The team draw is closed.', reason: 'conflict' } };
+      }
+      if (!row.pick) {
+        return { ok: false, status: 409, error: { error: 'Every team is claimed.', reason: 'conflict' } };
+      }
+      if (row.updated > 0) return readLobby({ code: input.code, secret: input.secret });
     } catch (error) {
       if (!isUniqueViolation(error)) return { ok: false, status: 503, error: serverError(error) };
     }
@@ -795,69 +1014,62 @@ export async function rerollTeam(input: { code: string; secret: string; actionId
 }
 
 const LOCK_SQL = `
-with l as (select id, phase, host_participant from lobbies where code = $1),
+with l as (select id, phase, host_participant from lobbies where code = $1 for update),
 me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
-act as (
-  insert into actions (participant_id, action_id, lobby_id)
-  select me.id, $3::uuid, (select id from l) from me
-  on conflict (participant_id, action_id) do nothing
+missing as (
+  select id, row_number() over (order by seat) as rn from (
+    select p.id, p.seat from participants p
+    where p.lobby_id = (select id from l) and p.status <> 'left'
+      and not exists (select 1 from lobby_teams t where t.lobby_id = p.lobby_id and t.participant_id = p.id)
+    for update
+  ) locked
+),
+free as (
+  select team, row_number() over (order by random()) as rn
+  from unnest($3::text[]) as candidate(team)
+  where not exists (select 1 from lobby_teams t where t.lobby_id = (select id from l) and t.team = candidate.team)
+),
+assigned as (
+  insert into lobby_teams (lobby_id, participant_id, team)
+  select (select id from l), m.id, f.team
+  from missing m join free f on f.rn = m.rn
+  where (select phase from l) = 'draw' and (select host_participant from l) = (select id from me)
+  on conflict do nothing
   returning participant_id
 ),
 locked as (
-  update lobbies lob set phase = 'building', locked_at = coalesce(locked_at, now()), version = lob.version + 1, updated_at = now()
-  from l, me
-  where lob.id = l.id and lob.phase = 'draw' and lob.host_participant = me.id and exists (select 1 from act)
-  returning lob.id
+  update lobbies set phase = 'building', locked_at = coalesce(locked_at, now()),
+    version = version + 1, updated_at = now()
+  where id = (select id from l) and phase = 'draw' and host_participant = (select id from me)
+    and (select count(*) from participants p where p.lobby_id = (select id from l) and p.status <> 'left') >= 2
+  returning id
+),
+log as (
+  insert into events (lobby_id, kind, payload)
+  select id, 'locked', jsonb_build_object('detail', 'locked the teams') from locked
 )
 select
   (select id from l) as lobby_id,
   (select phase from l) as phase,
   (select host_participant from l) as host,
   (select id from me) as me_id,
-  (select count(*)::int from locked) as locked,
-  exists (select 1 from act) as action_ok
+  (select count(*)::int from assigned) as assigned,
+  (select count(*)::int from locked) as locked
 `;
-
-async function drawRemaining(lobbyId: string): Promise<void> {
-  const rows = await db().query<{ id: string }>(
-    `select p.id from participants p
-     where p.lobby_id = $1::uuid and p.status <> 'left'
-       and not exists (select 1 from lobby_teams t where t.lobby_id = p.lobby_id and t.participant_id = p.id)`,
-    [lobbyId],
-  );
-  for (const row of rows) {
-    for (let attempt = 0; attempt < 12; attempt++) {
-      const inserted = await db().query<{ team: string }>(
-        `insert into lobby_teams (lobby_id, participant_id, team)
-         select $1::uuid, $2::uuid, candidate.team
-         from (select team from unnest($3::text[]) as team
-               where not exists (select 1 from lobby_teams lt where lt.lobby_id = $1::uuid and lt.team = team)
-               order by random() limit 1) candidate
-         on conflict do nothing
-         returning team`,
-        [lobbyId, row.id, LEAGUE_TEAMS],
-      );
-      if (inserted[0]) break;
-    }
-  }
-}
 
 export async function lockTeams(input: { code: string; secret: string; actionId: string }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
+  await recordAction(input.code, tokenHash, input.actionId);
   try {
-    const existing = await sql.query<LobbyContextRow>('select id, phase from lobbies where code = $1', [input.code]);
-    const lobby = existing[0];
-    if (!lobby) return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
-    if (lobby.phase === 'draw') await drawRemaining(lobby.id);
     const rows = await sql.query<{
       lobby_id: string | null;
       phase: LobbyPhase | null;
       host: string | null;
       me_id: string | null;
+      assigned: number;
       locked: number;
-      action_ok: boolean;
-    }>(LOCK_SQL, [input.code, tokenHash, input.actionId]);
+    }>(LOCK_SQL, [input.code, tokenHash, LEAGUE_TEAMS]);
     const row = rows[0];
     if (!row?.lobby_id) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -865,8 +1077,11 @@ export async function lockTeams(input: { code: string; secret: string; actionId:
     if (!row.me_id) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
-    if (row.locked === 0 && row.action_ok && row.phase !== 'building') {
+    if (row.host !== row.me_id) {
       return { ok: false, status: 403, error: { error: 'Only the host can lock the teams.', reason: 'forbidden' } };
+    }
+    if (row.locked === 0 && row.phase !== 'building') {
+      return { ok: false, status: 409, error: { error: 'The team draw is closed.', reason: 'conflict' } };
     }
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
@@ -875,33 +1090,28 @@ export async function lockTeams(input: { code: string; secret: string; actionId:
 }
 
 const BUILD_SQL = `
-with l as (select id, phase from lobbies where code = $1),
-me as (
-  select p.id, p.seat, p.name, p.status, p.build from participants p
-  where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'
-),
-act as (
-  insert into actions (participant_id, action_id, lobby_id)
-  select me.id, $3::uuid, (select id from l) from me
-  on conflict (participant_id, action_id) do nothing
-  returning participant_id
-),
-seen as (select 1 from actions a, me where a.participant_id = me.id and a.action_id = $3::uuid),
+with l as (select id, phase from lobbies where code = $1 for update),
+me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
 written as (
-  update participants p
-  set build = $4::jsonb, build_kind = $5, build_summary = $6::jsonb, status = 'ready', last_seen = now()
-  from me, act, l
-  where p.id = me.id and act.participant_id = me.id and l.phase = 'building' and me.build is null
+  update participants p set build = $3::jsonb, build_kind = $4, build_summary = $5::jsonb,
+    status = 'ready', last_seen = now()
+  where p.id = (select id from me) and p.build is null and (select phase from l) = 'building'
   returning p.id
+),
+bump as (
+  update lobbies set version = version + 1, updated_at = now()
+  where id = (select id from l) and exists (select 1 from written) returning id
+),
+log as (
+  insert into events (lobby_id, participant_id, kind, payload)
+  select (select id from l), (select id from me), 'submitted', jsonb_build_object('detail', 'submitted a build')
+  from written
 )
 select
   (select id from l) as lobby_id,
   (select phase from l) as phase,
   (select id from me) as me_id,
-  (select status from me) as status,
-  (select count(*)::int from written) as written,
-  exists (select 1 from act) as action_ok,
-  exists (select 1 from seen) as action_seen
+  (select count(*)::int from written) as written
 `;
 
 export async function submitBuild(input: {
@@ -922,8 +1132,10 @@ export async function submitBuild(input: {
       team: string | null;
       me_id: string | null;
       has_build: boolean | null;
+      salary_powers: unknown;
     }>(
-      `select l.id, l.phase, l.mode, l.era, l.season_secret, t.team, p.id as me_id, (p.build is not null) as has_build
+      `select l.id, l.phase, l.mode, l.era, l.season_secret, t.team, p.id as me_id,
+         (p.build is not null) as has_build, p.salary_powers
        from lobbies l
        left join participants p on p.lobby_id = l.id and p.token_hash = $2 and p.status <> 'left'
        left join lobby_teams t on t.lobby_id = l.id and t.participant_id = p.id
@@ -944,20 +1156,20 @@ export async function submitBuild(input: {
       mode: row.mode as LeagueMode,
     };
     const data = await catalog();
-    const checked = validateBuild(input.build, settings, data, row.team, row.season_secret);
+    const powers = parsePowers(row.salary_powers);
+    const checked = validateBuild(input.build, settings, data, row.team, row.season_secret, {
+      buildSeed: buildSeedFor(row.season_secret, row.me_id),
+      salaryGrid: powers.grid ?? undefined,
+    });
     if (!checked.ok) return { ok: false, status: 400, error: { error: checked.error, reason: 'invalid' } };
     const result = await sql.query<{
       lobby_id: string | null;
       phase: LobbyPhase | null;
       me_id: string | null;
-      status: ParticipantStatus | null;
       written: number;
-      action_ok: boolean;
-      action_seen: boolean;
     }>(BUILD_SQL, [
       input.code,
       tokenHash,
-      input.actionId,
       JSON.stringify(checked.build),
       checked.build.kind,
       JSON.stringify(checked.summary),
@@ -969,9 +1181,8 @@ export async function submitBuild(input: {
     if (!written.me_id) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
-    if (written.written === 0) {
-      if (written.action_ok || written.action_seen) return readLobby({ code: input.code, secret: input.secret });
-      return { ok: false, status: 409, error: { error: 'Your build is already in.', reason: 'conflict' } };
+    if (written.written === 0 && written.phase !== 'building') {
+      return { ok: false, status: 409, error: { error: 'The build window is closed.', reason: 'conflict' } };
     }
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
@@ -980,36 +1191,35 @@ export async function submitBuild(input: {
 }
 
 const READY_SQL = `
-with l as (select id, phase, stage from lobbies where code = $1),
+with l as (select id, phase, stage from lobbies where code = $1 for update),
 me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
-act as (
-  insert into actions (participant_id, action_id, lobby_id)
-  select me.id, $3::uuid, (select id from l) from me
-  on conflict (participant_id, action_id) do nothing
-  returning participant_id
-),
 marked as (
   update participants p set
-    ready_stage = case when l.phase in ('season', 'awards', 'playin', 'playoffs') then $4 else p.ready_stage end,
-    preview_ready = case when l.phase = 'preview' then true else p.preview_ready end,
+    preview_ready = case when (select phase from l) in ('preview', 'rematch') then true else p.preview_ready end,
+    ready_stage = case
+      when (select phase from l) in ('season', 'awards', 'playin', 'playoffs') and (select stage from l) = $3 then $3
+      else p.ready_stage
+    end,
     last_seen = now()
-  from me, act, l
-  where p.id = me.id and act.participant_id = me.id
-    and (l.phase = 'preview' or (l.phase in ('season', 'awards', 'playin', 'playoffs') and l.stage = $4))
+  where p.id = (select id from me)
   returning p.id
+),
+bump as (
+  update lobbies set version = version + 1, updated_at = now()
+  where id = (select id from l) and exists (select 1 from marked) returning id
 )
 select
   (select id from l) as lobby_id,
   (select phase from l) as phase,
   (select stage from l) as stage,
   (select id from me) as me_id,
-  (select count(*)::int from marked) as marked,
-  exists (select 1 from act) as action_ok
+  (select count(*)::int from marked) as marked
 `;
 
 export async function readyLobby(input: { code: string; secret: string; actionId: string; stage: number }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
+  await recordAction(input.code, tokenHash, input.actionId);
   try {
     const rows = await sql.query<{
       lobby_id: string | null;
@@ -1017,8 +1227,7 @@ export async function readyLobby(input: { code: string; secret: string; actionId
       stage: number | string | null;
       me_id: string | null;
       marked: number;
-      action_ok: boolean;
-    }>(READY_SQL, [input.code, tokenHash, input.actionId, input.stage]);
+    }>(READY_SQL, [input.code, tokenHash, input.stage]);
     const row = rows[0];
     if (!row?.lobby_id) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -1026,7 +1235,6 @@ export async function readyLobby(input: { code: string; secret: string; actionId
     if (!row.me_id) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
-    if (Number(row.stage) !== input.stage) return readLobby({ code: input.code, secret: input.secret });
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
     return { ok: false, status: 503, error: serverError(error) };
@@ -1034,33 +1242,34 @@ export async function readyLobby(input: { code: string; secret: string; actionId
 }
 
 const ADVANCE_SQL = `
-with l as (select id, phase, stage, host_participant from lobbies where code = $1),
-me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
-act as (
-  insert into actions (participant_id, action_id, lobby_id)
-  select me.id, $3::uuid, (select id from l) from me
-  on conflict (participant_id, action_id) do nothing
-  returning participant_id
+with l as (
+  select id, phase, stage, stage_cursor, stage_started_at, host_participant
+  from lobbies where code = $1 for update
 ),
+me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
 present as (
   select count(*)::int as n from participants p
   where p.lobby_id = (select id from l) and p.status <> 'left'
-    and p.last_seen > now() - make_interval(secs => $6::int)
+    and p.last_seen > now() - make_interval(secs => $5::int)
 ),
 ready as (
   select count(*)::int as n from participants p
   where p.lobby_id = (select id from l) and p.status <> 'left'
-    and p.last_seen > now() - make_interval(secs => $6::int)
-    and p.ready_stage >= $4
+    and p.last_seen > now() - make_interval(secs => $5::int)
+    and p.ready_stage >= $3
 ),
 advanced as (
-  update lobbies lob set stage = lob.stage + 1, stage_cursor = 0, stage_started_at = now(),
-    phase = $5, version = lob.version + 1, updated_at = now()
-  from l, me, act
-  where lob.id = l.id and l.stage = $4 and act.participant_id = me.id
-    and l.phase in ('season', 'awards', 'playin', 'playoffs')
+  update lobbies lob set stage = $3 + 1, stage_cursor = 0, stage_started_at = now(),
+    phase = $4, version = lob.version + 1, updated_at = now()
+  from l, me
+  where lob.id = l.id and l.stage = $3 and l.phase in ('season', 'awards', 'playin', 'playoffs')
+    and me.id is not null
     and (l.host_participant = me.id or (select n from ready) = (select n from present))
   returning lob.id
+),
+log as (
+  insert into events (lobby_id, kind, payload)
+  select id, 'checkpoint', jsonb_build_object('detail', 'checkpoint ' || ($3 + 1)::text) from advanced
 )
 select
   (select id from l) as lobby_id,
@@ -1069,33 +1278,79 @@ select
   (select id from me) as me_id,
   (select n from present) as present,
   (select n from ready) as ready,
-  (select count(*)::int from advanced) as advanced,
-  exists (select 1 from act) as action_ok
+  (select count(*)::int from advanced) as advanced
+`;
+
+const PREVIEW_START_SQL = `
+with l as (select id, phase, host_participant from lobbies where code = $1 for update),
+me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left')
+select
+  (select id from l) as lobby_id,
+  (select phase from l) as phase,
+  (select host_participant from l) as host,
+  (select id from me) as me_id
+`;
+
+const REMATCH_SQL = `
+with l as (select id, phase, host_participant from lobbies where code = $1 for update),
+me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
+ok as (select 1 from l, me where l.host_participant = me.id and l.phase = 'recap'),
+reset_p as (
+  update participants p set build = null, build_kind = null, squad = null, build_summary = null,
+    status = 'joined', ready_stage = -1, preview_ready = false, salary_powers = null, last_seen = now()
+  where p.lobby_id = (select id from l) and p.status <> 'left' and exists (select 1 from ok)
+  returning p.id
+),
+del_t as (delete from lobby_teams where lobby_id = (select id from l) and exists (select 1 from ok)),
+reset_l as (
+  update lobbies set phase = 'rematch', league = null, stage = 0, stage_cursor = 0,
+    stage_started_at = null, locked_at = null, rematch = rematch + 1,
+    season_secret = gen_random_uuid()::text, version = version + 1, updated_at = now()
+  where id = (select id from l) and phase = 'recap' and exists (select 1 from ok)
+  returning id
+),
+log as (
+  insert into events (lobby_id, kind, payload)
+  select id, 'rematch', jsonb_build_object('detail', 'started a rematch') from reset_l
+)
+select
+  (select id from l) as lobby_id,
+  (select phase from l) as phase,
+  (select host_participant from l) as host,
+  (select id from me) as me_id,
+  (select count(*)::int from reset_l) as reset
 `;
 
 export async function advanceLobby(input: { code: string; secret: string; actionId: string; stage: number }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
+  await recordAction(input.code, tokenHash, input.actionId);
   try {
-    const phaseRows = await sql.query<{ id: string; phase: LobbyPhase }>('select id, phase from lobbies where code = $1', [input.code]);
-    const phaseRow = phaseRows[0];
-    if (!phaseRow) return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
-    if (phaseRow.phase === 'preview') {
-      const preview = await sql.query<{ lobby_id: string | null; me_id: string | null; host: string | null; action_ok: boolean }>(
-        `with l as (select id, phase, host_participant from lobbies where code = $1),
-         me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
-         act as (
-           insert into actions (participant_id, action_id, lobby_id)
-           select me.id, $3::uuid, (select id from l) from me
-           on conflict (participant_id, action_id) do nothing
-           returning participant_id
-         )
-         select (select id from l) as lobby_id, (select id from me) as me_id,
-           (select host_participant from l) as host,
-           (select count(*)::int from act) as action_ok`,
-        [input.code, tokenHash, input.actionId],
+    const context = await sql.query<{
+      id: string;
+      phase: LobbyPhase;
+      stage: number | string;
+      stage_cursor: number | string;
+      stage_started_at: string | null;
+      host_participant: string | null;
+      season_secret: string;
+      mode: string;
+      era: string;
+      league: unknown;
+    }>(
+      `select id, phase, stage, stage_cursor, stage_started_at, host_participant, season_secret, mode, era, league
+       from lobbies where code = $1`,
+      [input.code],
+    );
+    const lobby = context[0];
+    if (!lobby) return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+    if (lobby.phase === 'draw') return readLobby({ code: input.code, secret: input.secret });
+    if (lobby.phase === 'preview') {
+      const rows = await sql.query<{ lobby_id: string | null; phase: LobbyPhase | null; host: string | null; me_id: string | null }>(
+        PREVIEW_START_SQL,
+        [input.code, tokenHash],
       );
-      const row = preview[0];
+      const row = rows[0];
       if (!row?.lobby_id) {
         return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
       }
@@ -1105,24 +1360,111 @@ export async function advanceLobby(input: { code: string; secret: string; action
       if (row.host !== row.me_id) {
         return { ok: false, status: 403, error: { error: 'Only the host can start the season.', reason: 'forbidden' } };
       }
-      await computeLeagueFor(phaseRow.id);
+      await computeLeagueFor(row.lobby_id);
       return readLobby({ code: input.code, secret: input.secret });
     }
-    const context = await sql.query<LobbyContextRow>(
-      'select id, phase, stage, stage_cursor, stage_started_at, host_participant, mode, era, season_secret from lobbies where code = $1',
-      [input.code],
-    );
-    const lobby = context[0];
-    if (!lobby) return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
-    const stage = Number(lobby.stage);
-    const league = await sql.query<{ league: unknown }>('select league from lobbies where id = $1::uuid', [lobby.id]);
-    const parsed = parseLeague(league[0]?.league);
+    if (lobby.phase === 'building') {
+      const data = await catalog();
+      const hostRows = await sql.query<{
+        lobby_id: string | null;
+        phase: LobbyPhase | null;
+        host: string | null;
+        me_id: string | null;
+      }>(
+        PREVIEW_START_SQL,
+        [input.code, tokenHash],
+      );
+      const hostRow = hostRows[0];
+      if (!hostRow?.lobby_id) {
+        return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+      }
+      if (!hostRow.me_id) {
+        return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
+      }
+      if (hostRow.host !== hostRow.me_id) {
+        return { ok: false, status: 403, error: { error: 'Only the host can lock the builds.', reason: 'forbidden' } };
+      }
+      await autoCompleteMissing(lobby, data);
+      const updated = await sql.query<{ id: string }>(
+        `update lobbies set phase = 'preview', version = version + 1, updated_at = now()
+         where id = $1::uuid and phase = 'building' returning id`,
+        [lobby.id],
+      );
+      if (updated[0]) {
+        await sql.query(
+          `insert into events (lobby_id, kind, payload)
+           values ($1::uuid, 'preview', jsonb_build_object('detail', 'locked the builds'))`,
+          [lobby.id],
+        );
+      }
+      return readLobby({ code: input.code, secret: input.secret });
+    }
+    if (lobby.phase === 'rematch') {
+      const hostRows = await sql.query<{
+        lobby_id: string | null;
+        phase: LobbyPhase | null;
+        host: string | null;
+        me_id: string | null;
+      }>(
+        PREVIEW_START_SQL,
+        [input.code, tokenHash],
+      );
+      const hostRow = hostRows[0];
+      if (!hostRow?.lobby_id) {
+        return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+      }
+      if (!hostRow.me_id) {
+        return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
+      }
+      if (hostRow.host !== hostRow.me_id) {
+        return { ok: false, status: 403, error: { error: 'Only the host can open the draw.', reason: 'forbidden' } };
+      }
+      if (hostRow.phase !== 'rematch') {
+        return readLobby({ code: input.code, secret: input.secret });
+      }
+      const updated = await sql.query<{ id: string }>(REMATCH_DRAW_SQL, [hostRow.lobby_id]);
+      if (!updated[0]) {
+        const retained = await sql.query<{ n: number }>(
+          "select count(*)::int as n from participants where lobby_id = $1::uuid and status <> 'left'",
+          [hostRow.lobby_id],
+        );
+        if ((retained[0]?.n ?? 0) < 2) {
+          return { ok: false, status: 409, error: { error: 'A league needs at least 2 players.', reason: 'conflict' } };
+        }
+        const unready = await sql.query<{ n: number }>(
+          "select count(*)::int as n from participants where lobby_id = $1::uuid and status <> 'left' and not preview_ready",
+          [hostRow.lobby_id],
+        );
+        const waiting = unready[0]?.n ?? 0;
+        return {
+          ok: false,
+          status: 409,
+          error: { error: `Waiting on ${waiting} player${waiting === 1 ? '' : 's'}.`, reason: 'conflict' },
+        };
+      }
+      await sql.query(
+        `insert into events (lobby_id, kind, payload)
+         values ($1::uuid, 'draw', jsonb_build_object('detail', 'opened the team draw'))`,
+        [hostRow.lobby_id],
+      );
+      return readLobby({ code: input.code, secret: input.secret });
+    }
+    if (
+      lobby.phase !== 'season' &&
+      lobby.phase !== 'awards' &&
+      lobby.phase !== 'playin' &&
+      lobby.phase !== 'playoffs'
+    ) {
+      return { ok: false, status: 409, error: { error: 'This league is not at a checkpoint.', reason: 'conflict' } };
+    }
+    if (input.stage !== Number(lobby.stage)) return readLobby({ code: input.code, secret: input.secret });
+    const parsed = parseLeague(lobby.league);
     if (!parsed) return { ok: false, status: 409, error: { error: 'The season has not started.', reason: 'conflict' } };
+    const stage = Number(lobby.stage);
     const cursor = Math.max(
       Number(lobby.stage_cursor),
       stageCursorAt(parsed, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null, Date.now()),
     );
-    if (input.stage !== stage) return readLobby({ code: input.code, secret: input.secret });
     if (!isCheckpoint(cursor, stageGamesTotal(parsed, stage))) {
       return { ok: false, status: 409, error: { error: 'This checkpoint is still revealing.', reason: 'conflict' } };
     }
@@ -1135,15 +1477,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
       present: number;
       ready: number;
       advanced: number;
-      action_ok: boolean;
-    }>(ADVANCE_SQL, [
-      input.code,
-      tokenHash,
-      input.actionId,
-      stage,
-      NEXT_PHASE[next] ?? 'recap',
-      Math.floor(AWAY_MS / 1000),
-    ]);
+    }>(ADVANCE_SQL, [input.code, tokenHash, stage, NEXT_PHASE[next] ?? 'recap', Math.floor(AWAY_MS / 1000)]);
     const row = rows[0];
     if (!row?.lobby_id) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -1151,74 +1485,42 @@ export async function advanceLobby(input: { code: string; secret: string; action
     if (!row.me_id) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
-    if (row.advanced > 0) {
-      await sql.query(
-        `insert into events (lobby_id, kind, payload) values ($1::uuid, 'checkpoint', jsonb_build_object('detail', $2::text))`,
-        [row.lobby_id, `checkpoint ${next}`],
-      );
-      return readLobby({ code: input.code, secret: input.secret });
-    }
-    if (!row.action_ok) return readLobby({ code: input.code, secret: input.secret });
+    if (row.advanced > 0) return readLobby({ code: input.code, secret: input.secret });
+    if (Number(row.stage) !== stage) return readLobby({ code: input.code, secret: input.secret });
+    const waiting = Math.max(0, row.present - row.ready);
     return {
       ok: false,
       status: 409,
-      error: { error: `Waiting on ${Math.max(0, row.present - row.ready)} player${row.present - row.ready === 1 ? '' : 's'}.`, reason: 'conflict' },
+      error: { error: `Waiting on ${waiting} player${waiting === 1 ? '' : 's'}.`, reason: 'conflict' },
     };
   } catch (error) {
     return { ok: false, status: 503, error: serverError(error) };
   }
 }
 
-const REMATCH_SQL = `
-with l as (select id, phase, host_participant from lobbies where code = $1),
-me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
-act as (
-  insert into actions (participant_id, action_id, lobby_id)
-  select me.id, $3::uuid, (select id from l) from me
-  on conflict (participant_id, action_id) do nothing
-  returning participant_id
-),
-seen as (select 1 from actions a, me where a.participant_id = me.id and a.action_id = $3::uuid),
-ok as (select 1 from l, me, act where l.host_participant = me.id and l.phase = 'recap' and act.participant_id = me.id),
-reset_p as (
-  update participants p set build = null, build_kind = null, build_summary = null, status = 'joined',
-    ready_stage = -1, preview_ready = false, last_seen = now()
-  where p.lobby_id = (select id from l) and p.status <> 'left' and exists (select 1 from ok)
-  returning p.id
-),
-del_t as (delete from lobby_teams where lobby_id = (select id from l) and exists (select 1 from ok)),
-del_g as (delete from league_games where lobby_id = (select id from l) and exists (select 1 from ok)),
-reset_l as (
-  update lobbies set phase = 'draw', league = null, stage = 0, stage_cursor = 0, stage_started_at = null,
-    locked_at = null, rematch = rematch + 1, version = version + 1, updated_at = now()
-  where id = (select id from l) and exists (select 1 from ok)
-  returning id
-)
-select
-  (select id from l) as lobby_id,
-  (select count(*)::int from reset_l) as reset,
-  (select count(*)::int from act) as action_ok,
-  exists (select 1 from seen) as action_seen
-`;
-
 export async function rematchLobby(input: { code: string; secret: string; actionId: string }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
+  await recordAction(input.code, tokenHash, input.actionId);
   try {
-    const rows = await sql.query<{ lobby_id: string | null; reset: number; action_ok: number; action_seen: boolean }>(REMATCH_SQL, [
-      input.code,
-      tokenHash,
-      input.actionId,
-    ]);
+    const rows = await sql.query<{
+      lobby_id: string | null;
+      phase: LobbyPhase | null;
+      host: string | null;
+      me_id: string | null;
+      reset: number;
+    }>(REMATCH_SQL, [input.code, tokenHash]);
     const row = rows[0];
     if (!row?.lobby_id) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
     }
-    if (row.reset === 0 && row.action_seen) return readLobby({ code: input.code, secret: input.secret });
-    if (row.reset === 0 && row.action_ok === 0) {
-      return { ok: false, status: 409, error: { error: 'Only the host can start a rematch.', reason: 'forbidden' } };
+    if (!row.me_id) {
+      return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
-    if (row.reset === 0) {
+    if (row.host !== row.me_id) {
+      return { ok: false, status: 403, error: { error: 'Only the host can start a rematch.', reason: 'forbidden' } };
+    }
+    if (row.reset === 0 && row.phase !== 'rematch') {
       return { ok: false, status: 409, error: { error: 'This league is not finished.', reason: 'conflict' } };
     }
     return readLobby({ code: input.code, secret: input.secret });
@@ -1228,51 +1530,43 @@ export async function rematchLobby(input: { code: string; secret: string; action
 }
 
 const LEAVE_SQL = `
-with l as (select id, phase from lobbies where code = $1),
-me as (select p.id, p.seat, p.name from participants p where p.lobby_id = (select id from l) and p.token_hash = $2),
-act as (
-  insert into actions (participant_id, action_id, lobby_id)
-  select me.id, $3::uuid, (select id from l) from me
-  on conflict (participant_id, action_id) do nothing
-  returning participant_id
-),
+with l as (select id, phase from lobbies where code = $1 for update),
+me as (select p.id, p.seat, p.name, p.status from participants p where p.lobby_id = (select id from l) and p.token_hash = $2),
 removed as (
-  delete from participants p using me, act, l
-  where p.id = me.id and act.participant_id = me.id and l.phase in ('lobby', 'draw')
+  delete from participants p
+  where p.id = (select id from me) and (select phase from l) in ('lobby', 'draw')
   returning p.id, p.seat, p.name
 ),
 marked as (
   update participants p set status = 'left', last_seen = now()
-  from me, act, l
-  where p.id = me.id and act.participant_id = me.id and l.phase not in ('lobby', 'draw') and p.status <> 'left'
+  where p.id = (select id from me) and (select phase from l) not in ('lobby', 'draw') and p.status <> 'left'
   returning p.id, p.seat, p.name
 ),
 gone as (select * from removed union all select * from marked),
 bump as (
-  update lobbies lob set version = lob.version + 1, updated_at = now()
-  from gone where lob.id = (select id from l)
-  returning lob.version
+  update lobbies set version = version + 1, updated_at = now()
+  where id = (select id from l) and exists (select 1 from gone) returning id
 ),
 log as (
   insert into events (lobby_id, participant_id, kind, payload)
-  select (select id from l), x.id, 'left', jsonb_build_object('seat', x.seat, 'name', x.name, 'detail', 'left the lobby')
-  from gone x
+  select (select id from l), g.id, 'left', jsonb_build_object('seat', g.seat, 'name', g.name, 'detail', 'left the lobby')
+  from gone g
 )
 select
   (select id from l) as lobby_id,
   (select id from me) as me_id,
-  (select count(*)::int from gone) as left_count,
-  exists (select 1 from act) as action_ok
+  (select count(*)::int from gone) as left_count
 `;
 
 export async function leaveLobby(input: { code: string; secret: string; actionId: string }): Promise<LeaveOutcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
+  await recordAction(input.code, tokenHash, input.actionId);
   try {
-    const rows = await sql.query<{ lobby_id: string | null; me_id: string | null; left_count: number; action_ok: boolean }>(
-      LEAVE_SQL,
-      [input.code, tokenHash, input.actionId],
-    );
+    const rows = await sql.query<{ lobby_id: string | null; me_id: string | null; left_count: number }>(LEAVE_SQL, [
+      input.code,
+      tokenHash,
+    ]);
     const row = rows[0];
     if (!row?.lobby_id) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -1287,23 +1581,200 @@ export async function leaveLobby(input: { code: string; secret: string; actionId
   }
 }
 
+const REMOVE_SQL = `
+with l as (select id, phase, host_participant from lobbies where code = $1 for update),
+me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
+target as (
+  select p.id, p.seat, p.name, p.status, p.last_seen from participants p
+  where p.lobby_id = (select id from l) and p.seat = $3
+  for update
+),
+removed as (
+  delete from participants p
+  where p.id = (select id from target) and (select phase from l) in ('lobby', 'draw')
+    and (select host_participant from l) = (select id from me)
+    and (select last_seen from target) < now() - make_interval(secs => $4::int)
+  returning p.id, p.seat, p.name
+),
+marked as (
+  update participants p set status = 'left', last_seen = now()
+  where p.id = (select id from target) and (select phase from l) not in ('lobby', 'draw')
+    and (select host_participant from l) = (select id from me)
+    and (select last_seen from target) < now() - make_interval(secs => $4::int)
+    and p.status <> 'left'
+  returning p.id, p.seat, p.name
+),
+gone as (select * from removed union all select * from marked),
+bump as (
+  update lobbies set version = version + 1, updated_at = now()
+  where id = (select id from l) and exists (select 1 from gone) returning id
+),
+log as (
+  insert into events (lobby_id, participant_id, kind, payload)
+  select (select id from l), g.id, 'removed', jsonb_build_object('seat', g.seat, 'name', g.name, 'detail', 'was removed while away')
+  from gone g
+)
+select
+  (select id from l) as lobby_id,
+  (select host_participant from l) as host,
+  (select id from me) as me_id,
+  (select id from target) as target_id,
+  (select status from target) as target_status,
+  (select last_seen from target) as target_seen,
+  (select count(*)::int from gone) as removed
+`;
+
+export async function removePlayer(input: {
+  code: string;
+  secret: string;
+  actionId: string;
+  seat: number;
+}): Promise<Outcome> {
+  const sql = db();
+  const tokenHash = await hashSecret(input.secret);
+  await recordAction(input.code, tokenHash, input.actionId);
+  try {
+    const rows = await sql.query<{
+      lobby_id: string | null;
+      host: string | null;
+      me_id: string | null;
+      target_id: string | null;
+      target_status: ParticipantStatus | null;
+      target_seen: string | null;
+      removed: number;
+    }>(REMOVE_SQL, [input.code, tokenHash, input.seat, Math.floor(AWAY_MS / 1000)]);
+    const row = rows[0];
+    if (!row?.lobby_id) {
+      return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+    }
+    if (!row.me_id) {
+      return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
+    }
+    if (row.host !== row.me_id) {
+      return { ok: false, status: 403, error: { error: 'Only the host can remove a player.', reason: 'forbidden' } };
+    }
+    if (!row.target_id) {
+      return { ok: false, status: 404, error: { error: 'That seat is empty.', reason: 'not_found' } };
+    }
+    if (row.target_id === row.me_id) {
+      return { ok: false, status: 400, error: { error: 'The host cannot remove themselves.', reason: 'invalid' } };
+    }
+    if (row.target_status === 'left') return readLobby({ code: input.code, secret: input.secret });
+    if (row.removed === 0) {
+      return { ok: false, status: 409, error: { error: 'That player is still here.', reason: 'conflict' } };
+    }
+    return readLobby({ code: input.code, secret: input.secret });
+  } catch (error) {
+    return { ok: false, status: 503, error: serverError(error) };
+  }
+}
+
+const POWER_CONTEXT_SQL = `
+select l.id as lobby_id, l.phase, l.mode, l.season_secret, p.id as me_id, p.status, p.salary_powers
+from lobbies l
+left join participants p on p.lobby_id = l.id and p.token_hash = $2 and p.status <> 'left'
+where l.code = $1
+`;
+
+const POWER_WRITE_SQL = `
+with updated as (
+  update participants p set salary_powers = $3::jsonb, last_seen = now()
+  where p.id = $1::uuid and p.salary_powers is not distinct from $2::jsonb
+    and exists (select 1 from lobbies l where l.id = p.lobby_id and l.phase = 'building' and l.mode = 'salary')
+  returning p.id, p.lobby_id
+),
+bump as (
+  update lobbies set version = version + 1, updated_at = now()
+  where id = (select lobby_id from updated) returning id
+),
+log as (
+  insert into events (lobby_id, participant_id, kind, payload)
+  select lobby_id, id, 'power', jsonb_build_object('detail', $4::text) from updated
+)
+select (select count(*)::int from updated) as updated
+`;
+
+export async function powerLobby(input: {
+  code: string;
+  secret: string;
+  actionId: string;
+  power: 'shuffle' | 'scout';
+  target: ShuffleTarget | { cardId: string };
+}): Promise<Outcome> {
+  const sql = db();
+  const tokenHash = await hashSecret(input.secret);
+  await recordAction(input.code, tokenHash, input.actionId);
+  try {
+    const data = await catalog();
+    const rows = await sql.query<{
+      lobby_id: string | null;
+      phase: LobbyPhase | null;
+      mode: string | null;
+      season_secret: string | null;
+      me_id: string | null;
+      status: ParticipantStatus | null;
+      salary_powers: unknown;
+    }>(POWER_CONTEXT_SQL, [input.code, tokenHash]);
+    const row = rows[0];
+    if (!row?.lobby_id) {
+      return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+    }
+    if (!row.me_id) {
+      return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
+    }
+    if (row.phase !== 'building' || row.mode !== 'salary' || row.status === 'ready') {
+      return { ok: false, status: 409, error: { error: 'Salary powers are closed.', reason: 'conflict' } };
+    }
+    const secret = row.season_secret ?? '';
+    const base = salaryBoardFor(secret, data);
+    const powers = parsePowers(row.salary_powers);
+    let next: SalaryPowersState;
+    if (input.power === 'shuffle') {
+      if (powers.shuffle) return readLobby({ code: input.code, secret: input.secret });
+      const target = input.target as ShuffleTarget;
+      const grid = powers.grid ?? base.grid;
+      const rng = seededRng(`${secret}:power:${row.me_id}:shuffle`);
+      const nextGrid = target.kind === 'column' ? shuffleColumn(grid, target.index, rng) : shuffleRow(grid, target.tier, rng);
+      const oldIds = new Map<string, string>();
+      for (const column of grid) for (const card of column) oldIds.set(card.name, card.id);
+      const nextScouted: Record<string, string> = {};
+      for (const column of nextGrid) {
+        for (const card of column) {
+          const oldId = oldIds.get(card.name);
+          if (oldId && powers.scouted[oldId]) nextScouted[card.id] = scoutGrade(card);
+        }
+      }
+      next = { shuffle: true, scout: powers.scout, grid: nextGrid, scouted: nextScouted };
+    } else {
+      if (powers.scout) return readLobby({ code: input.code, secret: input.secret });
+      const target = input.target as { cardId: string };
+      const grid = powers.grid ?? base.grid;
+      const card = grid.flat().find((entry) => entry.id === target.cardId);
+      if (!card) {
+        return { ok: false, status: 400, error: { error: 'That card is not on your board.', reason: 'invalid' } };
+      }
+      next = { shuffle: powers.shuffle, scout: true, grid: powers.grid, scouted: { ...powers.scouted, [card.id]: scoutGrade(card) } };
+    }
+    const previous = row.salary_powers === null || row.salary_powers === undefined ? null : JSON.stringify(row.salary_powers);
+    const written = await sql.query<{ updated: number }>(POWER_WRITE_SQL, [
+      row.me_id,
+      previous,
+      JSON.stringify(next),
+      input.power === 'shuffle' ? 'used a shuffle' : 'used a scout',
+    ]);
+    if ((written[0]?.updated ?? 0) === 0) return readLobby({ code: input.code, secret: input.secret });
+    return readLobby({ code: input.code, secret: input.secret });
+  } catch (error) {
+    return { ok: false, status: 503, error: serverError(error) };
+  }
+}
+
 interface LeagueParticipantRow {
   id: string;
   name: string;
   seat: number;
   build: unknown;
   team: string;
-}
-
-interface GameRow {
-  game_no: number;
-  kind: string;
-  stage: number;
-  home: string;
-  away: string;
-  home_score: number;
-  away_score: number;
-  winner: string;
 }
 
 export async function computeLeagueFor(lobbyId: string): Promise<void> {
@@ -1320,13 +1791,14 @@ export async function computeLeagueFor(lobbyId: string): Promise<void> {
   const lobby = lobbyRows[0];
   if (!lobby || lobby.league || lobby.phase !== 'preview') return;
   const settings = parseSettings(lobby.settings);
+  const data = await catalog();
+  await autoCompleteMissing(lobby, data);
   const rows = await sql.query<LeagueParticipantRow>(
     `select p.id, p.name, p.seat, p.build, t.team
      from participants p join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
      where p.lobby_id = $1::uuid and p.status <> 'left' order by p.seat`,
     [lobbyId],
   );
-  const data = await catalog();
   const humans: HumanTeamInput[] = [];
   for (const row of rows) {
     const build = parseBuild(row.build);
@@ -1346,56 +1818,10 @@ export async function computeLeagueFor(lobbyId: string): Promise<void> {
   }
   if (!humans.length) return;
   const league = simulateLeague({ seed: lobby.season_secret, era: settings.era, mode: settings.mode, humans });
-  const games: GameRow[] = league.games.map((game) => ({
-    game_no: game.gameNo,
-    kind: 'regular',
-    stage: game.stage,
-    home: game.home,
-    away: game.away,
-    home_score: game.homeScore,
-    away_score: game.awayScore,
-    winner: game.winner,
-  }));
-  let nextNo = league.games.length + 1;
-  for (const game of league.playin) {
-    games.push({
-      game_no: nextNo++,
-      kind: 'playin',
-      stage: 5,
-      home: game.home,
-      away: game.away,
-      home_score: game.homeScore,
-      away_score: game.awayScore,
-      winner: game.winner,
-    });
-  }
-  for (const series of league.series) {
-    for (const game of series.games) {
-      games.push({
-        game_no: nextNo++,
-        kind: 'playoff',
-        stage: series.round + 5,
-        home: game.home,
-        away: game.away,
-        home_score: game.homeScore,
-        away_score: game.awayScore,
-        winner: game.winner,
-      });
-    }
-  }
-  const updated = await sql.query<{ id: string }>(
+  await sql.query(
     `update lobbies set phase = 'season', stage = 0, stage_cursor = 0, stage_started_at = now(),
        league = $2::jsonb, locked_at = coalesce(locked_at, now()), version = version + 1, updated_at = now()
-     where id = $1::uuid and league is null and phase = 'preview'
-     returning id`,
+     where id = $1::uuid and league is null and phase = 'preview'`,
     [lobbyId, JSON.stringify(league)],
-  );
-  if (!updated[0]) return;
-  await sql.query(
-    `insert into league_games (lobby_id, game_no, kind, stage, home, away, home_score, away_score, winner)
-     select $1::uuid, x.game_no, x.kind, x.stage, x.home, x.away, x.home_score, x.away_score, x.winner
-     from jsonb_to_recordset($2::jsonb) as x(game_no int, kind text, stage int, home text, away text, home_score int, away_score int, winner text)
-     on conflict (lobby_id, game_no) do nothing`,
-    [lobbyId, JSON.stringify(games)],
   );
 }

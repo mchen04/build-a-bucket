@@ -129,6 +129,19 @@ export const RunSchema = v.object({
   spinIndex: v.number(),
   teamRespinUsed: v.boolean(),
   playerRespinUsed: v.boolean(),
+  currentRespin: v.optional(v.nullable(v.object({ team: v.boolean(), player: v.boolean() })), null),
+  history: v.optional(
+    v.array(
+      v.object({
+        attr: v.string(),
+        team: v.string(),
+        playerName: v.string(),
+        teamRespin: v.boolean(),
+        playerRespin: v.boolean(),
+      }),
+    ),
+    [],
+  ),
   current: v.nullable(v.object({ team: v.string(), playerName: v.string() })),
   team: v.nullable(v.string()),
   season: v.nullable(SeasonSchema),

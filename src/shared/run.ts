@@ -1,5 +1,6 @@
 import { ATTR_LABELS, BIG_ATTRS, GUARD_ATTRS } from './engine/rules';
 import type { SeasonDraft } from './engine/season';
+import type { SpinRecord } from './engine/spin';
 import type { Era, MomentCard, Pick, Player, Position, SeasonResult } from './engine/types';
 
 export type Screen = 'builder' | 'team' | 'season' | 'playoffs' | 'end';
@@ -13,6 +14,8 @@ export interface RunState {
   spinIndex: number;
   teamRespinUsed: boolean;
   playerRespinUsed: boolean;
+  currentRespin: { team: boolean; player: boolean } | null;
+  history: SpinRecord[];
   current: { team: string; playerName: string } | null;
   team: string | null;
   season: SeasonResult | null;
@@ -31,6 +34,8 @@ export function createRun(seed: string, position: Position, era: Era): RunState 
     spinIndex: 0,
     teamRespinUsed: false,
     playerRespinUsed: false,
+    currentRespin: null,
+    history: [],
     current: null,
     team: null,
     season: null,
@@ -91,9 +96,21 @@ function pickFromPlayer(player: Player, attr: string, photo?: string): Pick {
 export function placePick(run: RunState, player: Player, attr: string, photo?: string): RunState {
   if (run.picks[attr]) return run;
   const picks = { ...run.picks, [attr]: pickFromPlayer(player, attr, photo) };
+  const history = [
+    ...(run.history ?? []),
+    {
+      attr,
+      team: player.team,
+      playerName: player.name,
+      teamRespin: run.currentRespin?.team ?? false,
+      playerRespin: run.currentRespin?.player ?? false,
+    },
+  ];
   return {
     ...run,
     picks,
+    history,
+    currentRespin: null,
     current: null,
     spinIndex: run.spinIndex + 1,
   };

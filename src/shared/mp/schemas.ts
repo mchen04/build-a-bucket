@@ -38,6 +38,16 @@ const PicksSchema = v.pipe(
   v.check((picks) => Object.keys(picks).length <= ATTRS_PER_BUILD, `A build has ${ATTRS_PER_BUILD} traits.`),
 );
 
+export const SpinRecordSchema = v.object({
+  attr: v.pipe(v.string(), v.maxLength(32)),
+  team: v.pipe(v.string(), v.maxLength(32)),
+  playerName: v.pipe(v.string(), v.maxLength(64)),
+  teamRespin: v.boolean(),
+  playerRespin: v.boolean(),
+});
+
+const SpinsSchema = v.optional(v.pipe(v.array(SpinRecordSchema), v.maxLength(ATTRS_PER_BUILD)), []);
+
 export const SalaryCardPickSchema = v.object({
   id: v.pipe(v.string(), v.maxLength(120)),
   name: v.pipe(v.string(), v.maxLength(64)),
@@ -54,6 +64,7 @@ export const LobbyBuildSchema = v.variant('kind', [
     position: v.picklist(['guard', 'big']),
     era: v.picklist(['current', 'alltime']),
     picks: PicksSchema,
+    spins: SpinsSchema,
   }),
   v.object({
     kind: v.literal('salary'),
@@ -68,6 +79,7 @@ export const LobbyBuildSchema = v.variant('kind', [
           slot: v.pipe(v.string(), v.maxLength(8)),
           position: v.picklist(['guard', 'big']),
           picks: PicksSchema,
+          spins: SpinsSchema,
         }),
       ),
       v.length(SQUAD_PLAYERS),
@@ -80,6 +92,13 @@ export const BuildSummarySchema = v.object({
   total: v.number(),
   latest: v.nullable(v.string()),
   ovr: v.number(),
+  auto: v.optional(v.boolean(), false),
+});
+
+const SalaryPowersViewSchema = v.object({
+  shuffle: v.boolean(),
+  scout: v.boolean(),
+  scouted: v.record(v.pipe(v.string(), v.maxLength(120)), v.string()),
 });
 
 const ParticipantSeasonSchema = v.object({
@@ -103,6 +122,7 @@ const ParticipantViewSchema = v.object({
   rerollUsed: v.boolean(),
   build: v.nullable(LobbyBuildSchema),
   summary: v.nullable(BuildSummarySchema),
+  buildSeed: v.nullable(v.string()),
   ready: v.boolean(),
   season: v.nullable(ParticipantSeasonSchema),
 });
@@ -274,7 +294,7 @@ const ReadyViewSchema = v.object({
 
 const LobbyViewSchema = v.object({
   code: v.string(),
-  phase: v.picklist(['lobby', 'draw', 'building', 'preview', 'season', 'awards', 'playin', 'playoffs', 'recap']),
+  phase: v.picklist(['lobby', 'draw', 'building', 'preview', 'season', 'awards', 'playin', 'playoffs', 'recap', 'rematch']),
   version: v.number(),
   settings: SettingsSchema,
   capacity: v.number(),
@@ -292,6 +312,7 @@ const LobbyViewSchema = v.object({
   teams: v.array(TeamAssignmentSchema),
   salaryBoard: v.nullable(v.array(v.array(SalaryCardPickSchema))),
   salaryBudget: v.nullable(v.number()),
+  salaryPowers: v.nullable(SalaryPowersViewSchema),
   league: v.nullable(LeagueViewSchema),
   ready: ReadyViewSchema,
   serverTime: v.string(),
@@ -335,6 +356,33 @@ export const ActionBodySchema = v.object({
 export const StageBodySchema = v.object({
   actionId: ActionIdSchema,
   stage: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(20)),
+});
+
+export const PowerBodySchema = v.variant('power', [
+  v.object({
+    actionId: ActionIdSchema,
+    power: v.literal('shuffle'),
+    target: v.variant('kind', [
+      v.object({
+        kind: v.literal('column'),
+        index: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(4)),
+      }),
+      v.object({
+        kind: v.literal('row'),
+        tier: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(4)),
+      }),
+    ]),
+  }),
+  v.object({
+    actionId: ActionIdSchema,
+    power: v.literal('scout'),
+    target: v.object({ cardId: v.pipe(v.string(), v.maxLength(120)) }),
+  }),
+]);
+
+export const RemoveBodySchema = v.object({
+  actionId: ActionIdSchema,
+  seat: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(8)),
 });
 
 export const LobbyEnvelopeSchema = v.object({ lobby: LobbyViewSchema });

@@ -50,6 +50,35 @@ describe('spoiler-free reveal', () => {
           const standings = view.standings ?? [];
           const human = result.humans.find((entry) => entry.participantId === me) ?? null;
           if (stage < 4) {
+            const records = new Map<string, { wins: number; losses: number }>();
+            for (const row of [...result.standings.east, ...result.standings.west]) records.set(row.team, { wins: 0, losses: 0 });
+            for (const game of result.games.slice(0, revealed)) {
+              const home = records.get(game.home);
+              const away = records.get(game.away);
+              if (!home || !away) continue;
+              if (game.winner === game.home) {
+                home.wins += 1;
+                away.losses += 1;
+              } else {
+                away.wins += 1;
+                home.losses += 1;
+              }
+            }
+            for (const row of standings) {
+              expect(row.wins).toBe(records.get(row.team)?.wins ?? 0);
+              expect(row.losses).toBe(records.get(row.team)?.losses ?? 0);
+              expect(row.seed).toBeNull();
+            }
+          } else {
+            const full = new Map([...result.standings.east, ...result.standings.west].map((row) => [row.team, row]));
+            for (const row of standings) {
+              const expected = full.get(row.team);
+              expect(row.wins).toBe(expected?.wins ?? -1);
+              expect(row.losses).toBe(expected?.losses ?? -1);
+              expect(row.seed).toBe(expected?.seed ?? null);
+            }
+          }
+          if (stage < 4) {
             expect(view.my?.seed ?? null).toBeNull();
             expect(view.my?.ppg ?? null).toBeNull();
           } else {

@@ -23,10 +23,15 @@ alter table lobbies add column if not exists stage_started_at timestamptz;
 alter table lobbies add column if not exists locked_at timestamptz;
 alter table lobbies add column if not exists rematch int not null default 0;
 
-update lobbies set phase = 'lobby' where phase not in ('lobby', 'draw', 'building', 'preview', 'season', 'awards', 'playin', 'playoffs', 'recap');
 alter table lobbies drop constraint if exists lobbies_phase_check;
+update lobbies set phase = 'lobby' where phase = 'building' and league is null;
+update lobbies set phase = 'recap'
+  where phase in ('season', 'barrier', 'playoffs', 'finished') and league is null;
 alter table lobbies add constraint lobbies_phase_check check (
-  phase in ('lobby', 'draw', 'building', 'preview', 'season', 'awards', 'playin', 'playoffs', 'recap')
+  phase in (
+    'lobby', 'draw', 'building', 'preview', 'season', 'awards', 'playin', 'playoffs', 'recap', 'rematch',
+    'barrier', 'finished'
+  )
 );
 alter table lobbies drop constraint if exists lobbies_mode_check;
 alter table lobbies add constraint lobbies_mode_check check (mode in ('normal', 'salary', 'squad'));
@@ -53,11 +58,23 @@ alter table participants add column if not exists build_kind text;
 alter table participants add column if not exists squad jsonb;
 alter table participants add column if not exists build_summary jsonb;
 alter table participants add column if not exists preview_ready boolean not null default false;
-update participants set status = case when status = 'left' then 'left' else 'joined' end
-  where status not in ('joined', 'building', 'ready', 'left');
+alter table participants add column if not exists salary_powers jsonb;
+
+update participants set status = 'joined' where status in ('qualified', 'eliminated', 'playoffs', 'done');
+update participants p set
+  build = null,
+  build_kind = null,
+  squad = null,
+  build_summary = null,
+  status = 'joined',
+  ready_stage = -1,
+  preview_ready = false,
+  salary_powers = null
+where p.lobby_id in (select id from lobbies where league is null and phase in ('lobby', 'recap'));
+
 alter table participants drop constraint if exists participants_status_check;
 alter table participants add constraint participants_status_check check (
-  status in ('joined', 'building', 'ready', 'left')
+  status in ('joined', 'building', 'ready', 'left', 'qualified', 'eliminated', 'playoffs', 'done')
 );
 
 create table if not exists lobby_teams (
@@ -68,19 +85,6 @@ create table if not exists lobby_teams (
   created_at timestamptz not null default now(),
   primary key (lobby_id, participant_id),
   unique (lobby_id, team)
-);
-
-create table if not exists league_games (
-  lobby_id uuid not null references lobbies (id) on delete cascade,
-  game_no int not null,
-  kind text not null,
-  stage int not null,
-  home text not null,
-  away text not null,
-  home_score int not null,
-  away_score int not null,
-  winner text not null,
-  primary key (lobby_id, game_no)
 );
 
 create table if not exists events (
@@ -100,10 +104,11 @@ create table if not exists actions (
   primary key (participant_id, action_id)
 );
 
+drop table if exists league_games;
+
 create unique index if not exists lobbies_create_action_idx on lobbies (create_action);
 create index if not exists participants_lobby_seat_idx on participants (lobby_id, seat);
 create index if not exists events_lobby_idx on events (lobby_id, id desc);
 create index if not exists lobbies_updated_idx on lobbies (updated_at);
 create index if not exists actions_lobby_idx on actions (lobby_id);
 create index if not exists lobby_teams_lobby_idx on lobby_teams (lobby_id);
-create index if not exists league_games_lobby_idx on league_games (lobby_id, game_no);

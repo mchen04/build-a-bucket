@@ -19,7 +19,8 @@ function participant(seat: number, overrides: Partial<ParticipantView> = {}): Pa
     team: null,
     rerollUsed: false,
     build: null,
-    summary: { filled: 0, total: 10, latest: null, ovr: 0 },
+    summary: { filled: 0, total: 10, latest: null, ovr: 0, auto: false },
+    buildSeed: null,
     ready: false,
     season: null,
     ...overrides,
@@ -48,6 +49,7 @@ function view(overrides: Partial<LobbyView> = {}): LobbyView {
     teams: [],
     salaryBoard: null,
     salaryBudget: null,
+    salaryPowers: null,
     league: null,
     ready: { ready: 0, present: 2, mine: false },
     serverTime: '2026-01-01T00:00:00.000Z',
@@ -67,7 +69,7 @@ describe('progress token', () => {
       progressToken(
         view({
           participants: [
-            participant(1, { summary: { filled: 4, total: 10, latest: null, ovr: 0 }, team: 'BOS', ready: true }),
+            participant(1, { summary: { filled: 4, total: 10, latest: null, ovr: 0, auto: false }, team: 'BOS', ready: true }),
             participant(2),
           ],
         }),
@@ -89,8 +91,8 @@ describe('delta merge', () => {
       version: 7,
       serverTime: '2026-01-01T00:00:05.000Z',
       participants: [
-        { seat: 1, status: 'ready', away: false, summary: { filled: 9, total: 10, latest: 'Michael Jordan', ovr: 88 }, team: 'BOS', ready: true },
-        { seat: 2, status: 'building', away: true, summary: { filled: 10, total: 10, latest: 'Larry Bird', ovr: 90 }, team: 'LAL', ready: false },
+        { seat: 1, status: 'ready', away: false, summary: { filled: 9, total: 10, latest: 'Michael Jordan', ovr: 88, auto: false }, team: 'BOS', ready: true },
+        { seat: 2, status: 'building', away: true, summary: { filled: 10, total: 10, latest: 'Larry Bird', ovr: 90, auto: false }, team: 'LAL', ready: false },
       ],
       events: [event(11, { seat: 2, name: 'P2' })],
     };
@@ -113,7 +115,7 @@ describe('delta merge', () => {
       version: 8,
       serverTime: '2026-01-01T00:00:06.000Z',
       participants: [
-        { seat: 1, status: 'building', away: false, summary: { filled: 1, total: 10, latest: 'Kobe Bryant', ovr: 70 }, team: null, ready: false },
+        { seat: 1, status: 'building', away: false, summary: { filled: 1, total: 10, latest: 'Kobe Bryant', ovr: 70, auto: false }, team: null, ready: false },
       ],
       events: [],
     };
