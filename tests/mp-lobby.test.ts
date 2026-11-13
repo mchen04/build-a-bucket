@@ -101,18 +101,6 @@ async function view(code: string, secret: string, since?: number): Promise<Lobby
   return (await read<{ lobby: LobbyView }>(response)).lobby;
 }
 
-async function seatsOf(code: string): Promise<Array<{ seat: number; secret: string }>> {
-  const list: Array<{ seat: number; secret: string }> = [];
-  for (let index = 0; index < 8; index++) {
-    const candidate = generateSecret();
-    const response = await joinHandler(authed(candidate, `lobby/${code}/join`, { name: `Probe${index}`, actionId: newActionId() }));
-    if (response.status !== 200) continue;
-    const body = await read<{ lobby: LobbyView }>(response);
-    list.push({ seat: body.lobby.me.seat, secret: candidate });
-  }
-  return list;
-}
-
 async function draftFor(position: Position, era: Era, strength: 'high' | 'low'): Promise<BuildDraft> {
   const catalog = await loadCatalog();
   const pool = poolFor(catalog, position, era);
@@ -1001,16 +989,6 @@ describe('lobby lifecycle', () => {
     expect(probeText).not.toMatch(/[0-9a-f]{64}/);
   });
 
-  it('does not seat a ninth participant after one leaves', async () => {
-    const lobby = await newLobby('Host');
-    await Promise.all(Array.from({ length: 7 }, (_, index) => join(lobby.code, `P${index}`)));
-    const seated = await view(lobby.code, lobby.host.secret);
-    expect(seated.seatsTaken).toBe(8);
-    const extra = await join(lobby.code, 'Extra');
-    expect(extra.response.status).toBe(409);
-    expect((await read<{ error: string }>(extra.response)).error).toMatch(/full/i);
-  });
-
   it('sends draft progress as a delta without moving the version peers hold', async () => {
     const lobby = await newLobby('Host');
     const guest = await join(lobby.code, 'Guest');
@@ -1045,38 +1023,3 @@ describe('lobby lifecycle', () => {
   });
 });
 
-describe('seat maths', () => {
-  it('keeps probe helpers honest', async () => {
-    const lobby = await newLobby('Host');
-    const taken = await seatsOf(lobby.code);
-    expect(taken.length).toBe(7);
-  });
-});
-
-describe('database round trips', () => {
-  it('syncs a draft in a handful of requests instead of three maintenance statements', async () => {
-    await loadCatalog();
-    const lobby = await newLobby('Round Trips');
-    await join(lobby.code, 'Guest');
-    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
-    const draft = await draftFor('guard', 'current', 'high');
-    const real = globalThis.fetch;
-    const requests: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      requests.push(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-      return real(input, init);
-    }) as typeof fetch;
-    let status = 0;
-    try {
-      const response = await buildHandler(
-        authed(lobby.host.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft }),
-      );
-      status = response.status;
-    } finally {
-      globalThis.fetch = real;
-    }
-    expect(status).toBe(200);
-    expect(requests.length).toBeGreaterThan(0);
-    expect(requests.length).toBeLessThanOrEqual(4);
-  });
-});

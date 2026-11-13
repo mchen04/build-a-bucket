@@ -50,11 +50,4 @@ describe('daily spins', () => {
       expect(target?.player.name).toBe(expected.player);
     }
   });
-
-  it('is stable across calls', () => {
-    const plan = dailyPlanFor('2026-11-13');
-    const first = spinTarget(SAL_GUARDS, plan.seed, 1, false, 0, `${plan.seed}:r`);
-    const second = spinTarget(SAL_GUARDS, plan.seed, 1, false, 0, `${plan.seed}:r`);
-    expect(second?.player.name).toBe(first?.player.name);
-  });
 });

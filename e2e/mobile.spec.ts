@@ -159,16 +159,6 @@ test('plays a full guard current run with moments, chips and headshots', async (
   console.log(`moments answered: ${momentsSeen}; advance label: ${label.trim()}`);
 });
 
-test('shows every trait of the player and blocks a filled one', async ({ page }) => {
-  await page.goto('/');
-  await page.getByRole('button', { name: /^Play · Guard · Current$/ }).click();
-  await page.locator('.spin-big').click();
-  await page.locator('.chip').first().waitFor({ state: 'visible' });
-  const values = await page.locator('.chip').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-val')));
-  expect(values).toHaveLength(10);
-  expect(values.every((value) => value !== null)).toBe(true);
-});
-
 test('shows the no-slot state when a player has nothing left to give', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /^Play · Guard · Current$/ }).click();

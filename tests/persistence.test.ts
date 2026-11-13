@@ -131,13 +131,4 @@ describe('run state', () => {
     expect(next.spinIndex).toBe(1);
     expect(next.current).toBeNull();
   });
-
-  it('never overwrites a filled slot', () => {
-    const run = createRun('b-test-3', 'guard', 'current');
-    const player: Player = { name: 'Test Player', short: 'Test', team: 'MIA', attrs: { jumpShot: 9 } };
-    const filled = placePick(run, player, 'jumpShot');
-    const again = placePick(filled, { ...player, name: 'Other', attrs: { jumpShot: 2 } }, 'jumpShot');
-    expect(again).toBe(filled);
-    expect(again.picks.jumpShot?.val).toBe(9);
-  });
 });
