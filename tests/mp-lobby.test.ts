@@ -440,6 +440,30 @@ describeDb('lobby lifecycle', () => {
     expect(finalView.participants.find((participantEntry) => participantEntry.seat === 1)?.summary).toBeNull();
   });
 
+  it('rejects a latest pick that is not a real player', async () => {
+    const lobby = await newLobby('Host');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const entry = Object.entries(draft.picks)[0] as [string, Pick];
+    const sync = (body: BuildDraft) =>
+      buildHandler(authed(lobby.host.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: body }));
+
+    const forged = await sync({ ...draft, latest: { attr: entry[0], playerName: 'Nobody At All' } });
+    expect(forged.status).toBe(400);
+    expect((await read<{ error: string }>(forged)).error).toMatch(/pool/i);
+
+    const missing = await sync({ ...draft, latest: { attr: 'agent', playerName: entry[1].playerName } });
+    expect(missing.status).toBe(400);
+    expect((await read<{ error: string }>(missing)).error).toMatch(/trait/i);
+
+    const honest = await sync({ ...draft, latest: { attr: entry[0], playerName: entry[1].playerName } });
+    expect(honest.status).toBe(200);
+    const hostView = await view(lobby.code, lobby.host.secret);
+    expect(hostView.participants.find((participantEntry) => participantEntry.seat === 1)?.summary?.latest).toBe(
+      entry[1].playerName,
+    );
+  });
+
   it('writes one pick event per new filled slot', async () => {
     const lobby = await newLobby('Host');
     expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
