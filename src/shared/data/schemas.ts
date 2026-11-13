@@ -6,7 +6,7 @@ export const PlayerSchema = v.object({
   team: v.string(),
   starter: v.optional(v.boolean()),
   captain: v.optional(v.boolean()),
-  number: v.optional(v.number()),
+  number: v.optional(v.union([v.number(), v.string()])),
   height: v.optional(v.number()),
   weight: v.optional(v.number()),
   wingspan: v.optional(v.number()),
@@ -33,7 +33,7 @@ export const PickSchema = v.object({
   playerName: v.string(),
   playerShort: v.string(),
   team: v.string(),
-  number: v.optional(v.number()),
+  number: v.optional(v.union([v.number(), v.string()])),
 });
 
 export const BuildSchema = v.object({

@@ -7,7 +7,7 @@ export interface Player {
   team: string;
   starter?: boolean;
   captain?: boolean;
-  number?: number;
+  number?: number | string;
   height?: number;
   weight?: number;
   wingspan?: number;
@@ -30,7 +30,7 @@ export interface Pick {
   playerName: string;
   playerShort: string;
   team: string;
-  number?: number;
+  number?: number | string;
 }
 
 export interface Build {
