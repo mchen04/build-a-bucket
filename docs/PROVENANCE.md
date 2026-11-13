@@ -26,11 +26,31 @@ Line numbers refer to the prettier output in the recon bundle (`recon/pretty/<ch
 | Seeded string PRNG, Fisher-Yates, weighted shuffle | `progress` `We` (~587), `Qs`, `Uh` | `rng.ts` `hashString`, `mulberry32`, `seededShuffle`, `weightedShuffle` |
 | Spin seeds and respin targets | `homeLook-CgOS2Exw.js` (~893-915) | `spin.ts` `spinTarget`, `run.ts` `respinSeedFor` |
 | Data file names and pinned commit | `CONTRACT.md` "Stack" | `rules.ts` `DATA_SHA`, `DATA_BASE`; `loader.ts` `FILES` |
-| Headshot URL shape and fallback | `data-dcp` `kt` | `loader.ts` `headshotFor`, `components.tsx` `Avatar` initials fallback |
+| Headshot URL shape and generic fallback by skin luminance | `data-dcp` `kt`, `BucketApp` 1010-1014 | `loader.ts` `headshotFor`, `photoFor`; unreadable images fall back to initials |
+| Build height and weight come from the `size` pick | `AppBuildTray` 836-870 (`le` = `5'11"` format) | `rules.ts` `heightLabel`, `weightLabel`; `run.ts` `heightWeightFor` |
+| Letter grades and the `bap-hide-grades` preference | `data-dcp` `rr`; `homeLook` 609-616, 689 | `rules.ts` `GRADES`, `valueLabel`; `app/prefs.ts` |
+| Final report wording per finish | `utils/seasonCard.js` 780-812 | `season.ts` `seasonHeadline`; the OVR and archetype come from the result, not from the build |
+| Season moments: stops, phases, weights, recent list, off switch | `src/lib/seasonDirector.js` (stops, resim, sat), `src/lib/scenarios.js` (`pickScenario`, `phaseOf`, `o`, `gam`, `mix`, `ROLE`) | `season.ts` `seasonStops`, `startSeason`, `chooseMoment`, `passStop`, `finalizeDraft`; `app/momentFlow.ts`; `app/prefs.ts` (`bap_moments_off`, `bap_scn_recent`) |
 
-## Not reproduced in this turn
+## Season moments
 
-- Season moment banks (`seasonDirector-CDEsiyGm.js`, ~3581-4222). The banks load at runtime from the pinned
-  commit; until they are wired, the season screen shows a visible note. No moment text is stored here.
+The banks are functions of a context object, so they are not plain literals. `src/shared/data/moments.ts`
+fetches `src/lib/scenarios.js` at the pinned commit, slices the `NBA_ALL` and `NBA_PLAYOFFS` array literals and
+reads them with a small literal reader that never runs the file. It understands the shapes those two banks use:
+`o(id, label, effect, flavor)` options, `gam(p, hit, hitLine, miss, missLine)` gambles, `mix(...)` and the
+`c.R`/`c.R1` role calls, `dealFx`, object literals, and template strings whose `${...}` parts become tokens the
+app fills in. Anything it cannot read is skipped and recorded, and the app plays on without it.
+
+- Options' `attr` deltas map through the same role table (`guard`/`big`) and clamp to 1..11 like the original.
+- `team` mods multiply by 3.3 when they set the win probability, as the original's `offMod`/`defMod` do.
+- Gamble branches are rolled once and the winning branch's tag and line are kept.
+- A `sit` effect zeroes the missed games and wins them at `clamp(strength - .05, .2, .7)`; `then` applies when the sit ends.
+- Totals for the season come from the game log once a moment has been played.
+
+**Not extracted** (listed as missing, not guessed): the `INJURY` and `PO_INJURY` cards, because their `make`
+needs the injury table and a body part rolled from the build; the `when` predicates, which are read as
+requirements (`alive`/`clinched`/`eliminated` plus `left >= n`) rather than evaluated; `window` and `dur`, which
+are recorded on the decision but do not change later games; and the `xp` value, which no system reads yet.
+Because of that a season shows two or three moments rather than the original's three or four.
 - `qbRespinBonus` (suspected rewarded ad). Always 0, per `CONTRACT.md`.
 - Multiplayer, Daily, Salary Cap, Squad, Career and the online modes. Later phases.
