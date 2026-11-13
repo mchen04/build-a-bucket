@@ -239,6 +239,54 @@ describe('lobby lifecycle', () => {
     expect(twoLobby.me.season?.losses).toBe(oneLobby.me.season?.losses);
   });
 
+  it('gives a participant one season and refuses a reroll', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const strong = await draftFor('guard', 'current', 'high');
+    const actionId = newActionId();
+
+    const first = await submit(lobby.code, lobby.host.secret, strong, actionId);
+    expect(first.status).toBe(200);
+    const stored = (await read<{ lobby: LobbyView }>(first)).lobby;
+    expect(stored.me.season).not.toBeNull();
+    const keptStatus = stored.me.status;
+    expect(['qualified', 'eliminated']).toContain(keptStatus);
+
+    const retry = await submit(lobby.code, lobby.host.secret, strong, actionId);
+    expect(retry.status).toBe(200);
+    const replayed = (await read<{ lobby: LobbyView }>(retry)).lobby;
+    expect(replayed.version).toBe(stored.version);
+    expect(replayed.me.season?.wins).toBe(stored.me.season?.wins);
+    expect(replayed.me.status).toBe(keptStatus);
+
+    const reroll = await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'low'));
+    expect(reroll.status).toBe(409);
+    expect((await read<{ error: string }>(reroll)).error).toMatch(/season is already/i);
+
+    const after = await view(lobby.code, lobby.host.secret);
+    expect(after.version).toBe(stored.version);
+    expect(after.me.season?.wins).toBe(stored.me.season?.wins);
+    expect(after.me.season?.losses).toBe(stored.me.season?.losses);
+    expect(after.me.status).toBe(keptStatus);
+    expect(after.participants.find((entry) => entry.seat === 2)?.status).toBe('joined');
+    expect(await eventCount(lobby.code, 'qualified') + (await eventCount(lobby.code, 'eliminated'))).toBe(1);
+
+    expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'low'))).status).toBe(200);
+    await sleep(HOLD_WAIT);
+    const released = await release(lobby.code, lobby.host.secret);
+    expect(released.status).toBe(200);
+    expect((await read<{ lobby: LobbyView }>(released)).lobby.phase).toBe('playoffs');
+
+    const duringPlayoffs = await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'));
+    expect(duringPlayoffs.status).toBe(409);
+    expect((await read<{ error: string }>(duringPlayoffs)).error).toMatch(/season is already|playoffs/i);
+    const playoffView = await view(lobby.code, lobby.host.secret);
+    expect(playoffView.phase).toBe('playoffs');
+    expect(['playoffs', 'done']).toContain(playoffView.me.status);
+    expect(playoffView.me.season?.wins).toBe(stored.me.season?.wins);
+  });
+
   it('resumes a seat and an unfinished draft after a reconnect', async () => {
     const lobby = await newLobby('Host');
     const guest = await join(lobby.code, 'Guest');
@@ -396,9 +444,11 @@ describe('lobby lifecycle', () => {
 
     const lateDraft = await draftFor('guard', 'current', 'high');
     const late = await submit(lobby.code, guest.seat.secret, lateDraft);
-    expect(late.status).toBe(200);
-    const lateView = (await read<{ lobby: LobbyView }>(late)).lobby;
-    expect(lateView.participants.find((entry) => entry.seat === 2)?.season?.qualified).toBe(true);
+    expect(late.status).toBe(409);
+    expect((await read<{ error: string }>(late)).error).toMatch(/playoffs/i);
+    const lateView = await view(lobby.code, guest.seat.secret);
+    expect(lateView.phase).toBe('playoffs');
+    expect(lateView.me.season).toBeNull();
   });
 
   it('hands the host role to the next present participant', async () => {

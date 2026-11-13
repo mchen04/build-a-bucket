@@ -687,6 +687,9 @@ act as (
   on conflict (participant_id, action_id) do nothing
   returning participant_id
 ),
+seen as (
+  select 1 from actions a, me where a.participant_id = me.id and a.action_id = $3::uuid
+),
 written as (
   update participants p
   set build = $4::jsonb,
@@ -695,11 +698,9 @@ written as (
       last_seen = now()
   from me, act, l
   where p.id = me.id and act.participant_id = me.id
-    and l.phase in ('building', 'season', 'barrier', 'playoffs')
-    and (
-      $6::text <> 'building'
-      or (p.season is null and p.status not in ('qualified', 'eliminated', 'playoffs', 'done'))
-    )
+    and l.phase in ('building', 'season', 'barrier')
+    and p.season is null
+    and ($6::text <> 'building' or p.status not in ('qualified', 'eliminated', 'playoffs', 'done'))
   returning p.id, p.seat, p.name
 ),
 log as (
@@ -714,7 +715,8 @@ select
   (select phase from l) as phase,
   (select id from me) as me_id,
   (select count(*)::int from written) as written,
-  exists (select 1 from act) as action_ok
+  exists (select 1 from act) as action_ok,
+  exists (select 1 from seen) as action_seen
 `;
 
 export async function writeBuild(input: {
@@ -740,6 +742,7 @@ export async function writeBuild(input: {
     me_id: string | null;
     written: number;
     action_ok: boolean;
+    action_seen: boolean;
   }>(WRITE_BUILD_SQL, [
     input.code,
     tokenHash,
@@ -757,11 +760,20 @@ export async function writeBuild(input: {
   if (!row.me_id) {
     return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
   }
-  if (row.written === 0 && row.action_ok && row.phase === 'lobby') {
-    return { ok: false, status: 409, error: { error: 'The host has not started this lobby yet.', reason: 'conflict' } };
-  }
-  if (row.written === 0 && row.action_ok && row.phase === 'finished') {
-    return { ok: false, status: 409, error: { error: 'This lobby is already finished.', reason: 'conflict' } };
+  if (row.written === 0) {
+    if (row.action_seen || input.status === 'building') return { ok: true };
+    if (row.action_ok) {
+      if (row.phase === 'lobby') {
+        return { ok: false, status: 409, error: { error: 'The host has not started this lobby yet.', reason: 'conflict' } };
+      }
+      if (row.phase === 'playoffs') {
+        return { ok: false, status: 409, error: { error: 'The playoffs have already started.', reason: 'conflict' } };
+      }
+      if (row.phase === 'finished') {
+        return { ok: false, status: 409, error: { error: 'This lobby is already finished.', reason: 'conflict' } };
+      }
+      return { ok: false, status: 409, error: { error: 'Your season is already in.', reason: 'conflict' } };
+    }
   }
   if (row.written > 0 && input.status !== 'building') {
     await sql.query(
