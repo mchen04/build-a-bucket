@@ -1,6 +1,7 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { SalCard, SalColumn } from '../../shared/engine/salary';
 import { SAL_COLUMNS } from '../../shared/engine/salary';
+import type { ShuffleTarget } from '../../shared/engine/salaryPowers';
 import { TopBar } from '../components';
 
 export interface SalaryOutcome {
@@ -25,6 +26,18 @@ interface Props {
   grid: SalCard[][];
   play: SalaryOutcome | null;
   notice: string | null;
+  powers: { shuffle: boolean; scout: boolean };
+  powersDisabled: boolean;
+  scouted: Record<string, string>;
+  shuffleArmed: boolean;
+  scoutMode: boolean;
+  powersOpen: boolean;
+  onTogglePowers: () => void;
+  onArmShuffle: () => void;
+  onArmScout: () => void;
+  onCancelPower: () => void;
+  onShuffle: (target: ShuffleTarget) => void;
+  onScout: (card: SalCard) => void;
   onToggleMode: () => void;
   onConfirm: (cards: SalCard[]) => void;
   onExit: () => void;
@@ -45,8 +58,23 @@ export function Salary(props: Props) {
   const locked = props.play?.locked === true;
   const play = props.play;
 
+  useEffect(() => {
+    setPicked((current) => {
+      const next: Record<number, SalCard> = {};
+      for (const [index, card] of Object.entries(current)) {
+        const columnIndex = Number(index);
+        if (props.grid[columnIndex]?.some((entry) => entry.id === card.id)) next[columnIndex] = card;
+      }
+      return next;
+    });
+  }, [props.grid]);
+
   const choose = (columnIndex: number, card: SalCard) => {
     if (locked) return;
+    if (props.scoutMode) {
+      props.onScout(card);
+      return;
+    }
     setPicked((current) => {
       const next = { ...current };
       if (next[columnIndex]?.id === card.id) delete next[columnIndex];
@@ -61,13 +89,57 @@ export function Salary(props: Props) {
         title="Salary Cap"
         onBack={props.onExit}
         right={
-          <button class="icon-btn wide" data-testid="salary-mode" onClick={props.onToggleMode}>
-            {props.mode === 'daily' ? 'DAILY' : 'INFINITE'}
-          </button>
+          <div class="sc-powers">
+            <button class="icon-btn wide" data-testid="salary-powers" disabled={props.powersDisabled} onClick={props.onTogglePowers}>
+              POWERS
+            </button>
+            <button class="icon-btn wide" data-testid="salary-mode" onClick={props.onToggleMode}>
+              {props.mode === 'daily' ? 'DAILY' : 'INFINITE'}
+            </button>
+          </div>
         }
       />
       <div class="body">
         {props.notice ? <div class="notice bad">{props.notice}</div> : null}
+        {props.powersOpen && !props.powersDisabled ? (
+          <div class="card" data-testid="salary-powers-menu">
+            <div class="tiny muted">{props.mode === 'daily' ? 'POWERS · one use each today' : 'POWERS · one use each run'}</div>
+            <div class="sc-power-row">
+              <button
+                class="btn btn-small sc-power"
+                data-testid="salary-power-shuffle"
+                disabled={props.powers.shuffle}
+                onClick={props.onArmShuffle}
+              >
+                SHUFFLE <span class="sc-badge" data-testid="salary-power-shuffle-badge">{props.powers.shuffle ? 0 : 1}</span>
+              </button>
+              <button
+                class="btn btn-small sc-power"
+                data-testid="salary-power-scout"
+                disabled={props.powers.scout}
+                onClick={props.onArmScout}
+              >
+                SCOUT <span class="sc-badge" data-testid="salary-power-scout-badge">{props.powers.scout ? 0 : 1}</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {props.shuffleArmed ? (
+          <div class="notice" data-testid="salary-shuffle-hint">
+            Tap a column header or a price row.
+            <button class="btn btn-small" data-testid="salary-power-cancel" onClick={props.onCancelPower}>
+              Cancel
+            </button>
+          </div>
+        ) : null}
+        {props.scoutMode ? (
+          <div class="notice" data-testid="salary-scout-hint">
+            Tap a card to reveal its grade.
+            <button class="btn btn-small" data-testid="salary-power-cancel" onClick={props.onCancelPower}>
+              Cancel
+            </button>
+          </div>
+        ) : null}
         <div class="sc-bar" data-testid="salary-cap">
           <span class="sc-spent" style={{ color: over ? 'var(--bad)' : 'inherit' }}>
             ${spent}M
@@ -77,30 +149,58 @@ export function Salary(props: Props) {
             {props.mode === 'daily' ? props.dateStr : `SEED ${props.dateStr}`}
           </span>
         </div>
-        <div class="sc-grid" data-testid="salary-grid">
+        <div class={`sc-grid${props.shuffleArmed ? ' targeting' : ''}`} data-testid="salary-grid">
           <div class="sc-head" />
-          {columns.map((column) => (
-            <div class="sc-head" key={column.key}>
-              {column.label.split(' ')[0]}
-            </div>
-          ))}
+          {columns.map((column, columnIndex) =>
+            props.shuffleArmed ? (
+              <button
+                class="sc-head sc-target"
+                key={column.key}
+                data-testid={`salary-shuffle-column-${column.key}`}
+                onClick={() => props.onShuffle({ kind: 'column', index: columnIndex })}
+              >
+                {column.label.split(' ')[0]}
+              </button>
+            ) : (
+              <div class="sc-head" key={column.key}>
+                {column.label.split(' ')[0]}
+              </div>
+            ),
+          )}
           {[0, 1, 2, 3, 4].map((tier) => (
             <div class="sc-row" key={tier} style={{ display: 'contents' }}>
-              <div class="sc-price">${[50, 40, 30, 20, 10][tier]}M</div>
+              {props.shuffleArmed ? (
+                <button
+                  class="sc-price sc-target"
+                  data-testid={`salary-shuffle-row-${tier}`}
+                  onClick={() => props.onShuffle({ kind: 'row', tier })}
+                >
+                  ${[50, 40, 30, 20, 10][tier]}M
+                </button>
+              ) : (
+                <div class="sc-price">${[50, 40, 30, 20, 10][tier]}M</div>
+              )}
               {columns.map((column, columnIndex) => {
                 const card = props.grid[columnIndex]?.[tier];
                 if (!card) return <div class="sc-cell" key={column.key} />;
                 const on = picked[columnIndex]?.id === card.id;
+                const grade = props.scouted[card.id];
                 return (
                   <button
-                    class={`sc-cell${on ? ' on' : ''}${card.legend ? ' legend' : ''}`}
+                    class={`sc-cell${on ? ' on' : ''}${card.legend ? ' legend' : ''}${props.scoutMode ? ' scouting' : ''}`}
                     key={`${column.key}-${tier}`}
                     data-testid={`salary-${column.key}-${tier}`}
+                    data-attrs={JSON.stringify(card.attrs)}
                     aria-pressed={on}
                     onClick={() => choose(columnIndex, card)}
                   >
                     <span class="sc-name">{lastName(card.name)}</span>
                     <span class="sc-team">{card.legend ? `${card.team} · GOAT` : card.team}</span>
+                    {grade ? (
+                      <span class="sc-grade" data-testid={`salary-grade-${column.key}-${tier}`}>
+                        {grade}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
