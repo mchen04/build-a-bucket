@@ -18,7 +18,6 @@ interface Props {
   onSalary: () => void;
   onSquad: () => void;
   dailyLabel: string;
-  dailyStatus: string;
 }
 
 export function Home(props: Props) {
@@ -31,8 +30,8 @@ export function Home(props: Props) {
 
   const modes: ModeRow[] = [
     { title: 'Daily Challenge', sub: props.dailyLabel, testId: 'home-daily', onOpen: props.onDaily },
-    { title: 'Salary Cap', sub: 'Today’s budget grid, or an infinite run', testId: 'home-salary', onOpen: props.onSalary },
-    { title: 'Squad Builder', sub: 'Five builds (PG, SG, SF, PF, C) share one season', testId: 'home-squad', onOpen: props.onSquad },
+    { title: 'Salary Cap', sub: 'Daily grid or infinite run', testId: 'home-salary', onOpen: props.onSalary },
+    { title: 'Squad Builder', sub: 'Five builds, one season', testId: 'home-squad', onOpen: props.onSquad },
   ];
 
   return (
@@ -40,7 +39,6 @@ export function Home(props: Props) {
       <div class="top">
         <span class="top-title">Build a Bucket</span>
         <span class="top-spacer" />
-        <span class="tiny muted">Rebuild</span>
       </div>
       <div class="body home-body">
         {props.notice ? <div class="notice bad">{props.notice}</div> : null}
@@ -50,24 +48,6 @@ export function Home(props: Props) {
           <p class="muted" style={{ margin: '2px 0 0', fontSize: '11px' }}>
             Ten picks. One season. Make the Hall.
           </p>
-        </div>
-        <div class="card home-modes">
-          <div class="seg">
-            <button aria-pressed={position === 'guard'} onClick={() => setPosition('guard')}>
-              Guard
-            </button>
-            <button aria-pressed={position === 'big'} onClick={() => setPosition('big')}>
-              Big
-            </button>
-          </div>
-          <div class="seg">
-            <button aria-pressed={era === 'current'} onClick={() => setEra('current')}>
-              Current
-            </button>
-            <button aria-pressed={era === 'alltime'} onClick={() => setEra('alltime')}>
-              All-Time
-            </button>
-          </div>
         </div>
         <div class="home-list">
           {modes.map((mode) => (
@@ -84,7 +64,7 @@ export function Home(props: Props) {
           <div class="row" style={{ alignItems: 'center' }}>
             <div style={{ flex: 1 }}>
               <div class="name">Play with friends</div>
-              <div class="sub">2–8 players · live lobby · invite code</div>
+              <div class="sub">2–8 players · invite link</div>
             </div>
           </div>
           <input
@@ -96,15 +76,15 @@ export function Home(props: Props) {
             value={name}
             onInput={(event) => setName((event.target as HTMLInputElement).value)}
           />
+          <button
+            class="btn btn-ghost btn-small"
+            data-testid="create-lobby"
+            disabled={!named}
+            onClick={() => props.onCreateLobby(name.trim())}
+          >
+            Create lobby
+          </button>
           <div class="row">
-            <button
-              class="btn btn-ghost btn-small"
-              data-testid="create-lobby"
-              disabled={!named}
-              onClick={() => props.onCreateLobby(name.trim())}
-            >
-              Create lobby
-            </button>
             <input
               class="field code"
               data-testid="mp-code"
@@ -127,8 +107,27 @@ export function Home(props: Props) {
         </div>
       </div>
       <div class="bottom">
+        <div class="tiny muted">Quick play</div>
+        <div class="card home-modes">
+          <div class="seg">
+            <button aria-pressed={position === 'guard'} onClick={() => setPosition('guard')}>
+              Guard
+            </button>
+            <button aria-pressed={position === 'big'} onClick={() => setPosition('big')}>
+              Big
+            </button>
+          </div>
+          <div class="seg">
+            <button aria-pressed={era === 'current'} onClick={() => setEra('current')}>
+              Current
+            </button>
+            <button aria-pressed={era === 'alltime'} onClick={() => setEra('alltime')}>
+              All-Time
+            </button>
+          </div>
+        </div>
         <button class="btn" onClick={() => props.onStart(position, era)}>
-          Play · {position === 'guard' ? 'Guard' : 'Big'} · {era === 'current' ? 'Current' : 'All-Time'}
+          Play
         </button>
       </div>
     </div>

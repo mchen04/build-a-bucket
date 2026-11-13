@@ -68,7 +68,7 @@ export function Playoffs(props: Props) {
           </div>
         ) : (
           <p class="tiny muted center" style={{ margin: 0 }}>
-            {revealed === 0 ? 'Tip off to reveal the bracket.' : 'Playing…'}
+            Revealing…
           </p>
         )}
       </div>

@@ -376,7 +376,6 @@ export function App() {
           onSalary={() => setFlow('salary')}
           onSquad={() => setFlow('squad')}
           dailyLabel={`${plan.pos.toUpperCase()} · ${plan.mode === 'all-time' ? 'ALL-TIME' : 'CURRENT'}${daily?.done ? (daily.forfeit ? ' · left today' : ` · ${daily.ovr} OVR`) : ''}`}
-          dailyStatus={plan.key}
         />
       );
     }

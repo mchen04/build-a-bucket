@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { gradeFor, valueLabel } from '../../shared/engine/rules';
+import { gradeTone, valueLabel } from '../../shared/engine/rules';
 import type { SalaryCardPick, SalaryPowersView } from '../../shared/mp/types';
 import { TopBar } from '../components';
 
@@ -71,7 +71,7 @@ export function LobbySalary(props: Props) {
         </div>
         {powers ? (
           <div class="card">
-            <div class="tiny muted">Powers · one use each</div>
+            <div class="tiny muted">Powers</div>
             <div class="row" style={{ marginTop: '4px' }}>
               <button
                 class="btn btn-ghost btn-small"
@@ -98,7 +98,7 @@ export function LobbySalary(props: Props) {
             </div>
             {shuffleArmed ? (
               <>
-                <div class="tiny muted">Tap a column header or a price row.</div>
+                <div class="tiny muted">Pick a column or row.</div>
                 <div class="row" style={{ flexWrap: 'wrap' }}>
                   {[50, 40, 30, 20, 10].map((price, tier) => (
                     <button
@@ -113,14 +113,18 @@ export function LobbySalary(props: Props) {
                 </div>
               </>
             ) : null}
-            {scoutMode ? <div class="tiny muted">Tap a card to reveal its grade.</div> : null}
+            {scoutMode ? <div class="tiny muted">Pick a card.</div> : null}
           </div>
         ) : null}
         {props.board.map((column, columnIndex) => (
           <div class="card" key={columnIndex} style={{ display: 'grid', gap: '4px' }}>
             {shuffleArmed ? (
-              <button class="tiny muted" data-testid={`lobby-salary-shuffle-column-${columnIndex}`} onClick={() => shuffle({ kind: 'column', index: columnIndex })}>
-                {column[0]?.posGroup === 'big' ? 'BIG' : 'GUARD'} · column {columnIndex + 1}
+              <button
+                class="btn btn-ghost btn-small"
+                data-testid={`lobby-salary-shuffle-column-${columnIndex}`}
+                onClick={() => shuffle({ kind: 'column', index: columnIndex })}
+              >
+                {column[0]?.posGroup === 'big' ? 'BIG' : 'GUARD'} {columnIndex + 1}
               </button>
             ) : (
               <div class="tiny muted">{column[0]?.posGroup === 'big' ? 'BIG' : 'GUARD'} · column {columnIndex + 1}</div>
@@ -137,14 +141,20 @@ export function LobbySalary(props: Props) {
                     onClick={() => choose(columnIndex, card)}
                     style={{ flex: '1 1 30%', minWidth: '92px' }}
                   >
-                    <span style={{ display: 'block', fontWeight: 800, fontSize: '11px' }}>{card.name}</span>
+                    <span class="card-name">{card.name}</span>
                     <span class="tiny muted">{card.team} · {card.price}M</span>
-                    <span class="tiny">
-                      {Object.entries(card.attrs)
-                        .map(([key, value]) => `${key.slice(0, 3).toUpperCase()} ${valueLabel(value, true)}`)
-                        .join(' · ')}
+                    <span class="card-attrs">
+                      {Object.entries(card.attrs).map(([key, value]) => {
+                        const label = valueLabel(value, true);
+                        return (
+                          <span class="card-attr" key={key}>
+                            <span class="card-attr-key">{key.slice(0, 3).toUpperCase()}</span>
+                            <span class={`card-attr-val ${gradeTone(label)}`}>{label}</span>
+                          </span>
+                        );
+                      })}
                     </span>
-                    {grade ? <span class="tiny">Grade {grade}</span> : null}
+                    {grade ? <span class={`sc-grade ${gradeTone(grade)}`}>{grade}</span> : null}
                   </button>
                 );
               })}
@@ -165,6 +175,3 @@ export function LobbySalary(props: Props) {
   );
 }
 
-export function salaryGrade(value: number): string {
-  return gradeFor(value);
-}

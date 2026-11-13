@@ -2,7 +2,7 @@ import type { Catalog } from '../../shared/data/loader';
 import { SQUAD_SLOTS, type SquadSeasonResult, type SquadStarter, type SquadStrength } from '../../shared/engine/squad';
 import { ovrFromValues } from '../../shared/engine/ovr';
 import type { SquadState } from '../../shared/squadStore';
-import { TopBar } from '../components';
+import { StatGrid, TopBar } from '../components';
 
 export interface SquadOutcome {
   strength: SquadStrength;
@@ -85,8 +85,12 @@ export function Squad(props: Props) {
           </div>
         ) : null}
         {team ? (
-          <div class="notice" data-testid="squad-ready">
-            {team} · strengths OFF {props.starters.length ? props.starters.map((starter) => starter.ovr).join('/') : '—'}
+          <div class="card" data-testid="squad-ready">
+            <div class="tiny muted">{team} · starting five</div>
+            <StatGrid
+              className="five"
+              items={props.starters.map((starter) => ({ label: starter.pos.toUpperCase(), value: starter.ovr }))}
+            />
           </div>
         ) : null}
         {props.outcome ? (
@@ -95,14 +99,28 @@ export function Squad(props: Props) {
             <div class="title" style={{ marginTop: '2px' }}>
               {props.outcome.season.wins}-{props.outcome.season.losses} · SEED {props.outcome.season.seedNumber}
             </div>
-            <div class="muted" style={{ fontSize: '11px', marginTop: '4px' }}>
-              OFF {props.outcome.strength.off} · DEF {props.outcome.strength.def} ·{' '}
-              {props.outcome.season.champion ? 'CHAMPIONS' : props.outcome.season.madePlayoffs ? 'PLAYOFFS' : 'MISSED PLAYOFFS'}
+            <StatGrid
+              items={[
+                { label: 'Record', value: `${props.outcome.season.wins}-${props.outcome.season.losses}` },
+                { label: 'Seed', value: `#${props.outcome.season.seedNumber}` },
+                { label: 'OFF', value: props.outcome.strength.off },
+                { label: 'DEF', value: props.outcome.strength.def },
+              ]}
+            />
+            <div class="result-line">
+              {props.outcome.season.champion ? 'Champions' : props.outcome.season.madePlayoffs ? 'Playoffs' : 'Missed playoffs'}
             </div>
-            <div class="tiny muted" style={{ marginTop: '4px' }}>
-              {props.outcome.lines
-                .map((line) => `${line.id} ${line.ppg}/${line.rpg}/${line.apg}${props.outcome?.honors[line.id] ? ` ${props.outcome.honors[line.id]}` : ''}`)
-                .join(' · ')}
+            <div class="stat-rows">
+              {props.outcome.lines.map((line) => (
+                <div class="stat-row" key={line.id}>
+                  <span class="stat-row-pos">{line.id}</span>
+                  <span class="stat-row-main">{line.ppg.toFixed(1)} PPG</span>
+                  <span class="stat-row-sub">
+                    {line.rpg.toFixed(1)} RPG · {line.apg.toFixed(1)} APG
+                  </span>
+                  {props.outcome?.honors[line.id] ? <span class="stat-row-honor">{props.outcome.honors[line.id]}</span> : null}
+                </div>
+              ))}
             </div>
             <button class="btn btn-ghost btn-small" data-testid="squad-new" style={{ marginTop: '6px' }} onClick={props.onReset}>
               New squad
@@ -111,7 +129,7 @@ export function Squad(props: Props) {
         ) : null}
         {!allBuilt ? (
           <div class="notice" data-testid="squad-hint">
-            Five slots, each built with the normal spins: three guards (PG, SG, SF) and two bigs (PF, C).
+            Three guards, two bigs.
           </div>
         ) : null}
       </div>

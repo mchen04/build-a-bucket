@@ -75,7 +75,7 @@ export function End(props: Props) {
         <div class="award">
           <span class="tag">GOAT</span>
           <span class="who">{season.goatRank ? `#${season.goatRank} all-time` : 'Not ranked'}</span>
-          <span class="num">{season.goatRank ? 'Top 75' : 'OVR below 92'}</span>
+          <span class="num">{season.goatRank ? 'Top 75' : ''}</span>
         </div>
       </div>
       <div class="bottom">
