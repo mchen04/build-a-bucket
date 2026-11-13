@@ -55,3 +55,23 @@ Because of that a season shows two or three moments rather than the original's t
 - `qbRespinBonus` (suspected rewarded ad). Always 0, per `CONTRACT.md`.
 - Daily, Salary Cap, Squad, Career and the original online modes. Later phases. Multiplayer is built
   as lobbies; see `docs/MULTIPLAYER.md`. Lobby seasons run with moments off.
+
+## Offline modes (daily, salary cap, squad)
+
+The constants and generators of the three rebuilt offline modes were traced from the pinned public source at
+`92cb2a155bb2261cd68038ac366b994ad5dbb873` and are re-expressed in our own modules:
+
+- `src/shared/engine/daily.ts` — the day key, the 2026-10-23 rotation, the `bap-daily-<date>` seed
+  (`src/lib/progress.js` and the daily helpers in `src/components/BucketApp.jsx`).
+- `src/shared/engine/salary.ts` — columns, prices, rank bands, the cap table and its three fixed dates, the
+  hash RNG, the legend shuffle constant `0xBADC0FFE`, the yesterday penalty and the board generator
+  (`src/lib/salaryCore.js`, `src/data/nba-salary.js`, `src/components/BucketSalaryCap.jsx`).
+- `src/shared/engine/squad.ts` — caps, the strength moves (guard `.45/.15`, big `.25/.35`), the replacement
+  rating 64, the seeded record/playoff simulation, the all-time league offset and the honour composite and
+  thresholds (`src/lib/squadSeason.js`, `src/lib/teamSeason.js`, `src/utils/bucketSimulation.js`).
+- The team-pick hash (`0x45d9f3b`) and the hash RNG (`0x45d9f3b`/`0x119de1f3`) live in
+  `src/shared/engine/rng.ts` beside the mulberry32 and string-hash RNGs used elsewhere.
+
+Expected values for the golden tests were produced by a throwaway transcription of those algorithms kept
+outside this repository (`tools/parity/` in the card's working folder); the original's code is never executed.
+See `docs/MODES.md` for what matches, and where a limitation is recorded.

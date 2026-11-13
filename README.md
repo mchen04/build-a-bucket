@@ -4,9 +4,19 @@ A faster, crash-free, mobile-first rebuild of the single-player Build a Bucket g
 and grades, one 82-game season with the original's decision moments, play-in and playoffs, awards, and a final
 report. Built with Vite, Preact and strict TypeScript.
 
-The single-player core is complete. Multiplayer is built as realtime lobbies for 2 to 8 players with invite
-codes, a host, live activity, a barrier before the playoffs and a shared reveal. Career, Salary Cap, Squad
-Builder and the original live modes are shown as "coming in this rebuild" placeholders.
+The single-player core is complete, and so are the Daily Challenge, Salary Cap (daily and infinite) and Squad
+Builder modes (`docs/MODES.md`). Multiplayer is built as realtime lobbies for 2 to 8 players with invite codes,
+a host, live activity, a barrier before the playoffs and a shared reveal. Career stays "coming next", and the
+original live modes (Blacktop, Compete, Versus) stay visible limitations.
+
+## Modes
+
+The home screen opens four ways to play. **Play** is the classic ten-pick build, season and playoffs.
+**Daily Challenge** uses the day's shared spins (one run a day per device, resumable, leaving forfeits).
+**Salary Cap** deals the day's five-column budget board or an infinite board from a random seed.
+**Squad Builder** builds five slots (PG, SG, SF, PF, C) that share one seeded season. Each mode keeps its own
+versioned key (`bab:daily:v1`, `bab:salary:v1`, `bab:squad:v1`) and the seeded outputs are covered by golden
+tests; the details and the known limits are in `docs/MODES.md`.
 
 ## Run
 

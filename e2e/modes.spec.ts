@@ -27,6 +27,8 @@ const BIG_KEYS = [
   'clutch',
 ];
 
+test.use({ viewport: { width: 390, height: 844 } });
+
 test.beforeAll(() => {
   mkdirSync(SHOTS, { recursive: true });
 });
