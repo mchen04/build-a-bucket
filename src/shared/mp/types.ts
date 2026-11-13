@@ -58,7 +58,7 @@ export interface SeasonSummary {
   archetype: string;
   team: string;
   qualified: boolean;
-  finishRank: number;
+  finishRank: number | null;
   finishLabel: string | null;
 }
 

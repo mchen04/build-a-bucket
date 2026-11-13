@@ -148,12 +148,14 @@ export function revealSeasonSummary(season: SeasonResult, revealed: number, fina
   const series = rounds.filter((round): round is SeriesRound => round.type === 'series');
   const playedPlayIn = rounds.some((round) => round.type === 'playin');
   const revealedAll = finalPhase || (rounds.length > 0 && revealed >= rounds.length);
-  const finishRank = finishRankOf({
-    champion: season.champion,
-    madePlayoffs: season.madePlayoffs,
-    seriesRounds: series.length,
-    playedPlayIn,
-  });
+  const finishRank = revealedAll
+    ? finishRankOf({
+        champion: season.champion,
+        madePlayoffs: season.madePlayoffs,
+        seriesRounds: series.length,
+        playedPlayIn,
+      })
+    : null;
   return {
     wins: season.wins,
     losses: season.losses,
@@ -240,7 +242,12 @@ function buildView(row: ReadRow, now: number): LobbyView | null {
               rank: season.finishRank,
             };
           })
-          .sort((a, b) => a.rank - b.rank || b.ovr - a.ovr || a.seat - b.seat)
+          .sort(
+            (a, b) =>
+              (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER) ||
+              b.ovr - a.ovr ||
+              a.seat - b.seat,
+          )
           .map(({ rank: _rank, ...entry }) => entry)
       : null;
   return {

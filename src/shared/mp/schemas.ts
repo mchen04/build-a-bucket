@@ -55,7 +55,7 @@ export const SeasonSummarySchema = v.object({
   archetype: v.string(),
   team: v.string(),
   qualified: v.boolean(),
-  finishRank: v.number(),
+  finishRank: v.nullable(v.number()),
   finishLabel: v.nullable(v.string()),
 });
 

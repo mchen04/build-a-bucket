@@ -66,6 +66,17 @@ describe('reveal projection', () => {
     expect(summary.qualified).toBe(true);
   });
 
+  it('hides the finish rank until the run is fully revealed', () => {
+    const deep = fakeSeason(4, false);
+    expect(revealSeasonSummary(deep, 1, false).finishRank).toBeNull();
+    expect(revealSeasonSummary(deep, 3, false).finishRank).toBeNull();
+    expect(revealSeasonSummary(deep, 4, false).finishRank).toBe(2);
+    const winner = fakeSeason(4, true);
+    expect(revealSeasonSummary(winner, 1, false).finishRank).toBeNull();
+    expect(revealSeasonSummary(winner, 4, false).finishRank).toBe(1);
+    expect(revealSeasonSummary(winner, 0, true).finishRank).toBe(1);
+  });
+
   it('counts one reveal per interval on the shared clock', () => {
     const start = Date.UTC(2026, 0, 1, 0, 0, 0);
     expect(revealedCount(null, 5, start)).toBe(0);

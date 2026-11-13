@@ -618,6 +618,41 @@ describe('lobby lifecycle', () => {
     expect(nextView.participants.find((entry) => !entry.isMe)?.summary?.filled).toBe(2);
   });
 
+  it('keeps the finish rank out of the payload until the reveal catches up', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'high'))).status).toBe(200);
+    await sleep(HOLD_WAIT);
+    const released = await release(lobby.code, lobby.host.secret);
+    expect(released.status).toBe(200);
+    const opened = (await read<{ lobby: LobbyView }>(released)).lobby;
+    expect(opened.phase).toBe('playoffs');
+    expect(opened.roundsRevealed).toBeLessThanOrEqual(2);
+    expect(opened.standings).toBeNull();
+
+    const totals = await db().query<{ seat: number; total: string }>(
+      `select p.seat, coalesce(jsonb_array_length(p.season->'playoffRounds'), 0) as total
+       from participants p join lobbies l on l.id = p.lobby_id
+       where l.code = $1 and p.status <> 'left'`,
+      [lobby.code],
+    );
+    const raw = await (await viewHandler(poll(lobby.host.secret, lobby.code))).text();
+    const body = JSON.parse(raw) as { lobby: LobbyView };
+    expect(body.lobby.standings).toBeNull();
+    expect(raw).not.toMatch(/"champion":true/);
+    for (const entry of body.lobby.participants) {
+      if (!entry.season) continue;
+      expect(entry.rounds.length).toBeLessThanOrEqual(body.lobby.roundsRevealed);
+      const total = Number(totals.find((row) => row.seat === entry.seat)?.total ?? '0');
+      if (total <= body.lobby.roundsRevealed) continue;
+      expect(entry.season.finishRank, `seat ${entry.seat} has an unfinished run`).toBeNull();
+      expect(entry.season.finishLabel).toBeNull();
+      expect(entry.season.champion).toBe(false);
+    }
+  });
+
   it('never reveals a playoff result beyond the revealed round', async () => {
     const lobby = await newLobby('Host');
     const guest = await join(lobby.code, 'Guest');
