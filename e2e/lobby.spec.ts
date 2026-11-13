@@ -406,6 +406,16 @@ test('keeps a lobby pick through an immediate reload', async ({ browser }) => {
     await expect(host.locator('[data-testid="roster"] [data-seat="2"] .state')).toContainText('1/10', {
       timeout: 15_000,
     });
+
+    await fillBuild(guest, 9, 'Ben');
+    await guest.getByRole('button', { name: 'Submit build' }).click();
+    await expect(guest.locator('[data-testid="my-result"]')).toBeVisible({ timeout: 90_000 });
+    await expect(guest.locator('[data-testid="open-builder"]')).toHaveCount(0);
+    await expect.poll(() => guest.evaluate(() => localStorage.getItem('bab:mp:draft:v1'))).toBeNull();
+
+    await guest.reload();
+    await expect(guest.locator('[data-testid="my-result"]')).toBeVisible({ timeout: 30_000 });
+    await expect(guest.locator('[data-testid="open-builder"]')).toHaveCount(0);
   } finally {
     for (const context of contexts) await context.close();
   }
