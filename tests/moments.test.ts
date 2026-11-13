@@ -35,6 +35,7 @@ const catalog: Catalog = {
   currentBigs: [],
   legendGuards: [],
   legendBigs: [],
+  salaryLegends: [],
   headshots: {},
 };
 

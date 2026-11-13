@@ -17,6 +17,8 @@ interface Props {
   onChange: (run: RunState) => void;
   onBack: () => void;
   header?: ComponentChildren;
+  completeLabel?: string;
+  onComplete?: () => void;
 }
 
 export function Builder(props: Props) {
@@ -217,8 +219,11 @@ export function Builder(props: Props) {
       </div>
       <div class="bottom">
         {complete ? (
-          <button class="btn" onClick={() => props.onChange({ ...run, screen: 'team' })}>
-            Spin for Team
+          <button
+            class="btn"
+            onClick={() => (props.onComplete ? props.onComplete() : props.onChange({ ...run, screen: 'team' }))}
+          >
+            {props.completeLabel ?? 'Spin for Team'}
           </button>
         ) : currentPlayer ? (
           <button class="btn" disabled>

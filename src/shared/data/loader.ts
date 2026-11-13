@@ -2,7 +2,7 @@ import JSON5 from 'json5';
 import * as v from 'valibot';
 import { DATA_BASE } from '../engine/rules';
 import type { Player, Position, Era, Team } from '../engine/types';
-import { HeadshotSchema, PlayerListSchema, TeamListSchema } from './schemas';
+import { HeadshotSchema, PlayerListSchema, SalaryLegendListSchema, TeamListSchema } from './schemas';
 
 export interface Catalog {
   teams: Team[];
@@ -10,6 +10,7 @@ export interface Catalog {
   currentBigs: Player[];
   legendGuards: Player[];
   legendBigs: Player[];
+  salaryLegends: Player[];
   headshots: Record<string, string>;
 }
 
@@ -18,6 +19,7 @@ const FILES = {
   bigs: 'src/data/nba-bigs.js',
   legendGuards: 'src/data/nba-guard-legends.js',
   legendBigs: 'src/data/nba-big-legends.js',
+  salaryLegends: 'src/data/nba-salary.js',
   teams: 'src/data/nba-teams.js',
   headshots: 'src/data/nba-headshots.json',
 } as const;
@@ -137,11 +139,12 @@ function parseExport<T>(source: string, name: string, schema: v.GenericSchema<T>
 }
 
 export async function loadCatalog(): Promise<Catalog> {
-  const [guardsText, bigsText, legendGuardsText, legendBigsText, teamsText, headshotsText] = await Promise.all([
+  const [guardsText, bigsText, legendGuardsText, legendBigsText, salaryText, teamsText, headshotsText] = await Promise.all([
     fetchSource(FILES.guards),
     fetchSource(FILES.bigs),
     fetchSource(FILES.legendGuards),
     fetchSource(FILES.legendBigs),
+    fetchSource(FILES.salaryLegends),
     fetchSource(FILES.teams),
     fetchSource(FILES.headshots),
   ]);
@@ -158,6 +161,10 @@ export async function loadCatalog(): Promise<Catalog> {
     currentBigs: parseExport(bigsText, 'NBA_BIG_PLAYERS', PlayerListSchema),
     legendGuards: parseExport(legendGuardsText, 'NBA_ALLTIME_GUARD_PLAYERS', PlayerListSchema),
     legendBigs: parseExport(legendBigsText, 'NBA_ALLTIME_BIG_PLAYERS', PlayerListSchema),
+    salaryLegends: parseExport(salaryText, 'GOAT_SALARY_PLAYERS', SalaryLegendListSchema).map((player) => ({
+      ...player,
+      short: player.short ?? player.name.split(' ').slice(-1)[0] ?? player.name,
+    })) as Player[],
     headshots,
   };
 }

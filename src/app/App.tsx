@@ -1,12 +1,40 @@
 import { Component, type ComponentChildren } from 'preact';
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { loadCatalog, type Catalog } from '../shared/data/loader';
 import { loadMomentBank, type MomentBank } from '../shared/data/moments';
-import { randomSeed } from '../shared/engine/rng';
-import { chooseMoment, finalizeDraft, passStop, startSeason, type SeasonDraft } from '../shared/engine/season';
-import type { Era, MomentCard, Position } from '../shared/engine/types';
+import type { DailyPlan } from '../shared/engine/daily';
+import { mulberry32, randomSeed } from '../shared/engine/rng';
+import { rollStats, seasonHeadline, simulateSeason, startSeason, finalizeDraft, chooseMoment, passStop, type SeasonDraft } from '../shared/engine/season';
+import { squadSeason, squadStarters, squadStrength, honorsFor } from '../shared/engine/squad';
+import {
+  SAL_COLUMNS,
+  budgetForDateStr,
+  budgetForSeed,
+  buildFromCards,
+  dailyGrid,
+  infiniteGrid,
+  previewFor,
+  salaryPool,
+  spentFor,
+  teamForSeed,
+} from '../shared/engine/salary';
+import type { Build, Era, MomentCard, Position } from '../shared/engine/types';
 import { generateSecret, normalizeCode } from '../shared/mp/codes';
 import { DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../shared/mp/types';
+import {
+  bumpInfinite,
+  cardSummary,
+  dailyDay,
+  newSquadState,
+  planForToday,
+  readSalary,
+  readSquad,
+  saveDailyDay,
+  saveSalaryPlay,
+  saveSquad,
+  type DailyDay,
+  type SquadState,
+} from '../shared/modes';
 import { clearRun, loadRun, saveRun } from '../shared/persistence';
 import { createRun, type RunState } from '../shared/run';
 import { createLobbyRequest, joinLobbyRequest } from './mp/api';
@@ -14,10 +42,13 @@ import { loadMpSession, saveMpSession, type MpSession } from './mp/session';
 import { pickMoment } from './momentFlow';
 import { readMomentsOff, recentMoments, rememberMoment, writeMomentsOff } from './prefs';
 import { Builder } from './screens/Builder';
+import { Daily } from './screens/Daily';
 import { End } from './screens/End';
 import { Home } from './screens/Home';
 import { Lobby } from './screens/Lobby';
 import { Playoffs } from './screens/Playoffs';
+import { Salary, type SalaryOutcome } from './screens/Salary';
+import { Squad, type SquadOutcome } from './screens/Squad';
 import { Season } from './screens/Season';
 import { TeamSpin } from './screens/TeamSpin';
 
@@ -26,6 +57,8 @@ const MP_DEFAULT_SETTINGS: LobbySettings = {
   positions: ['guard', 'big'],
   revealSeconds: DEFAULT_REVEAL_SECONDS,
 };
+
+type Flow = 'classic' | 'daily' | 'squad';
 
 class ErrorBoundary extends Component<{ children: ComponentChildren }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -51,6 +84,12 @@ class ErrorBoundary extends Component<{ children: ComponentChildren }, { error: 
   }
 }
 
+function picksFromValues(values: Record<string, number>, team: string): Build['picks'] {
+  return Object.fromEntries(
+    Object.entries(values).map(([attr, val]) => [attr, { attr, val, playerName: 'Salary Cap', playerShort: 'CAP', team }]),
+  );
+}
+
 export function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -62,6 +101,17 @@ export function App() {
   const [mpNotice, setMpNotice] = useState<string | null>(null);
   const [mpBusy, setMpBusy] = useState(false);
   const bank = useRef<MomentBank | null>(null);
+
+  const [flow, setFlow] = useState<Flow>('classic');
+  const [plan] = useState<DailyPlan>(() => planForToday());
+  const [daily, setDaily] = useState<DailyDay | null>(null);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [squad, setSquad] = useState<SquadState | null>(null);
+  const [squadSlot, setSquadSlot] = useState<string | null>(null);
+  const [squadOutcome, setSquadOutcome] = useState<SquadOutcome | null>(null);
+  const [salary, setSalary] = useState<{ mode: 'daily' | 'infinite'; seed: number } | null>(null);
+  const [salaryNotice, setSalaryNotice] = useState<string | null>(null);
+  const [salaryPlay, setSalaryPlay] = useState<SalaryOutcome | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -85,7 +135,15 @@ export function App() {
       clearRun();
       setNotice('Saved run was unreadable. Starting fresh.');
     }
-  }, []);
+    const today = dailyDay(plan.key);
+    setDaily(today);
+    if (today.run && !today.done) setFlow('daily');
+    const savedSquad = readSquad();
+    if (savedSquad) {
+      setSquad(savedSquad);
+      setSquadOutcome((savedSquad.result as SquadOutcome | null) ?? null);
+    }
+  }, [plan.key]);
 
   const commit = useCallback((next: RunState) => {
     saveRun(next);
@@ -95,6 +153,7 @@ export function App() {
   const start = (position: Position, era: Era) => {
     setNotice(null);
     setMpNotice(null);
+    setFlow('classic');
     commit(createRun(randomSeed(), position, era));
   };
 
@@ -164,33 +223,29 @@ export function App() {
     return { ...source, draft: next, moment: card, season: null };
   };
 
-  const simulate = async () => {
-    if (!run || !run.team || !catalog) return;
-    const build = { position: run.position, era: run.era, picks: run.picks };
+  const simulateFor = async (active: RunState, update: (next: RunState) => void) => {
+    if (!active.team || !catalog) return;
+    const team = active.team;
+    const build = { position: active.position, era: active.era, picks: active.picks };
+    const withoutMoments = () => {
+      writeMomentsOff(true);
+      setMomentsOff(true);
+      update({ ...active, draft: null, moment: null, season: finalizeDraft(startSeason({ build, team, seed: active.seed, rng: Math.random, moments: false }), { playerName: 'YOU', rng: Math.random, displayRng: Math.random }), screen: 'season' });
+    };
     if (momentsOff) {
-      commit({ ...run, draft: null, moment: null, season: finalizeDraft(startSeason({ build, team: run.team, seed: run.seed, rng: Math.random, moments: false }), { playerName: 'YOU', rng: Math.random, displayRng: Math.random }), screen: 'season' });
+      withoutMoments();
       return;
     }
     try {
-      if (!bank.current) bank.current = await loadMomentBank(run.position);
+      if (!bank.current) bank.current = await loadMomentBank(active.position);
     } catch {
       bank.current = null;
       setNotice('Season moments could not load. Playing without them.');
-      writeMomentsOff(true);
-      setMomentsOff(true);
-      commit({ ...run, draft: null, moment: null, season: finalizeDraft(startSeason({ build, team: run.team, seed: run.seed, rng: Math.random, moments: false }), { playerName: 'YOU', rng: Math.random, displayRng: Math.random }), screen: 'season' });
+      withoutMoments();
       return;
     }
-    const draft = startSeason({ build, team: run.team, seed: run.seed, rng: Math.random, moments: true });
-    commit({ ...stagedRun(draft, run, catalog), screen: 'season' });
-  };
-
-  const choose = (optionId: string) => {
-    if (!run?.draft || !run.moment || !catalog) return;
-    const option = run.moment.options.find((entry) => entry.id === optionId);
-    if (!option) return;
-    const next = chooseMoment(run.draft, { momentId: run.moment.id, optionId, effect: option.effect }, Math.random);
-    commit({ ...stagedRun(next, run, catalog), screen: 'season' });
+    const draft = startSeason({ build, team, seed: active.seed, rng: Math.random, moments: true });
+    update({ ...stagedRun(draft, active, catalog), screen: 'season' });
   };
 
   const toggleMoments = () => {
@@ -198,6 +253,178 @@ export function App() {
     setMomentsOff(next);
     writeMomentsOff(next);
   };
+
+  const openDaily = () => {
+    const day = daily ?? dailyDay(plan.key);
+    setDaily(day);
+    setConfirmLeave(false);
+    setFlow('daily');
+  };
+
+  const startDaily = () => {
+    const day = daily ?? dailyDay(plan.key);
+    const next =
+      day.run ??
+      createRun(plan.seed, plan.pos === 'big' ? 'big' : 'guard', plan.mode === 'all-time' ? 'alltime' : 'current');
+    const saved: DailyDay = { ...day, run: next, spins: next.spinIndex };
+    saveDailyDay(saved);
+    setDaily(saved);
+    setConfirmLeave(false);
+    setFlow('daily');
+  };
+
+  const commitDaily = (next: RunState) => {
+    const day = daily ?? dailyDay(plan.key);
+    const saved: DailyDay = { ...day, run: next, spins: next.spinIndex };
+    saveDailyDay(saved);
+    setDaily(saved);
+  };
+
+  const leaveDaily = (forfeit: boolean) => {
+    const day = daily ?? dailyDay(plan.key);
+    if (forfeit && day.run && !day.done) {
+      const saved: DailyDay = { ...day, done: true, forfeit: true, ovr: null, run: null, spins: 0 };
+      saveDailyDay(saved);
+      setDaily(saved);
+    }
+    setConfirmLeave(false);
+    setFlow('classic');
+  };
+
+  const openSquad = () => {
+    const state = squad ?? newSquadState(randomSeed());
+    if (!squad) saveSquad(state);
+    setSquad(state);
+    setSquadSlot(null);
+    setFlow('squad');
+  };
+
+  const putSquad = (next: SquadState) => {
+    saveSquad(next);
+    setSquad(next);
+  };
+
+  const buildSlot = (slotId: string) => {
+    if (!squad) return;
+    const slot = squad.slots.find((entry) => entry.id === slotId);
+    if (!slot) return;
+    const next = createRun(randomSeed(), slot.pos, 'current');
+    putSquad({ ...squad, slots: squad.slots.map((entry) => (entry.id === slotId ? { ...entry, run: next } : entry)), result: null });
+    setSquadOutcome(null);
+    setSquadSlot(slotId);
+  };
+
+  const commitSlot = (next: RunState) => {
+    if (!squad || !squadSlot) return;
+    putSquad({ ...squad, slots: squad.slots.map((entry) => (entry.id === squadSlot ? { ...entry, run: next } : entry)) });
+  };
+
+  const closeSlot = (keep: boolean) => {
+    if (!squad || !squadSlot) return;
+    if (!keep) {
+      putSquad({
+        ...squad,
+        slots: squad.slots.map((entry) => (entry.id === squadSlot ? { ...entry, run: null } : entry)),
+      });
+    }
+    setSquadSlot(null);
+  };
+
+  const dropSlot = (slotId: string) => {
+    if (!squad) return;
+    putSquad({
+      ...squad,
+      slots: squad.slots.map((entry) => (entry.id === slotId ? { ...entry, run: null } : entry)),
+      result: null,
+    });
+    setSquadOutcome(null);
+  };
+
+  const simulateSquad = () => {
+    if (!squad || !catalog || !squad.team) return;
+    const builds = squad.slots
+      .filter((slot) => slot.run)
+      .map((slot) => ({
+        pos: slot.pos,
+        values: Object.fromEntries(Object.entries(slot.run?.picks ?? {}).map(([attr, pick]) => [attr, pick.val])),
+      }));
+    const starters = squadStarters(squad.team, catalog.currentGuards, catalog.currentBigs);
+    const strength = squadStrength(squad.team, starters, builds);
+    const seasonNumber = squad.season + 1;
+    const season = squadSeason(`${squad.seed}-season-${seasonNumber}`, squad.team, strength);
+    const lines = squad.slots
+      .filter((slot) => slot.run)
+      .map((slot, index) => {
+        const rolled = rollStats(builds[index]?.values ?? {}, slot.pos, mulberry32(0));
+        return { id: slot.id, ppg: rolled.ppg, rpg: rolled.rpg, apg: rolled.apg, spg: rolled.spg, bpg: rolled.bpg };
+      });
+    const outcome: SquadOutcome = { strength, season, honors: honorsFor(lines, season.wins), lines };
+    putSquad({ ...squad, season: seasonNumber, result: outcome });
+    setSquadOutcome(outcome);
+  };
+
+  const openSalary = (mode: 'daily' | 'infinite') => {
+    const seed = mode === 'daily' ? Number(plan.key.replace(/-/g, '')) : Math.floor(Math.random() * 0x7fffffff);
+    setSalary({ mode, seed });
+    setSalaryNotice(null);
+    if (mode === 'daily') {
+      const saved = readSalary().daily[plan.key] ?? null;
+      setSalaryPlay(saved ? { ...saved, locked: true, dateStr: plan.key } : null);
+    } else {
+      setSalaryPlay(null);
+    }
+  };
+
+  const salaryPoolPlayers = useMemo(
+    () => (catalog ? salaryPool(catalog.currentGuards, catalog.currentBigs, catalog.salaryLegends) : []),
+    [catalog],
+  );
+
+  const salaryGrid = useMemo(() => {
+    if (!salary || !salaryPoolPlayers.length) return null;
+    return salary.mode === 'daily' ? dailyGrid(SAL_COLUMNS, salaryPoolPlayers, plan.key) : infiniteGrid(SAL_COLUMNS, salaryPoolPlayers, salary.seed);
+  }, [salary, salaryPoolPlayers, plan.key]);
+
+  const salaryCap = salary ? (salary.mode === 'daily' ? budgetForDateStr(plan.key) : budgetForSeed(salary.seed)) : 0;
+
+  const confirmSalary = (cards: Parameters<typeof spentFor>[0]) => {
+    if (!catalog || !salary) return;
+    const { position, values } = buildFromCards(cards);
+    const team = teamForSeed(salary.seed, catalog.teams.map((entry) => entry.short));
+    const rand = mulberry32(salary.seed);
+    const season = simulateSeason({
+      build: { position, era: 'current', picks: picksFromValues(values, team) },
+      team,
+      playerName: 'YOU',
+      rng: rand,
+      displayRng: rand,
+    });
+    const outcome: SalaryOutcome = {
+      dateStr: salary.mode === 'daily' ? plan.key : `SEED ${salary.seed}`,
+      cap: salaryCap,
+      spent: spentFor(cards),
+      ovr: season.ovr,
+      wins: season.wins,
+      losses: season.losses,
+      seed: salary.seed,
+      champion: season.champion,
+      madePlayoffs: season.madePlayoffs,
+      headline: seasonHeadline(season),
+      preview: previewFor(cards),
+      locked: salary.mode === 'daily',
+    };
+    setSalaryPlay(outcome);
+    if (salary.mode === 'daily') saveSalaryPlay(plan.key, { ...outcome, picks: cardSummary(cards) });
+    else bumpInfinite();
+  };
+
+  const dailyDone = flow === 'daily' && daily?.run?.screen === 'end' && Boolean(daily.run.season);
+  useEffect(() => {
+    if (!dailyDone || !daily?.run?.season || daily.done) return;
+    const saved: DailyDay = { ...daily, done: true, forfeit: false, ovr: daily.run.season.ovr, run: daily.run };
+    saveDailyDay(saved);
+    setDaily(saved);
+  }, [dailyDone, daily]);
 
   if (!catalog) {
     return (
@@ -220,6 +447,181 @@ export function App() {
     );
   }
 
+  const dailyStrip = (
+    <div class="daily-strip" data-testid="daily-strip">
+      <span class="ticker-dot" />
+      <span class="tiny">DAILY · {plan.pos.toUpperCase()} · {plan.mode === 'all-time' ? 'ALL-TIME' : 'CURRENT'}</span>
+      <span class="top-spacer" />
+      <button class="icon-btn wide" onClick={() => setConfirmLeave((value) => !value)}>
+        LEAVE
+      </button>
+    </div>
+  );
+
+  const dailyConfirm = confirmLeave ? (
+    <div class="notice bad" data-testid="daily-leave">
+      Leaving ends today's challenge: no score, and you can't play it again until tomorrow.
+      <span class="row" style={{ marginTop: '6px' }}>
+        <button class="btn btn-small" data-testid="daily-leave-confirm" onClick={() => leaveDaily(true)}>
+          Leave anyway
+        </button>
+        <button class="btn btn-ghost btn-small" onClick={() => setConfirmLeave(false)}>
+          Stay
+        </button>
+      </span>
+    </div>
+  ) : null;
+
+  const renderRun = (
+    active: RunState,
+    update: (next: RunState) => void,
+    back: () => void,
+    header?: ComponentChildren,
+    simulateNow?: () => void,
+  ) => {
+    if (active.screen === 'builder') {
+      return <Builder run={active} catalog={catalog} onChange={update} onBack={back} header={header} />;
+    }
+    if (active.screen === 'team') {
+      return (
+        <TeamSpin
+          run={active}
+          catalog={catalog}
+          onChange={update}
+          onSimulate={simulateNow ?? (() => update({ ...active, screen: 'team' }))}
+          onBack={back}
+          header={header}
+        />
+      );
+    }
+    if (active.screen === 'season' && (active.season || active.draft)) {
+      return (
+        <Season
+          run={active}
+          moment={active.moment}
+          momentsOff={momentsOff}
+          onChoose={(optionId) => {
+            if (!active.draft || !active.moment) return;
+            const option = active.moment.options.find((entry) => entry.id === optionId);
+            if (!option) return;
+            const next = chooseMoment(active.draft, { momentId: active.moment.id, optionId, effect: option.effect }, Math.random);
+            update({ ...stagedRun(next, active, catalog), screen: 'season' });
+          }}
+          onToggleMoments={toggleMoments}
+          onAdvance={() => update({ ...active, screen: (active.season?.seed ?? 15) <= 10 ? 'playoffs' : 'end' })}
+        />
+      );
+    }
+    if (active.screen === 'playoffs' && active.season) {
+      return <Playoffs season={active.season} onAdvance={() => update({ ...active, screen: 'end' })} />;
+    }
+    if (active.screen === 'end' && active.season) {
+      return <End run={active} onNewBuild={() => (flow === 'daily' ? leaveDaily(false) : back())} />;
+    }
+    return null;
+  };
+
+  const body = () => {
+    if (flow === 'daily') {
+      const day = daily ?? dailyDay(plan.key);
+      if (day.done || !day.run) {
+        return (
+          <Daily plan={plan} day={day} catalog={catalog} onPlay={startDaily} onExit={() => setFlow('classic')} />
+        );
+      }
+      return renderRun(day.run, commitDaily, () => setConfirmLeave(true), <>{dailyStrip}{dailyConfirm}</>, () => void simulateFor(day.run as RunState, commitDaily));
+    }
+    if (flow === 'squad' && squad) {
+      if (squadSlot) {
+        const slot = squad.slots.find((entry) => entry.id === squadSlot);
+        if (slot?.run) {
+          return (
+            <Builder
+              run={slot.run}
+              catalog={catalog}
+              onChange={commitSlot}
+              onBack={() => closeSlot(false)}
+              completeLabel="Add to squad"
+              onComplete={() => closeSlot(true)}
+              header={
+                <div class="daily-strip" data-testid="squad-strip">
+                  <span class="ticker-dot" />
+                  <span class="tiny">SQUAD · {slot.id} · {slot.pos.toUpperCase()}</span>
+                </div>
+              }
+            />
+          );
+        }
+      }
+      return (
+        <Squad
+          squad={squad}
+          catalog={catalog}
+          starters={squad.team ? squadStarters(squad.team, catalog.currentGuards, catalog.currentBigs) : []}
+          outcome={squadOutcome}
+          onBuildSlot={buildSlot}
+          onDropSlot={dropSlot}
+          onPickTeam={(team) => putSquad({ ...squad, team })}
+          onSimulate={simulateSquad}
+          onReset={() => {
+            const fresh = newSquadState(randomSeed());
+            putSquad(fresh);
+            setSquadOutcome(null);
+          }}
+          onExit={() => {
+            setFlow('classic');
+            setSquadSlot(null);
+          }}
+        />
+      );
+    }
+    if (salary && salaryGrid) {
+      return (
+        <Salary
+          mode={salary.mode}
+          dateStr={salary.mode === 'daily' ? plan.key : `#${salary.seed}`}
+          cap={salaryCap}
+          grid={salaryGrid}
+          play={salaryPlay}
+          notice={salaryNotice}
+          onToggleMode={() => openSalary(salary.mode === 'daily' ? 'infinite' : 'daily')}
+          onConfirm={confirmSalary}
+          onExit={() => {
+            setSalary(null);
+            setSalaryNotice(null);
+          }}
+        />
+      );
+    }
+    if (!run) {
+      return (
+        <Home
+          onStart={start}
+          onCreateLobby={(name) => void createLobby(name)}
+          onJoinLobby={(name, code) => void joinLobby(name, code)}
+          notice={notice}
+          mpNotice={mpNotice}
+          mpBusy={mpBusy}
+          onDaily={openDaily}
+          onSalary={() => openSalary('daily')}
+          onSquad={openSquad}
+          dailyLabel={`${plan.pos.toUpperCase()} · ${plan.mode === 'all-time' ? 'ALL-TIME' : 'CURRENT'}${daily?.done ? (daily.forfeit ? ' · left today' : ` · ${daily.ovr} OVR`) : ''}`}
+          dailyStatus={plan.key}
+        />
+      );
+    }
+    return renderRun(
+      run,
+      commit,
+      () => {
+        clearRun();
+        setRun(null);
+      },
+      undefined,
+      () => void simulateFor(run, commit),
+    );
+  };
+
   return (
     <div class="app">
       <ErrorBoundary>
@@ -232,65 +634,8 @@ export function App() {
               if (message) setMpNotice(message);
             }}
           />
-        ) : !run ? (
-          <Home
-            onStart={start}
-            onCreateLobby={(name) => void createLobby(name)}
-            onJoinLobby={(name, code) => void joinLobby(name, code)}
-            notice={notice}
-            mpNotice={mpNotice}
-            mpBusy={mpBusy}
-          />
-        ) : run.screen === 'builder' ? (
-          <Builder
-            run={run}
-            catalog={catalog}
-            onChange={commit}
-            onBack={() => {
-              clearRun();
-              setRun(null);
-            }}
-          />
-        ) : run.screen === 'team' ? (
-          <TeamSpin
-            run={run}
-            catalog={catalog}
-            onChange={commit}
-            onSimulate={() => {
-              void simulate();
-            }}
-            onBack={() => commit({ ...run, screen: 'builder' })}
-          />
-        ) : run.screen === 'season' && (run.season || run.draft) ? (
-          <Season
-            run={run}
-            moment={run.moment}
-            momentsOff={momentsOff}
-            onChoose={choose}
-            onToggleMoments={toggleMoments}
-            onAdvance={() =>
-              commit({ ...run, screen: (run.season?.seed ?? 15) <= 10 ? 'playoffs' : 'end' })
-            }
-          />
-        ) : run.screen === 'playoffs' && run.season ? (
-          <Playoffs season={run.season} onAdvance={() => commit({ ...run, screen: 'end' })} />
-        ) : run.screen === 'end' && run.season ? (
-          <End
-            run={run}
-            onNewBuild={() => {
-              clearRun();
-              setRun(null);
-            }}
-          />
         ) : (
-          <Home
-            onStart={start}
-            onCreateLobby={(name) => void createLobby(name)}
-            onJoinLobby={(name, code) => void joinLobby(name, code)}
-            notice={notice}
-            mpNotice={mpNotice}
-            mpBusy={mpBusy}
-          />
+          body()
         )}
       </ErrorBoundary>
     </div>

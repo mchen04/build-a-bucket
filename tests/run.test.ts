@@ -22,6 +22,7 @@ const catalog: Catalog = {
   currentBigs: [],
   legendGuards: [],
   legendBigs: [],
+  salaryLegends: [],
   headshots: { 'Fixture Player': '12345' },
 };
 

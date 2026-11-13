@@ -1,6 +1,13 @@
 import { useState } from 'preact/hooks';
 import type { Era, Position } from '../../shared/engine/types';
 
+interface ModeRow {
+  title: string;
+  sub: string;
+  testId: string;
+  onOpen: () => void;
+}
+
 interface Props {
   onStart: (position: Position, era: Era) => void;
   onCreateLobby: (name: string) => void;
@@ -8,6 +15,11 @@ interface Props {
   notice: string | null;
   mpNotice: string | null;
   mpBusy: boolean;
+  onDaily: () => void;
+  onSalary: () => void;
+  onSquad: () => void;
+  dailyLabel: string;
+  dailyStatus: string;
 }
 
 export function Home(props: Props) {
@@ -18,6 +30,12 @@ export function Home(props: Props) {
   const named = name.trim().length > 0;
   const codeReady = code.trim().length >= 6;
 
+  const modes: ModeRow[] = [
+    { title: 'Daily Challenge', sub: props.dailyLabel, testId: 'home-daily', onOpen: props.onDaily },
+    { title: 'Salary Cap', sub: 'Today’s budget grid, or an infinite run', testId: 'home-salary', onOpen: props.onSalary },
+    { title: 'Squad Builder', sub: 'Five builds (PG, SG, SF, PF, C) share one season', testId: 'home-squad', onOpen: props.onSquad },
+  ];
+
   return (
     <div class="screen">
       <div class="top">
@@ -25,19 +43,16 @@ export function Home(props: Props) {
         <span class="top-spacer" />
         <span class="tiny muted">Rebuild</span>
       </div>
-      <div class="body">
+      <div class="body home-body">
         {props.notice ? <div class="notice bad">{props.notice}</div> : null}
         {props.mpNotice ? <div class="notice bad">{props.mpNotice}</div> : null}
         <div>
-          <div class="hero">
-            BUILD A<br />BUCKET
-          </div>
-          <p class="muted" style={{ margin: '6px 0 0', fontSize: '12px' }}>
+          <div class="hero home-hero">BUILD A<br />BUCKET</div>
+          <p class="muted" style={{ margin: '2px 0 0', fontSize: '11px' }}>
             Ten picks. One season. Make the Hall.
           </p>
         </div>
-        <div class="card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <span class="tiny muted">Position</span>
+        <div class="card home-modes">
           <div class="seg">
             <button aria-pressed={position === 'guard'} onClick={() => setPosition('guard')}>
               Guard
@@ -46,7 +61,6 @@ export function Home(props: Props) {
               Big
             </button>
           </div>
-          <span class="tiny muted">Era</span>
           <div class="seg">
             <button aria-pressed={era === 'current'} onClick={() => setEra('current')}>
               Current
@@ -54,6 +68,30 @@ export function Home(props: Props) {
             <button aria-pressed={era === 'alltime'} onClick={() => setEra('alltime')}>
               All-Time
             </button>
+          </div>
+        </div>
+        <div class="home-list">
+          {modes.map((mode) => (
+            <button class="home-item" data-testid={mode.testId} key={mode.title} onClick={mode.onOpen}>
+              <span style={{ flex: 1, textAlign: 'left' }}>
+                <span class="name">{mode.title}</span>
+                <span class="sub">{mode.sub}</span>
+              </span>
+              <span class="chev">›</span>
+            </button>
+          ))}
+          <div class="home-item">
+            <span style={{ flex: 1 }}>
+              <span class="name">Career</span>
+              <span class="sub">Draft day to the Hall</span>
+            </span>
+            <span class="lock">Coming next</span>
+          </div>
+          <div class="home-item">
+            <span style={{ flex: 1 }}>
+              <span class="name">Blacktop · Compete · Versus</span>
+              <span class="sub">The original live servers are gone. Lobbies above are our multiplayer.</span>
+            </span>
           </div>
         </div>
         <div class="card mp-home" data-testid="mp-home">
@@ -99,28 +137,6 @@ export function Home(props: Props) {
             >
               Join
             </button>
-          </div>
-        </div>
-        <div class="home-list">
-          <div class="home-item">
-            <div style={{ flex: 1 }}>
-              <div class="name">Career</div>
-              <div class="sub">Draft day to the Hall</div>
-            </div>
-            <span class="lock">Coming in this rebuild</span>
-          </div>
-          <div class="home-item">
-            <div style={{ flex: 1 }}>
-              <div class="name">Salary Cap</div>
-              <div class="sub">Daily grid</div>
-            </div>
-            <span class="lock">Coming in this rebuild</span>
-          </div>
-          <div class="home-item">
-            <div style={{ flex: 1 }}>
-              <div class="name">Blacktop · Compete · Versus</div>
-              <div class="sub">The original live servers are gone. Lobbies above are our multiplayer.</div>
-            </div>
           </div>
         </div>
       </div>

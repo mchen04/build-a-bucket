@@ -12,6 +12,8 @@ export const PlayerSchema = v.object({
   wingspan: v.optional(v.number()),
   skin: v.optional(v.string()),
   position: v.optional(v.string()),
+  posGroup: v.optional(v.string()),
+  legend: v.optional(v.boolean()),
   years: v.optional(v.string()),
   attrs: v.record(v.string(), v.number()),
 });
@@ -24,6 +26,20 @@ export const TeamSchema = v.object({
 });
 
 export const PlayerListSchema = v.array(PlayerSchema);
+export const SalaryLegendSchema = v.object({
+  name: v.string(),
+  team: v.string(),
+  short: v.optional(v.string()),
+  posGroup: v.optional(v.string()),
+  legend: v.optional(v.boolean()),
+  number: v.optional(v.union([v.number(), v.string()])),
+  height: v.optional(v.number()),
+  weight: v.optional(v.number()),
+  position: v.optional(v.string()),
+  starter: v.optional(v.boolean()),
+  attrs: v.record(v.string(), v.number()),
+});
+export const SalaryLegendListSchema = v.array(SalaryLegendSchema);
 export const TeamListSchema = v.array(TeamSchema);
 export const HeadshotSchema = v.record(v.string(), v.string());
 

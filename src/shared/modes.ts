@@ -87,22 +87,38 @@ const SalarySchema = v.object({
   daily: v.record(
     v.string(),
     v.object({
-      picks: v.array(v.object({ name: v.string(), price: v.number(), team: v.string() })),
+      dateStr: v.string(),
+      cap: v.number(),
+      spent: v.number(),
       ovr: v.number(),
       wins: v.number(),
       losses: v.number(),
       seed: v.number(),
+      champion: v.boolean(),
+      madePlayoffs: v.boolean(),
+      headline: v.string(),
+      preview: v.object({ overall: v.number(), ppg: v.number(), apg: v.number(), rpg: v.number() }),
+      locked: v.boolean(),
+      picks: v.array(v.object({ name: v.string(), price: v.number(), team: v.string() })),
     }),
   ),
   infinite: v.number(),
 });
 
 export interface SalaryPlay {
-  picks: { name: string; price: number; team: string }[];
+  dateStr: string;
+  cap: number;
+  spent: number;
   ovr: number;
   wins: number;
   losses: number;
   seed: number;
+  champion: boolean;
+  madePlayoffs: boolean;
+  headline: string;
+  preview: { overall: number; ppg: number; apg: number; rpg: number };
+  locked: boolean;
+  picks: { name: string; price: number; team: string }[];
 }
 
 export interface SalaryStore {
