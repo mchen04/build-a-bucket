@@ -1,5 +1,5 @@
 import { Component, type ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useState } from 'preact/hooks';
 import { loadCatalog, type Catalog } from '../shared/data/loader';
 import { simulateSeason } from '../shared/engine/season';
 import type { Era, Position } from '../shared/engine/types';
@@ -70,13 +70,14 @@ export function App() {
     }
   }, []);
 
-  useEffect(() => {
-    if (run) saveRun(run);
-  }, [run]);
+  const commit = useCallback((next: RunState) => {
+    saveRun(next);
+    setRun(next);
+  }, []);
 
   const start = (position: Position, era: Era) => {
     setNotice(null);
-    setRun(createRun(randomSeed(), position, era));
+    commit(createRun(randomSeed(), position, era));
   };
 
   const simulate = () => {
@@ -86,7 +87,7 @@ export function App() {
       team: run.team,
       playerName: 'YOU',
     });
-    setRun({ ...run, season, screen: 'season' });
+    commit({ ...run, season, screen: 'season' });
   };
 
   if (!catalog) {
@@ -119,7 +120,7 @@ export function App() {
           <Builder
             run={run}
             catalog={catalog}
-            onChange={setRun}
+            onChange={commit}
             onBack={() => {
               clearRun();
               setRun(null);
@@ -129,19 +130,17 @@ export function App() {
           <TeamSpin
             run={run}
             catalog={catalog}
-            onChange={setRun}
+            onChange={commit}
             onSimulate={simulate}
-            onBack={() => setRun({ ...run, screen: 'builder' })}
+            onBack={() => commit({ ...run, screen: 'builder' })}
           />
         ) : run.screen === 'season' && run.season ? (
           <Season
             season={run.season}
-            onAdvance={() =>
-              setRun({ ...run, screen: run.season && run.season.seed <= 10 ? 'playoffs' : 'end' })
-            }
+            onAdvance={() => commit({ ...run, screen: run.season && run.season.seed <= 10 ? 'playoffs' : 'end' })}
           />
         ) : run.screen === 'playoffs' && run.season ? (
-          <Playoffs season={run.season} onAdvance={() => setRun({ ...run, screen: 'end' })} />
+          <Playoffs season={run.season} onAdvance={() => commit({ ...run, screen: 'end' })} />
         ) : run.screen === 'end' && run.season ? (
           <End
             run={run}
