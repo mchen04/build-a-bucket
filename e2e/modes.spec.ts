@@ -73,6 +73,7 @@ async function finishSeason(page: Page): Promise<void> {
 
 async function advanceToEnd(page: Page): Promise<void> {
   const advance = page.locator('.bottom .btn');
+  await expect(advance).toHaveText(/Enter Playoffs|See Results/);
   const label = (await advance.textContent()) ?? '';
   await advance.click();
   if (label.includes('Playoffs')) {
