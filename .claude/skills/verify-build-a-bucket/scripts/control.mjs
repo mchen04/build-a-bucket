@@ -205,6 +205,37 @@ async function api(base, method, route, secret, body) {
   return { ms: performance.now() - t0, status: r.status, bytes: Buffer.byteLength(text, 'utf8'), json: text ? JSON.parse(text) : null };
 }
 
+async function loadGuardPool() {
+  const rules = fs.readFileSync(path.join(repo, 'src/shared/engine/rules.ts'), 'utf8');
+  const sha = /DATA_SHA\s*=\s*'([0-9a-f]+)'/.exec(rules)?.[1];
+  if (!sha) throw new Error('could not read DATA_SHA');
+  const response = await fetch(`https://cdn.jsdelivr.net/gh/GrahamEves-1210/build-a-player@${sha}/src/data/nba-guards.js`, { signal: AbortSignal.timeout(20000) });
+  if (!response.ok) throw new Error(`guard data ${response.status}`);
+  const text = await response.text();
+  const marker = text.indexOf('export const NBA_GUARD_PLAYERS');
+  if (marker < 0) throw new Error('NBA_GUARD_PLAYERS not found');
+  const start = text.indexOf('[', marker);
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+    if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) return require('json5').parse(text.slice(start, i + 1));
+    }
+  }
+  throw new Error('unterminated NBA_GUARD_PLAYERS');
+}
+
 async function lobbyLoad() {
   const base = baseUrl();
   const players = Number(o.players ?? 8);
@@ -215,13 +246,20 @@ async function lobbyLoad() {
   const add = (k, r) => { (samples[k] ??= { ms: [], bytes: [], status: {} }); samples[k].ms.push(r.ms); samples[k].bytes.push(r.bytes); samples[k].status[r.status] = (samples[k].status[r.status] ?? 0) + 1; };
   const seat = () => ({ secret: randomBytes(16).toString('hex'), version: 0, token: '', events: 0, away: new Map(), filled: new Map() });
   const GUARD_ATTRS = ['jumpShot', 'finishing', 'passing', 'handles', 'perimeterDefense', 'speed', 'bounce', 'size', 'basketballIQ', 'clutch'];
+  const guardPool = await loadGuardPool();
+  const pickFor = (attr) => {
+    const player = guardPool.find((entry) => entry.attrs && entry.attrs[attr] !== undefined);
+    if (!player) throw new Error(`no current guard has ${attr}`);
+    return { attr, val: player.attrs[attr], playerName: player.name, playerShort: player.short ?? player.name, team: player.team };
+  };
   const draftFor = (tick) => {
     const count = Math.min(1 + Math.floor(tick / 3), GUARD_ATTRS.length);
     const picks = {};
     for (let n = 0; n < count; n++) {
       const attr = GUARD_ATTRS[n];
-      picks[attr] = { attr, val: 80 + n, playerName: `Load Player ${n}`, playerShort: `Load ${n}`, team: 'LAL' };
+      picks[attr] = pickFor(attr);
     }
+    const last = picks[GUARD_ATTRS[count - 1]];
     return {
       position: 'guard',
       era: 'current',
@@ -231,7 +269,7 @@ async function lobbyLoad() {
       playerRespinUsed: false,
       current: null,
       team: null,
-      latest: { attr: GUARD_ATTRS[count - 1], playerName: `Load Player ${count - 1}` },
+      latest: { attr: last.attr, playerName: last.playerName },
     };
   };
   const absorb = (p, lobby, delta) => {
@@ -308,9 +346,13 @@ async function lobbyLoad() {
       bytesPerDelta: delta.ms.length ? Math.round(delta.bytes.reduce((a, b) => a + b, 0) / delta.ms.length) : null,
     };
   })();
-  const result = { base, code, players, attemptedJoins: guests.length, seated: seated.length, seconds, pollMs, startStatus: started.status, summary, poll, joinStatuses, seatNumbers, distinctSeats: new Set(seatNumbers).size };
+  const buildSyncStatus = samples['build-sync']?.status ?? {};
+  const rejectedSyncs = Object.entries(buildSyncStatus).filter(([status]) => Number(status) >= 300);
+  if (rejectedSyncs.length) console.error(`lobby-load: build syncs rejected: ${rejectedSyncs.map(([status, count]) => `${status} x${count}`).join(', ')}`);
+  const result = { base, code, players, attemptedJoins: guests.length, seated: seated.length, seconds, pollMs, startStatus: started.status, summary, poll, joinStatuses, seatNumbers, distinctSeats: new Set(seatNumbers).size, buildSyncStatus };
   if (run) fs.writeFileSync(path.join(evidenceDir(run.dir, 'perf'), `lobby-load-${Date.now()}.json`), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
+  if (rejectedSyncs.length) process.exitCode = 1;
 }
 
 const PERF_INIT = (re) => {
