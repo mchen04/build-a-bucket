@@ -332,6 +332,19 @@ describeDb('shared league API', () => {
     expect(after.stage).toBe(before.stage + 1);
   }, 60_000);
 
+  it('hands the host role to the earliest present player when the host is away', async () => {
+    const settings: LobbySettings = { era: 'current', mode: 'normal' };
+    const host = await createLobby('Host', settings);
+    const guest = await join(host.code, 'Guest');
+    await db().query(
+      "update participants set last_seen = now() - interval '10 minutes' where lobby_id = (select id from lobbies where code = $1) and seat = 1",
+      [host.code],
+    );
+    const lobby = await view(host.code, guest.secret);
+    expect(lobby.me.isHost).toBe(true);
+    expect(lobby.hostSeat).toBe(guest.seat);
+  }, 60_000);
+
   it('keeps seats and the code on a rematch', async () => {
     const { code, seats } = await runLeague('normal');
     const response = await rematchHandler(authed(seats[0]!.secret, `lobby/${code}/rematch`, { actionId: newActionId() }));
