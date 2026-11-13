@@ -893,6 +893,10 @@ button {
   text-overflow: ellipsis;
 }
 
+.screen > .ticker {
+  padding: 0 12px;
+}
+
 .ticker-dot {
   flex: none;
   width: 6px;
