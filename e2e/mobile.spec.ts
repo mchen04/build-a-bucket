@@ -236,7 +236,8 @@ test('reveals the saved playoff bracket and the final report', async ({ page }) 
 test('shows the limitation text for the online modes', async ({ page }) => {
   await page.goto('/');
   const row = page.locator('.home-item').filter({ hasText: 'Blacktop · Compete · Versus' });
-  await expect(row).toContainText('Live multiplayer is not available in this rebuild yet.');
+  await expect(row).toContainText('The original live servers are gone. Lobbies above are our multiplayer.');
+  await expect(page.locator('[data-testid="mp-home"]')).toBeVisible();
   await expect(page.locator('.home-item .lock').first()).toHaveText('Coming in this rebuild');
   await expectNoVerticalOverflow(page, 'home limitations');
 });

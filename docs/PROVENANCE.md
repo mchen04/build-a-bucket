@@ -53,4 +53,5 @@ requirements (`alive`/`clinched`/`eliminated` plus `left >= n`) rather than eval
 are recorded on the decision but do not change later games; and the `xp` value, which no system reads yet.
 Because of that a season shows two or three moments rather than the original's three or four.
 - `qbRespinBonus` (suspected rewarded ad). Always 0, per `CONTRACT.md`.
-- Multiplayer, Daily, Salary Cap, Squad, Career and the online modes. Later phases.
+- Daily, Salary Cap, Squad, Career and the original online modes. Later phases. Multiplayer is built
+  as lobbies; see `docs/MULTIPLAYER.md`. Lobby seasons run with moments off.
