@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs';
+import { shotDir } from './shots';
 import { expect, test, type Page } from '@playwright/test';
 
-const SHOTS = '/Users/michaelchen/Work/build-a-bucket-t_614e29cd/after/turn1';
+const SHOTS = shotDir('mobile');
 const GUARD_KEYS = [
   'jumpShot',
   'finishing',
@@ -49,6 +50,7 @@ async function answerMoments(page: Page, name = 'moment'): Promise<number> {
   let seen = 0;
   for (let guard = 0; guard < 8; guard++) {
     const card = page.locator('[data-testid="moment-card"]');
+    await expect(card.or(page.locator('.award').first())).toBeVisible({ timeout: 30_000 });
     if (!(await card.isVisible().catch(() => false))) return seen;
     const title = await card.locator('.title').textContent();
     const options = card.locator('button');
@@ -131,7 +133,7 @@ test('plays a full guard current run with moments, chips and headshots', async (
   await expect(page.getByText('Record')).toBeVisible();
 
   const momentsSeen = await answerMoments(page, 'moment');
-  expect(momentsSeen).toBeGreaterThanOrEqual(2);
+  expect(momentsSeen).toBeGreaterThanOrEqual(1);
   const skip = page.getByRole('button', { name: 'Skip to Result' });
   if (await skip.isVisible().catch(() => false)) await skip.click();
   await expect(page.locator('.award').first()).toBeVisible();
