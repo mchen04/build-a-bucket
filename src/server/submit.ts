@@ -5,7 +5,7 @@ import { simulateSeason } from '../shared/engine/season.js';
 import type { Build, SeasonResult } from '../shared/engine/types.js';
 import { hashSecret } from '../shared/mp/codes.js';
 import type { BuildDraft, LobbyPhase, LobbySettings, ParticipantStatus } from '../shared/mp/types.js';
-import { db, errorMessage } from './db.js';
+import { db, serverError } from './db.js';
 import { parseSettings, readLobby, syncDraft, writeBuild, type Outcome } from './lobby.js';
 
 const TEAM_SHORTS = new Set(Object.keys(CURRENT_TEAMS));
@@ -107,7 +107,7 @@ export async function syncBuildDraft(input: {
     if (problem) return { ok: false, status: 400, error: { error: problem, reason: 'invalid' } };
     return syncDraft(input);
   } catch (error) {
-    return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+    return { ok: false, status: 503, error: serverError(error) };
   }
 }
 
@@ -135,6 +135,6 @@ export async function submitBuild(input: {
     if (!written.ok) return written;
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
-    return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+    return { ok: false, status: 503, error: serverError(error) };
   }
 }

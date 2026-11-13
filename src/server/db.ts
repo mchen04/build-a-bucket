@@ -1,4 +1,5 @@
 import { neon } from '@neondatabase/serverless';
+import type { ApiErrorBody } from '../shared/mp/types.js';
 
 export interface BatchQuery {
   text: string;
@@ -39,6 +40,7 @@ export function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
 }
 
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'unexpected error';
+export function serverError(error: unknown): ApiErrorBody {
+  console.error('lobby request failed:', error);
+  return { error: 'Something went wrong on the server.', reason: 'server' };
 }

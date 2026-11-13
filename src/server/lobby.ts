@@ -27,7 +27,7 @@ import {
   type StandingEntry,
 } from '../shared/mp/types.js';
 import { SeasonSchema } from '../shared/data/schemas.js';
-import { db, errorMessage, isUniqueViolation } from './db.js';
+import { db, isUniqueViolation, serverError } from './db.js';
 
 export type Outcome = { ok: true; view: LobbyView } | { ok: false; status: number; error: ApiErrorBody };
 
@@ -474,7 +474,7 @@ export async function readLobby(input: { code: string; secret: string }): Promis
     }
     return { ok: true, view };
   } catch (error) {
-    return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+    return { ok: false, status: 503, error: { error: serverError(error) } };
   }
 }
 
@@ -547,7 +547,7 @@ export async function createLobby(input: {
       return { ok: true, code: row.code, seat: seatRow.seat, participantId: seatRow.id, view: outcome.view };
     } catch (error) {
       if (isUniqueViolation(error)) continue;
-      return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+      return { ok: false, status: 503, error: { error: serverError(error) } };
     }
   }
   return { ok: false, status: 503, error: { error: 'Could not allocate a lobby code.', reason: 'server' } };
@@ -644,7 +644,7 @@ export async function joinLobby(input: {
         await new Promise((resolve) => setTimeout(resolve, 10 + attempt * 10));
         continue;
       }
-      return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+      return { ok: false, status: 503, error: { error: serverError(error) } };
     }
   }
   return { ok: false, status: 503, error: { error: 'Could not take a seat.', reason: 'server' } };
@@ -713,7 +713,7 @@ export async function startLobby(input: {
     }
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
-    return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+    return { ok: false, status: 503, error: { error: serverError(error) } };
   }
 }
 
@@ -840,7 +840,7 @@ export async function syncDraft(input: {
     if (!written.ok) return written;
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
-    return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+    return { ok: false, status: 503, error: { error: serverError(error) } };
   }
 }
 
@@ -901,7 +901,7 @@ export async function leaveLobby(input: { code: string; secret: string; actionId
     const outcome = await readLobby({ code: input.code, secret: input.secret });
     return outcome.ok ? outcome : { ok: true, view: null };
   } catch (error) {
-    return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+    return { ok: false, status: 503, error: { error: serverError(error) } };
   }
 }
 
@@ -1019,7 +1019,7 @@ export async function releasePlayoffs(input: {
     }
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
-    return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
+    return { ok: false, status: 503, error: { error: serverError(error) } };
   }
 }
 
