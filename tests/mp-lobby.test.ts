@@ -16,7 +16,12 @@ import type { BuildDraft, LobbySettings, LobbyView } from '../src/shared/mp/type
 
 const BASE = 'http://localhost:4173/api';
 const SETTINGS: LobbySettings = { era: 'current', positions: ['guard', 'big'], revealSeconds: 2 };
+const HOLD_WAIT = 3400;
 const created: string[] = [];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 beforeAll(() => {
   loadLocalEnv();
@@ -306,6 +311,26 @@ describe('lobby lifecycle', () => {
     expect((await view(lobby.code, lobby.host.secret)).me.season).toBeNull();
   });
 
+  it('keeps the stored result when a late draft sync arrives', async () => {
+    const lobby = await newLobby('Host');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const submitted = await submit(lobby.code, lobby.host.secret, draft);
+    expect(submitted.status).toBe(200);
+    const before = (await read<{ lobby: LobbyView }>(submitted)).lobby;
+    expect(before.me.season?.wins).toBeTypeOf('number');
+
+    const late = await buildHandler(
+      authed(lobby.host.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft }),
+    );
+    expect(late.status).toBe(200);
+    const after = (await read<{ lobby: LobbyView }>(late)).lobby;
+    expect(after.me.season?.wins).toBe(before.me.season?.wins);
+    expect(after.me.season?.qualified).toBe(before.me.season?.qualified);
+    expect(after.me.status).toBe(before.me.status);
+    expect(['season', 'barrier', 'playoffs']).toContain(after.phase);
+  });
+
   it('holds the barrier until every present participant has a result, then releases once', async () => {
     const lobby = await newLobby('Host');
     const guest = await join(lobby.code, 'Guest');
@@ -319,6 +344,14 @@ describe('lobby lifecycle', () => {
     const weak = await draftFor('big', 'current', 'low');
     expect((await submit(lobby.code, guest.seat.secret, weak)).status).toBe(200);
 
+    const held = await Promise.all([release(lobby.code, lobby.host.secret), release(lobby.code, guest.seat.secret)]);
+    for (const attempt of held) expect(attempt.status).toBe(200);
+    const duringHold = await view(lobby.code, lobby.host.secret);
+    expect(duringHold.phase).toBe('barrier');
+    expect(duringHold.playoffsStartedAt).toBeNull();
+    expect(await eventCount(lobby.code, 'playoffs_started')).toBe(0);
+
+    await sleep(HOLD_WAIT);
     const attempts = await Promise.all([
       release(lobby.code, lobby.host.secret),
       release(lobby.code, guest.seat.secret),
@@ -346,6 +379,7 @@ describe('lobby lifecycle', () => {
     expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
     await ageLastSeen(lobby.code, 2, 5);
 
+    await sleep(HOLD_WAIT);
     const response = await release(lobby.code, lobby.host.secret);
     expect(response.status).toBe(200);
     const released = (await read<{ lobby: LobbyView }>(response)).lobby;
@@ -383,6 +417,7 @@ describe('lobby lifecycle', () => {
     expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
     expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'high'))).status).toBe(200);
 
+    await sleep(HOLD_WAIT);
     const opened = await release(lobby.code, lobby.host.secret);
     expect(opened.status).toBe(200);
     const openedView = (await read<{ lobby: LobbyView }>(opened)).lobby;

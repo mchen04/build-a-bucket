@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import type { Catalog } from '../../shared/data/loader';
 import { CURRENT_TEAMS, ALLTIME_TEAMS } from '../../shared/engine/rules';
 import { suppliedTeams, type RunState } from '../../shared/run';
@@ -10,6 +11,9 @@ interface Props {
   onChange: (run: RunState) => void;
   onSimulate: () => void;
   onBack: () => void;
+  simulateLabel?: string;
+  simulateDisabled?: boolean;
+  header?: ComponentChildren;
 }
 
 export function TeamSpin(props: Props) {
@@ -48,6 +52,7 @@ export function TeamSpin(props: Props) {
   return (
     <div class="screen">
       <TopBar title="Team Spin" onBack={props.onBack} right={<span class="tiny muted">{candidates.length} teams</span>} />
+      {props.header}
       <div class="body">
         <div class="seg">
           <button aria-pressed={mode === 'spin'} onClick={() => setMode('spin')}>
@@ -109,8 +114,8 @@ export function TeamSpin(props: Props) {
         ) : null}
       </div>
       <div class="bottom">
-        <button class="btn" disabled={!run.team} onClick={props.onSimulate}>
-          Simulate Season
+        <button class="btn" disabled={!run.team || props.simulateDisabled === true} onClick={props.onSimulate}>
+          {props.simulateLabel ?? 'Simulate Season'}
         </button>
       </div>
     </div>

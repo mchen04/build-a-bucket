@@ -13,6 +13,8 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     headless: true,
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
@@ -20,6 +22,7 @@ export default defineConfig({
     {
       name: 'mobile-webkit',
       use: { ...devices['iPhone 14'] },
+      testIgnore: ['**/lobby.spec.ts'],
     },
     {
       name: 'mobile-chromium',

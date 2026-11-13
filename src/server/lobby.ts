@@ -8,6 +8,7 @@ import { cleanName, generateCode, hashSecret } from '../shared/mp/codes';
 import { BuildDraftSchema, SettingsSchema } from '../shared/mp/schemas';
 import {
   AWAY_MS,
+  BARRIER_HOLD_SECONDS,
   CAPACITY,
   DEFAULT_REVEAL_SECONDS,
   HOST_IDLE_MS,
@@ -403,17 +404,46 @@ async function maintain(code: string): Promise<void> {
   await sql.query(FINISH_SQL, [code, MAX_ROUNDS - 1]);
 }
 
+function needsMaintenance(row: ReadRow, now: number): boolean {
+  const lobby = row.lobby;
+  if (!lobby) return false;
+  const host = row.participants.find((entry) => entry.id === lobby.host_participant);
+  if (!host || host.status === 'left' || now - Date.parse(host.last_seen) > HOST_IDLE_MS) return true;
+  if (lobby.phase === 'lobby') return false;
+  const anyResult = row.participants.some(
+    (entry) => entry.status === 'qualified' || entry.status === 'eliminated' || entry.status === 'done',
+  );
+  if ((lobby.phase === 'building' || lobby.phase === 'season') && anyResult) return true;
+  if (lobby.phase === 'barrier') return true;
+  if (lobby.phase === 'playoffs' && lobby.playoffs_started_at) {
+    const revealSeconds = parseSettings(lobby.settings).revealSeconds;
+    return Date.parse(lobby.playoffs_started_at) + revealSeconds * (MAX_ROUNDS - 1) * 1000 <= now;
+  }
+  return false;
+}
+
 export async function readLobby(input: { code: string; secret: string }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
   try {
-    await maintain(input.code);
     const rows = await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]);
     const row = rows[0];
     if (!row?.lobby) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
     }
-    const view = buildView(row, Date.now());
+    if (!needsMaintenance(row, Date.now())) {
+      const view = buildView(row, Date.now());
+      if (!view) {
+        return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
+      }
+      return { ok: true, view };
+    }
+    await maintain(input.code);
+    const refreshed = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]))[0];
+    if (!refreshed?.lobby) {
+      return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+    }
+    const view = buildView(refreshed, Date.now());
     if (!view) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
@@ -660,9 +690,17 @@ act as (
 ),
 written as (
   update participants p
-  set build = $4::jsonb, season = $5::jsonb, status = $6::text, last_seen = now()
+  set build = $4::jsonb,
+      season = coalesce($5::jsonb, p.season),
+      status = $6::text,
+      last_seen = now()
   from me, act, l
-  where p.id = me.id and act.participant_id = me.id and l.phase in ('building', 'season', 'barrier', 'playoffs')
+  where p.id = me.id and act.participant_id = me.id
+    and l.phase in ('building', 'season', 'barrier', 'playoffs')
+    and (
+      $6::text <> 'building'
+      or (p.season is null and p.status not in ('qualified', 'eliminated', 'playoffs', 'done'))
+    )
   returning p.id, p.seat, p.name
 ),
 bump as (
@@ -859,14 +897,23 @@ pending as (
     and p.last_seen > now() - make_interval(secs => $5::int)
     and p.status not in ('qualified', 'eliminated', 'done')
 ),
+hold as (
+  select coalesce(
+    (select max(e.created_at) from events e
+      where e.lobby_id = (select id from l) and e.kind in ('qualified', 'eliminated'))
+      > now() - make_interval(secs => $7::int),
+    false
+  ) as active
+),
 released as (
   update lobbies lob
   set phase = 'playoffs', playoffs_started_at = now(), version = lob.version + 1, updated_at = now()
-  from l, me, pending
+  from l, me, pending, hold
   where lob.id = l.id
     and lob.phase in ('building', 'season', 'barrier')
     and exists (select 1 from act)
     and (pending.n = 0 or ($4::boolean and lob.host_participant = me.id))
+    and not (hold.active and not $4::boolean)
   returning lob.id
 ),
 marked as (
@@ -894,6 +941,7 @@ select
   (select n from pending) as pending,
   (select count(*)::int from released) as released,
   (select count(*)::int from marked) as marked,
+  (select active from hold) as holding,
   exists (select 1 from act) as action_ok
 `;
 
@@ -913,8 +961,17 @@ export async function releasePlayoffs(input: {
       pending: number;
       released: number;
       marked: number;
+      holding: boolean;
       action_ok: boolean;
-    }>(RELEASE_SQL, [input.code, tokenHash, input.actionId, input.force, Math.floor(AWAY_MS / 1000), 'the playoffs have started']);
+    }>(RELEASE_SQL, [
+      input.code,
+      tokenHash,
+      input.actionId,
+      input.force,
+      Math.floor(AWAY_MS / 1000),
+      'the playoffs have started',
+      BARRIER_HOLD_SECONDS,
+    ]);
     const row = rows[0];
     if (!row?.lobby_id) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -933,6 +990,9 @@ export async function releasePlayoffs(input: {
           ? { error: 'Only the host can start the playoffs early.', reason: 'forbidden' }
           : { error: `Waiting on ${row.pending} player${row.pending === 1 ? '' : 's'}.`, reason: 'conflict' },
       };
+    }
+    if (row.released === 0 && row.holding) {
+      return readLobby({ code: input.code, secret: input.secret });
     }
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {

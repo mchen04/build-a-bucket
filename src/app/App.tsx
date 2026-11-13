@@ -5,16 +5,27 @@ import { loadMomentBank, type MomentBank } from '../shared/data/moments';
 import { randomSeed } from '../shared/engine/rng';
 import { chooseMoment, finalizeDraft, passStop, startSeason, type SeasonDraft } from '../shared/engine/season';
 import type { Era, MomentCard, Position } from '../shared/engine/types';
+import { generateSecret, normalizeCode } from '../shared/mp/codes';
+import { DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../shared/mp/types';
 import { clearRun, loadRun, saveRun } from '../shared/persistence';
 import { createRun, type RunState } from '../shared/run';
+import { createLobbyRequest, joinLobbyRequest } from './mp/api';
+import { loadMpSession, saveMpSession, type MpSession } from './mp/session';
 import { pickMoment } from './momentFlow';
 import { readMomentsOff, recentMoments, rememberMoment, writeMomentsOff } from './prefs';
 import { Builder } from './screens/Builder';
 import { End } from './screens/End';
 import { Home } from './screens/Home';
+import { Lobby } from './screens/Lobby';
 import { Playoffs } from './screens/Playoffs';
 import { Season } from './screens/Season';
 import { TeamSpin } from './screens/TeamSpin';
+
+const MP_DEFAULT_SETTINGS: LobbySettings = {
+  era: 'current',
+  positions: ['guard', 'big'],
+  revealSeconds: DEFAULT_REVEAL_SECONDS,
+};
 
 class ErrorBoundary extends Component<{ children: ComponentChildren }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -28,9 +39,7 @@ class ErrorBoundary extends Component<{ children: ComponentChildren }, { error: 
       return (
         <div class="screen">
           <div class="body" style={{ justifyContent: 'center' }}>
-            <div class="notice bad">
-              Something broke. Your saved run is safe. Reload to continue.
-            </div>
+            <div class="notice bad">Something broke. Your saved run is safe. Reload to continue.</div>
             <button class="btn" onClick={() => window.location.reload()}>
               Reload
             </button>
@@ -49,6 +58,9 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [momentsOff, setMomentsOff] = useState(() => readMomentsOff());
+  const [mp, setMp] = useState<MpSession | null>(() => loadMpSession());
+  const [mpNotice, setMpNotice] = useState<string | null>(null);
+  const [mpBusy, setMpBusy] = useState(false);
   const bank = useRef<MomentBank | null>(null);
 
   useEffect(() => {
@@ -82,7 +94,43 @@ export function App() {
 
   const start = (position: Position, era: Era) => {
     setNotice(null);
+    setMpNotice(null);
     commit(createRun(randomSeed(), position, era));
+  };
+
+  const enterLobby = (code: string, secret: string, name: string) => {
+    const session: MpSession = { v: 1, code, secret, name };
+    saveMpSession(session);
+    setMpNotice(null);
+    setMp(session);
+  };
+
+  const createLobby = async (name: string) => {
+    setMpBusy(true);
+    setMpNotice(null);
+    const secret = generateSecret();
+    try {
+      const view = await createLobbyRequest(name, secret, MP_DEFAULT_SETTINGS);
+      enterLobby(view.code, secret, name);
+    } catch (error) {
+      setMpNotice(error instanceof Error ? error.message : 'Could not create a lobby.');
+    } finally {
+      setMpBusy(false);
+    }
+  };
+
+  const joinLobby = async (name: string, code: string) => {
+    setMpBusy(true);
+    setMpNotice(null);
+    const secret = generateSecret();
+    try {
+      const view = await joinLobbyRequest(normalizeCode(code), name, secret);
+      enterLobby(view.code, secret, name);
+    } catch (error) {
+      setMpNotice(error instanceof Error ? error.message : 'Could not join that lobby.');
+    } finally {
+      setMpBusy(false);
+    }
   };
 
   const advanceDraft = (start: SeasonDraft, source: RunState, catalogRef: Catalog): { draft: SeasonDraft; card: MomentCard | null } => {
@@ -175,8 +223,24 @@ export function App() {
   return (
     <div class="app">
       <ErrorBoundary>
-        {!run ? (
-          <Home onStart={start} notice={notice} />
+        {mp ? (
+          <Lobby
+            session={mp}
+            catalog={catalog}
+            onExit={(message) => {
+              setMp(null);
+              if (message) setMpNotice(message);
+            }}
+          />
+        ) : !run ? (
+          <Home
+            onStart={start}
+            onCreateLobby={(name) => void createLobby(name)}
+            onJoinLobby={(name, code) => void joinLobby(name, code)}
+            notice={notice}
+            mpNotice={mpNotice}
+            mpBusy={mpBusy}
+          />
         ) : run.screen === 'builder' ? (
           <Builder
             run={run}
@@ -219,7 +283,14 @@ export function App() {
             }}
           />
         ) : (
-          <Home onStart={start} notice={notice} />
+          <Home
+            onStart={start}
+            onCreateLobby={(name) => void createLobby(name)}
+            onJoinLobby={(name, code) => void joinLobby(name, code)}
+            notice={notice}
+            mpNotice={mpNotice}
+            mpBusy={mpBusy}
+          />
         )}
       </ErrorBoundary>
     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import type { Catalog } from '../../shared/data/loader';
 import { photoFor, poolFor } from '../../shared/data/loader';
 import { archetypeFor } from '../../shared/engine/archetype';
@@ -15,6 +16,7 @@ interface Props {
   catalog: Catalog;
   onChange: (run: RunState) => void;
   onBack: () => void;
+  header?: ComponentChildren;
 }
 
 export function Builder(props: Props) {
@@ -113,6 +115,7 @@ export function Builder(props: Props) {
           </button>
         }
       />
+      {props.header}
       <div class="body">
         <SlotGrid run={run} showGrades={showGrades} />
         <div class="row" style={{ alignItems: 'center' }}>
