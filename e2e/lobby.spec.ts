@@ -539,3 +539,60 @@ test('a player in the builder when the playoffs start lands on the lobby', async
     for (const context of contexts) await context.close();
   }
 });
+
+test('clears a stale local draft when the playoffs already started', async ({ browser }) => {
+  test.setTimeout(300_000);
+  const contexts: BrowserContext[] = [];
+  const hostContext = await browser.newContext({ ...PROFILE });
+  const guestContext = await browser.newContext({ ...PROFILE });
+  contexts.push(hostContext, guestContext);
+  const host = await hostContext.newPage();
+  let guest = await guestContext.newPage();
+  try {
+    await host.goto('/');
+    await host.locator('[data-testid="mp-name"]').fill('Ava');
+    await host.locator('[data-testid="create-lobby"]').click();
+    await expect(host.locator('[data-testid="lobby-code"]')).toBeVisible();
+    const code = ((await host.locator('[data-testid="lobby-code"]').textContent()) ?? '').trim();
+    createdCodes.push(code);
+
+    await guest.goto('/');
+    await guest.locator('[data-testid="mp-name"]').fill('Ben');
+    await guest.locator('[data-testid="mp-code"]').fill(code);
+    await guest.locator('[data-testid="join-lobby"]').click();
+    await expect(guest.locator('[data-testid="lobby-code"]')).toBeVisible();
+
+    await host.locator('[data-testid="start-season"]').click();
+    await expect(guest.locator('[data-testid="open-builder"]')).toBeVisible();
+    await guest.locator('[data-testid="open-builder"]').click();
+    await spinAndPick(guest);
+    await expect(host.locator('[data-testid="roster"] [data-seat="2"] .state')).toContainText('1/10', {
+      timeout: 15_000,
+    });
+    await expect.poll(() => guest.evaluate(() => localStorage.getItem('bab:mp:draft:v1'))).not.toBeNull();
+
+    await guest.close();
+    await ageLastSeen(code, 2, 5);
+    await host.route('**/api/lobby/*/release', async (route) => {
+      const force = (route.request().postData() ?? '').includes('"force":true');
+      if (force) return route.continue();
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'The barrier is held for this test.', reason: 'conflict' }),
+      });
+    });
+    await finishBuild(host, 10, 'Ava');
+    await expect(host.locator('[data-testid="force-playoffs"]')).toBeVisible({ timeout: 30_000 });
+    await host.getByTestId('force-playoffs').click();
+    await expect(host.locator('[data-testid="lobby-status"]')).toHaveText('Playoffs', { timeout: 30_000 });
+
+    guest = await guestContext.newPage();
+    await guest.goto('/');
+    await expect(guest.locator('[data-testid="lobby-status"]')).toHaveText('Playoffs', { timeout: 30_000 });
+    await expect(guest.locator('[data-testid="open-builder"]')).toHaveCount(0);
+    await expect.poll(() => guest.evaluate(() => localStorage.getItem('bab:mp:draft:v1'))).toBeNull();
+  } finally {
+    for (const context of contexts) await context.close();
+  }
+});

@@ -77,6 +77,10 @@ export function Lobby(props: Props) {
   useEffect(() => {
     if (!view || run) return;
     if (view.phase === 'lobby') return;
+    if (view.phase === 'playoffs' || view.phase === 'finished') {
+      clearLocalDraft(view.code);
+      return;
+    }
     if (view.me.season) return;
     const local = readLocalDraft(view.code);
     if (local) {
