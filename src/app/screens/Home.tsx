@@ -17,6 +17,8 @@ interface Props {
   onDaily: () => void;
   onSalary: () => void;
   onSquad: () => void;
+  onCareer: () => void;
+  careerLabel: string;
   dailyLabel: string;
   dailyStatus: string;
 }
@@ -33,6 +35,7 @@ export function Home(props: Props) {
     { title: 'Daily Challenge', sub: props.dailyLabel, testId: 'home-daily', onOpen: props.onDaily },
     { title: 'Salary Cap', sub: 'Today’s budget grid, or an infinite run', testId: 'home-salary', onOpen: props.onSalary },
     { title: 'Squad Builder', sub: 'Five builds (PG, SG, SF, PF, C) share one season', testId: 'home-squad', onOpen: props.onSquad },
+    { title: 'Career', sub: props.careerLabel, testId: 'home-career', onOpen: props.onCareer },
   ];
 
   return (
@@ -79,13 +82,6 @@ export function Home(props: Props) {
               <span class="chev">›</span>
             </button>
           ))}
-          <div class="home-item">
-            <span style={{ flex: 1 }}>
-              <span class="name">Career</span>
-              <span class="sub">Draft day to the Hall</span>
-            </span>
-            <span class="lock">Coming next</span>
-          </div>
           <div class="home-item">
             <span style={{ flex: 1 }}>
               <span class="name">Blacktop · Compete · Versus</span>

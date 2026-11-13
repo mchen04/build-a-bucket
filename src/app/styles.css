@@ -1117,6 +1117,61 @@ button {
   flex: 1;
 }
 
+.cr-tabs {
+  margin-bottom: 6px;
+}
+
+.cr-traits {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.cr-trait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.cr-trait b {
+  margin-left: auto;
+}
+
+.cr-trait .icon-btn {
+  width: 26px;
+  min-height: 26px;
+}
+
+.cr-mini-bar {
+  position: relative;
+  height: 26px;
+  margin: 8px 0;
+  border-radius: 8px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  touch-action: manipulation;
+}
+
+.cr-mini-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(80, 200, 120, 0.25);
+  border-left: 1px solid rgba(80, 200, 120, 0.7);
+  border-right: 1px solid rgba(80, 200, 120, 0.7);
+}
+
+.cr-mini-marker {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  background: var(--text);
+}
+
 .mp-home {
   display: grid;
   gap: 8px;
