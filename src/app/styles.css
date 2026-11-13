@@ -667,14 +667,19 @@ button {
   min-height: 48px;
 }
 
-.home-item .name {
+.home-item .name,
+.mp-home .name {
+  display: block;
   font-weight: 800;
   font-size: 13px;
 }
 
-.home-item .sub {
+.home-item .sub,
+.mp-home .sub {
+  display: block;
   font-size: 10px;
   color: var(--muted);
+  margin-top: 2px;
 }
 
 .home-item .lock {
