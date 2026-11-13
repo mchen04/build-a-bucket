@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 
-const SHOTS = '/Users/michaelchen/Work/build-a-bucket-t_614e29cd/after/turn4';
+const SHOTS = '/Users/michaelchen/Work/build-a-bucket-t_614e29cd/after/turn5';
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -11,6 +11,30 @@ test.beforeAll(() => {
 
 async function shot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: `${SHOTS}/${name}.png` });
+}
+
+async function expectSentenceLines(page: Page, testId: string, label: string): Promise<void> {
+  const line = page.getByTestId(testId).locator('.line').first();
+  await expect(line, `${label} must render its sentences`).toBeVisible();
+  const style = await line.evaluate((el) => {
+    const computed = getComputedStyle(el);
+    return { transform: computed.textTransform, size: computed.fontSize };
+  });
+  expect(style.transform, `${label} sentences must keep normal case`).toBe('none');
+  expect(style.size, `${label} sentences must not use the 11px label size`).not.toBe('11px');
+}
+
+async function expectHonestPostseasonTag(page: Page, label: string): Promise<void> {
+  const text = await page.getByTestId('career-recap').innerText();
+  const record = /(\d+)-(\d+)/.exec(text);
+  expect(record, `${label} must show a record`).not.toBeNull();
+  const wins = Number(record?.[1]);
+  if (wins < 40) {
+    expect(text, `${label} tagged a ${wins}-win season as playoffs`).not.toContain('PLAYOFFS');
+    expect(text, `${label} tagged a ${wins}-win season as a play-in`).not.toContain('PLAY-IN');
+  }
+  if (text.includes('PLAY-IN')) expect(wins).toBeGreaterThanOrEqual(40);
+  if (text.includes('CHAMPIONS')) expect(wins).toBeGreaterThanOrEqual(40);
 }
 
 async function expectNoVerticalOverflow(page: Page, label: string): Promise<void> {
@@ -151,6 +175,8 @@ test('plays a career from creation through seasons to retirement', async ({ page
 
   await playSeason(page);
   await expect(page.getByTestId('career-recap')).toBeVisible();
+  await expectHonestPostseasonTag(page, 'career recap');
+  await expectSentenceLines(page, 'career-news', 'career news');
   await expectNoVerticalOverflow(page, 'career recap');
   await shot(page, 'career-recap');
 
@@ -160,6 +186,7 @@ test('plays a career from creation through seasons to retirement', async ({ page
     if (!advanced) break;
     await expect(page.getByTestId('career-preseason')).toBeVisible();
     await page.getByTestId('career-tab-career').click();
+    await expectSentenceLines(page, 'career-decisions', 'career decisions');
     if (await visible(page, 'career-retire')) {
       await shot(page, 'career-totals');
       await expectNoVerticalOverflow(page, 'career totals');
@@ -169,6 +196,7 @@ test('plays a career from creation through seasons to retirement', async ({ page
     await page.getByTestId('career-tab-season').click();
     await page.getByTestId('career-tipoff').click();
     await playSeason(page);
+    await expectHonestPostseasonTag(page, `season ${seasons + 1}`);
     seasons++;
   }
 

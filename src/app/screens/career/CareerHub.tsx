@@ -318,7 +318,7 @@ export function CareerHub({ career, actions, onExit }: Props) {
           </div>
         ) : null}
         {campCard()}
-        <div class="card">
+        <div class="card" data-testid="career-news">
           <div class="tiny muted">TEAM NEWS</div>
           {(career.off?.moves ?? []).slice(0, 4).map((move, index) => (
             <div class="line" key={index}>
@@ -477,7 +477,7 @@ export function CareerHub({ career, actions, onExit }: Props) {
         </div>
         <div class="line muted">Hall of Fame progress: {hofProgress(career)}%</div>
       </div>
-      <div class="card">
+      <div class="card" data-testid="career-decisions">
         <div class="tiny muted">DECISIONS</div>
         {career.decisions.slice(-6).map((decision, index) => (
           <div class="line" key={index}>
