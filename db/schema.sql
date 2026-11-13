@@ -6,10 +6,15 @@ create table if not exists lobbies (
   settings jsonb not null default '{}'::jsonb,
   version bigint not null default 1,
   playoffs_started_at timestamptz,
+  create_action uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint lobbies_phase_check check (phase in ('lobby', 'building', 'season', 'barrier', 'playoffs', 'finished'))
 );
+
+alter table lobbies add column if not exists settings jsonb not null default '{}'::jsonb;
+alter table lobbies add column if not exists playoffs_started_at timestamptz;
+alter table lobbies add column if not exists create_action uuid;
 
 create table if not exists participants (
   id uuid primary key default gen_random_uuid(),
@@ -48,6 +53,7 @@ create table if not exists actions (
   primary key (participant_id, action_id)
 );
 
+create unique index if not exists lobbies_create_action_idx on lobbies (create_action);
 create index if not exists participants_lobby_seat_idx on participants (lobby_id, seat);
 create index if not exists events_lobby_idx on events (lobby_id, id desc);
 create index if not exists lobbies_updated_idx on lobbies (updated_at);

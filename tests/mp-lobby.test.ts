@@ -1,0 +1,465 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { POST as createHandler } from '../api/lobby/index';
+import { GET as viewHandler } from '../api/lobby/[code]/index';
+import { POST as joinHandler } from '../api/lobby/[code]/join';
+import { POST as startHandler } from '../api/lobby/[code]/start';
+import { POST as buildHandler } from '../api/lobby/[code]/build';
+import { POST as submitHandler } from '../api/lobby/[code]/submit';
+import { POST as releaseHandler } from '../api/lobby/[code]/release';
+import { loadLocalEnv } from '../scripts/lib.ts';
+import { db } from '../src/server/db';
+import { loadCatalog, poolFor } from '../src/shared/data/loader';
+import { BIG_ATTRS, GUARD_ATTRS } from '../src/shared/engine/rules';
+import type { Era, Pick, Position } from '../src/shared/engine/types';
+import { generateSecret, newActionId } from '../src/shared/mp/codes';
+import type { BuildDraft, LobbySettings, LobbyView } from '../src/shared/mp/types';
+
+const BASE = 'http://localhost:4173/api';
+const SETTINGS: LobbySettings = { era: 'current', positions: ['guard', 'big'], revealSeconds: 2 };
+const created: string[] = [];
+
+beforeAll(() => {
+  loadLocalEnv();
+  expect(process.env.DATABASE_URL, 'DATABASE_URL must be available for the lobby tests').toBeTruthy();
+});
+
+afterAll(async () => {
+  if (!created.length) return;
+  await db().query('delete from lobbies where code = any($1::text[])', [created]);
+  const rows = await db().query<{ count: string }>(
+    'select count(*)::text as count from lobbies where code = any($1::text[])',
+    [created],
+  );
+  expect(rows[0]?.count).toBe('0');
+});
+
+function authed(secret: string, path: string, body: unknown): Request {
+  return new Request(`${BASE}/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+    body: JSON.stringify(body),
+  });
+}
+
+function poll(secret: string, code: string, since?: number): Request {
+  const suffix = since === undefined ? '' : `?since=${since}`;
+  return new Request(`${BASE}/lobby/${code}${suffix}`, { headers: { authorization: `Bearer ${secret}` } });
+}
+
+async function read<T>(response: Response): Promise<T> {
+  return (await response.json()) as T;
+}
+
+interface Seat {
+  secret: string;
+  seat: number;
+}
+
+async function newLobby(name: string): Promise<{ code: string; host: Seat; view: LobbyView }> {
+  const secret = generateSecret();
+  const response = await createHandler(authed(secret, 'lobby', { name, actionId: newActionId() }));
+  expect(response.status).toBe(201);
+  const body = await read<{ lobby: LobbyView; code: string; seat: number }>(response);
+  created.push(body.code);
+  return { code: body.code, host: { secret, seat: body.seat }, view: body.lobby };
+}
+
+async function join(code: string, name: string, secret = generateSecret()): Promise<{ response: Response; seat: Seat }> {
+  const response = await joinHandler(authed(secret, `lobby/${code}/join`, { name, actionId: newActionId() }));
+  return { response, seat: { secret, seat: -1 } };
+}
+
+async function start(code: string, secret: string): Promise<Response> {
+  return startHandler(authed(secret, `lobby/${code}/start`, { actionId: newActionId(), settings: SETTINGS }));
+}
+
+async function submit(code: string, secret: string, draft: BuildDraft, actionId = newActionId()): Promise<Response> {
+  return submitHandler(authed(secret, `lobby/${code}/submit`, { actionId, draft }));
+}
+
+async function release(code: string, secret: string, force = false): Promise<Response> {
+  return releaseHandler(authed(secret, `lobby/${code}/release`, { actionId: newActionId(), force }));
+}
+
+async function view(code: string, secret: string, since?: number): Promise<LobbyView> {
+  const response = await viewHandler(poll(secret, code, since));
+  expect(response.status).toBe(200);
+  return (await read<{ lobby: LobbyView }>(response)).lobby;
+}
+
+async function seatsOf(code: string): Promise<Array<{ seat: number; secret: string }>> {
+  const list: Array<{ seat: number; secret: string }> = [];
+  for (let index = 0; index < 8; index++) {
+    const candidate = generateSecret();
+    const response = await joinHandler(authed(candidate, `lobby/${code}/join`, { name: `Probe${index}`, actionId: newActionId() }));
+    if (response.status !== 200) continue;
+    const body = await read<{ lobby: LobbyView }>(response);
+    list.push({ seat: body.lobby.me.seat, secret: candidate });
+  }
+  return list;
+}
+
+async function draftFor(position: Position, era: Era, strength: 'high' | 'low'): Promise<BuildDraft> {
+  const catalog = await loadCatalog();
+  const pool = poolFor(catalog, position, era);
+  const keys: readonly string[] = position === 'guard' ? GUARD_ATTRS : BIG_ATTRS;
+  const picks: Record<string, Pick> = {};
+  for (const attr of keys) {
+    const ranked = pool
+      .filter((player) => player.attrs[attr] !== undefined)
+      .sort((a, b) => (b.attrs[attr] ?? 0) - (a.attrs[attr] ?? 0));
+    const player = strength === 'high' ? ranked[0] : ranked[ranked.length - 1];
+    if (!player) throw new Error(`no ${era} ${position} player for ${attr}`);
+    picks[attr] = {
+      attr,
+      val: player.attrs[attr] ?? 0,
+      playerName: player.name,
+      playerShort: player.short,
+      team: player.team,
+    };
+  }
+  return {
+    position,
+    era,
+    picks,
+    spinIndex: keys.length,
+    teamRespinUsed: false,
+    playerRespinUsed: false,
+    current: null,
+    team: strength === 'high' ? (era === 'current' ? 'OKC' : 'BOS') : 'BKN',
+    latest: null,
+  };
+}
+
+async function ageLastSeen(code: string, seat: number, minutes: number): Promise<void> {
+  await db().query(
+    'update participants set last_seen = now() - make_interval(mins => $3::int) where lobby_id = (select id from lobbies where code = $1) and seat = $2',
+    [code, seat, minutes],
+  );
+}
+
+async function eventCount(code: string, kind: string): Promise<number> {
+  const rows = await db().query<{ count: string }>(
+    'select count(*)::text as count from events e join lobbies l on l.id = e.lobby_id where l.code = $1 and e.kind = $2',
+    [code, kind],
+  );
+  return Number(rows[0]?.count ?? '0');
+}
+
+describe('lobby lifecycle', () => {
+  it('creates a lobby, joins by code and rejects unknown codes', async () => {
+    const lobby = await newLobby('Host');
+    expect(lobby.code).toMatch(/^[A-Z2-9]{6}$/);
+    expect(lobby.view.phase).toBe('lobby');
+    expect(lobby.view.participants).toHaveLength(1);
+    expect(lobby.view.me.isHost).toBe(true);
+    expect(lobby.view.events[0]?.kind).toBe('joined');
+
+    const guest = await join(lobby.code.toLowerCase(), 'Guest');
+    expect(guest.response.status).toBe(200);
+    const guestSeat = (await read<{ lobby: LobbyView }>(guest.response)).lobby.me.seat;
+    expect(guestSeat).toBe(2);
+
+    const hostView = await view(lobby.code, lobby.host.secret);
+    expect(hostView.participants.map((entry) => entry.seat)).toEqual([1, 2]);
+    expect(hostView.participants[1]?.isHost).toBe(false);
+    expect(hostView.seatsTaken).toBe(2);
+
+    const missing = await join('ZZZZZZ', 'Nobody');
+    expect(missing.response.status).toBe(404);
+    expect((await read<{ error: string }>(missing.response)).error).toMatch(/no lobby/i);
+  });
+
+  it('seats exactly eight participants under concurrent joins', async () => {
+    const lobby = await newLobby('Host');
+    const attempts = await Promise.all(Array.from({ length: 12 }, (_, index) => join(lobby.code, `P${index}`)));
+    const accepted = attempts.filter((entry) => entry.response.status === 200);
+    const rejected = attempts.filter((entry) => entry.response.status === 409);
+    expect(accepted).toHaveLength(7);
+    expect(rejected).toHaveLength(5);
+    for (const entry of rejected) {
+      expect((await read<{ error: string }>(entry.response)).error).toMatch(/full/i);
+    }
+    const hostView = await view(lobby.code, lobby.host.secret);
+    const seats = hostView.participants.map((entry) => entry.seat).sort((a, b) => a - b);
+    expect(seats).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(new Set(seats).size).toBe(8);
+    expect(hostView.seatsTaken).toBe(8);
+  });
+
+  it('rejects joins once the lobby has started', async () => {
+    const lobby = await newLobby('Host');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const late = await join(lobby.code, 'Late');
+    expect(late.response.status).toBe(409);
+    expect((await read<{ error: string }>(late.response)).error).toMatch(/already started/i);
+  });
+
+  it('rejects host only actions for other participants', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    const response = await start(lobby.code, guest.seat.secret);
+    expect(response.status).toBe(403);
+    expect((await read<{ error: string }>(response)).error).toMatch(/host/i);
+    expect((await view(lobby.code, lobby.host.secret)).phase).toBe('lobby');
+  });
+
+  it('replays the same action id without applying it twice', async () => {
+    const lobby = await newLobby('Host');
+    const startId = newActionId();
+    const body = { actionId: startId, settings: SETTINGS };
+    const first = await startHandler(authed(lobby.host.secret, `lobby/${lobby.code}/start`, body));
+    expect(first.status).toBe(200);
+    const firstVersion = (await read<{ lobby: LobbyView }>(first)).lobby.version;
+    const second = await startHandler(authed(lobby.host.secret, `lobby/${lobby.code}/start`, body));
+    expect(second.status).toBe(200);
+    expect((await read<{ lobby: LobbyView }>(second)).lobby.version).toBe(firstVersion);
+
+    const draft = await draftFor('guard', 'current', 'high');
+    const submitId = newActionId();
+    const one = await submit(lobby.code, lobby.host.secret, draft, submitId);
+    expect(one.status).toBe(200);
+    const oneLobby = (await read<{ lobby: LobbyView }>(one)).lobby;
+    const two = await submit(lobby.code, lobby.host.secret, draft, submitId);
+    expect(two.status).toBe(200);
+    const twoLobby = (await read<{ lobby: LobbyView }>(two)).lobby;
+    expect(twoLobby.version).toBe(oneLobby.version);
+    expect(twoLobby.me.season?.wins).toBe(oneLobby.me.season?.wins);
+    expect(twoLobby.me.season?.losses).toBe(oneLobby.me.season?.losses);
+  });
+
+  it('resumes a seat and an unfinished draft after a reconnect', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const partial: BuildDraft = {
+      ...draft,
+      picks: Object.fromEntries(Object.entries(draft.picks).slice(0, 4)),
+      spinIndex: 4,
+      latest: { attr: 'jumpShot', playerName: 'Stephen Curry' },
+    };
+    const synced = await buildHandler(
+      authed(guest.seat.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: partial }),
+    );
+    expect(synced.status).toBe(200);
+
+    const reconnect = await joinHandler(
+      authed(guest.seat.secret, `lobby/${lobby.code}/join`, { name: 'Guest', actionId: newActionId() }),
+    );
+    expect(reconnect.status).toBe(200);
+    const resumed = (await read<{ lobby: LobbyView }>(reconnect)).lobby;
+    expect(resumed.me.seat).toBe(2);
+    expect(resumed.participants).toHaveLength(2);
+    expect(Object.keys(resumed.me.build?.picks ?? {})).toHaveLength(4);
+    expect(resumed.me.build?.spinIndex).toBe(4);
+    expect(resumed.me.summary?.filled).toBe(4);
+  });
+
+  it('shows what the others are doing without leaking their draft', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const partial: BuildDraft = {
+      ...draft,
+      picks: Object.fromEntries(Object.entries(draft.picks).slice(0, 3)),
+      spinIndex: 3,
+      latest: { attr: 'jumpShot', playerName: 'Stephen Curry' },
+    };
+    const synced = await buildHandler(
+      authed(guest.seat.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: partial }),
+    );
+    expect(synced.status).toBe(200);
+    const hostView = await view(lobby.code, lobby.host.secret);
+    const other = hostView.participants.find((entry) => entry.seat === 2);
+    expect(other?.summary).toEqual({ filled: 3, total: 10, latest: 'Stephen Curry' });
+    expect(other?.build).toBeNull();
+    expect(other?.status).toBe('building');
+    expect(hostView.me.build).toBeNull();
+    const guestView = await view(lobby.code, guest.seat.secret);
+    expect(Object.keys(guestView.me.build?.picks ?? {})).toHaveLength(3);
+  });
+
+  it('rejects a forged build', async () => {
+    const lobby = await newLobby('Host');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const first = Object.keys(draft.picks)[0] as string;
+    const forged: BuildDraft = {
+      ...draft,
+      picks: { ...draft.picks, [first]: { ...(draft.picks[first] as Pick), val: 99 } },
+    };
+    const response = await submit(lobby.code, lobby.host.secret, forged);
+    expect(response.status).toBe(400);
+    expect((await read<{ error: string }>(response)).error).toMatch(/does not match/i);
+
+    const wrongEra = await submit(lobby.code, lobby.host.secret, { ...draft, era: 'alltime' });
+    expect(wrongEra.status).toBe(400);
+    expect((await read<{ error: string }>(wrongEra)).error).toMatch(/all-time players|current players/i);
+
+    const incomplete = await submit(lobby.code, lobby.host.secret, {
+      ...draft,
+      picks: Object.fromEntries(Object.entries(draft.picks).slice(0, 9)),
+    });
+    expect(incomplete.status).toBe(400);
+    expect((await view(lobby.code, lobby.host.secret)).me.season).toBeNull();
+  });
+
+  it('holds the barrier until every present participant has a result, then releases once', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+
+    const early = await release(lobby.code, lobby.host.secret);
+    expect(early.status).toBe(409);
+    expect((await read<{ error: string }>(early)).error).toMatch(/waiting on 1 player/i);
+
+    const weak = await draftFor('big', 'current', 'low');
+    expect((await submit(lobby.code, guest.seat.secret, weak)).status).toBe(200);
+
+    const attempts = await Promise.all([
+      release(lobby.code, lobby.host.secret),
+      release(lobby.code, guest.seat.secret),
+    ]);
+    for (const attempt of attempts) expect(attempt.status).toBeLessThan(500);
+    expect(attempts.some((attempt) => attempt.status === 200)).toBe(true);
+
+    const hostView = await view(lobby.code, lobby.host.secret);
+    expect(hostView.phase).toBe('playoffs');
+    expect(hostView.playoffsStartedAt).not.toBeNull();
+    expect(await eventCount(lobby.code, 'playoffs_started')).toBe(1);
+
+    const guestView = await view(lobby.code, guest.seat.secret);
+    expect(guestView.playoffsStartedAt).toBe(hostView.playoffsStartedAt);
+    const guestEntry = hostView.participants.find((entry) => entry.seat === 2);
+    expect(guestEntry?.season?.qualified).toBe(false);
+    expect(guestEntry?.status).toBe('done');
+    expect(guestEntry?.rounds).toHaveLength(0);
+  });
+
+  it('does not let an absent participant hold the barrier', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    await ageLastSeen(lobby.code, 2, 5);
+
+    const response = await release(lobby.code, lobby.host.secret);
+    expect(response.status).toBe(200);
+    const released = (await read<{ lobby: LobbyView }>(response)).lobby;
+    expect(released.phase).toBe('playoffs');
+    const absent = released.participants.find((entry) => entry.seat === 2);
+    expect(absent?.away).toBe(true);
+    expect(absent?.status).toBe('joined');
+
+    const lateDraft = await draftFor('guard', 'current', 'high');
+    const late = await submit(lobby.code, guest.seat.secret, lateDraft);
+    expect(late.status).toBe(200);
+    const lateView = (await read<{ lobby: LobbyView }>(late)).lobby;
+    expect(lateView.participants.find((entry) => entry.seat === 2)?.season?.qualified).toBe(true);
+  });
+
+  it('hands the host role to the next present participant', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    await ageLastSeen(lobby.code, 1, 5);
+    const guestView = await view(lobby.code, guest.seat.secret);
+    expect(guestView.hostSeat).toBe(2);
+    expect(guestView.me.isHost).toBe(true);
+    expect(guestView.participants.find((entry) => entry.seat === 1)?.away).toBe(true);
+    expect(guestView.participants.find((entry) => entry.seat === 1)?.isHost).toBe(false);
+    expect(await eventCount(lobby.code, 'host_changed')).toBeGreaterThanOrEqual(1);
+    const started = await start(lobby.code, guest.seat.secret);
+    expect(started.status).toBe(200);
+    expect((await read<{ lobby: LobbyView }>(started)).lobby.phase).toBe('building');
+  });
+
+  it('reveals rounds on a shared clock and finishes the lobby', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'high'))).status).toBe(200);
+
+    const opened = await release(lobby.code, lobby.host.secret);
+    expect(opened.status).toBe(200);
+    const openedView = (await read<{ lobby: LobbyView }>(opened)).lobby;
+    expect(openedView.phase).toBe('playoffs');
+    expect(openedView.roundsRevealed).toBe(1);
+
+    await db().query("update lobbies set playoffs_started_at = now() - interval '30 seconds' where code = $1", [lobby.code]);
+    const finished = await view(lobby.code, lobby.host.secret);
+    expect(finished.phase).toBe('finished');
+    expect(finished.roundsRevealed).toBe(5);
+    expect(finished.standings).not.toBeNull();
+    const standings = finished.standings ?? [];
+    expect(standings.length).toBe(2);
+    for (const entry of standings) {
+      expect(entry.record).toMatch(/^\d+-\d+$/);
+      expect(entry.finishLabel.length).toBeGreaterThan(2);
+    }
+    const rows = await db().query<{ seat: number; total: string; qualified: boolean }>(
+      `select p.seat,
+              coalesce(jsonb_array_length(p.season->'playoffRounds'), 0) as total,
+              coalesce((p.season->>'madePlayoffs')::boolean, false) as qualified
+       from participants p join lobbies l on l.id = p.lobby_id
+       where l.code = $1 and p.status <> 'left'`,
+      [lobby.code],
+    );
+    expect(rows.length).toBe(2);
+    for (const row of rows) {
+      const entry = finished.participants.find((participant) => participant.seat === row.seat);
+      const expected = row.qualified ? Math.min(5, Number(row.total)) : 0;
+      expect(entry?.rounds.length).toBe(expected);
+    }
+  });
+
+  it('polls with since and answers 204 while nothing changed', async () => {
+    const lobby = await newLobby('Host');
+    const first = await view(lobby.code, lobby.host.secret);
+    const unchanged = await viewHandler(poll(lobby.host.secret, lobby.code, first.version));
+    expect(unchanged.status).toBe(204);
+    expect(await unchanged.text()).toBe('');
+    const guest = await join(lobby.code, 'Guest');
+    expect(guest.response.status).toBe(200);
+    const changed = await viewHandler(poll(lobby.host.secret, lobby.code, first.version));
+    expect(changed.status).toBe(200);
+    expect((await read<{ lobby: LobbyView }>(changed)).lobby.version).toBeGreaterThan(first.version);
+  });
+
+  it('never exposes secrets or hashes in the lobby view', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    const response = await viewHandler(poll(lobby.host.secret, lobby.code));
+    const text = await response.text();
+    expect(text).not.toContain(lobby.host.secret);
+    expect(text).not.toContain(guest.seat.secret);
+    expect(text).not.toContain('token_hash');
+    expect(text).not.toContain('tokenHash');
+    expect(text).not.toMatch(/[0-9a-f]{64}/);
+    const probe = await joinHandler(authed(generateSecret(), `lobby/${lobby.code}/join`, { name: 'Probe', actionId: newActionId() }));
+    expect(probe.status).toBe(200);
+    const probeText = await (await viewHandler(poll(lobby.host.secret, lobby.code))).text();
+    expect(probeText).not.toMatch(/[0-9a-f]{64}/);
+  });
+
+  it('does not seat a ninth participant after one leaves', async () => {
+    const lobby = await newLobby('Host');
+    await Promise.all(Array.from({ length: 7 }, (_, index) => join(lobby.code, `P${index}`)));
+    const seated = await view(lobby.code, lobby.host.secret);
+    expect(seated.seatsTaken).toBe(8);
+    const extra = await join(lobby.code, 'Extra');
+    expect(extra.response.status).toBe(409);
+    expect((await read<{ error: string }>(extra.response)).error).toMatch(/full/i);
+  });
+});
+
+describe('seat maths', () => {
+  it('keeps probe helpers honest', async () => {
+    const lobby = await newLobby('Host');
+    const taken = await seatsOf(lobby.code);
+    expect(taken.length).toBe(7);
+  });
+});

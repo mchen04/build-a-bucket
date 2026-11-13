@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { neon } from '@neondatabase/serverless';
+import { db, type QueryRunner } from '../src/server/db.ts';
 
 export function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -28,15 +28,12 @@ export function loadLocalEnv(dir = process.cwd()): void {
   }
 }
 
-export function databaseUrl(): string {
+export function neonClient(): QueryRunner {
   loadLocalEnv();
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error('DATABASE_URL is not set in the environment or .env.local');
-  return url;
-}
-
-export function neonClient() {
-  return neon(databaseUrl());
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is not set in the environment or .env.local');
+  }
+  return db();
 }
 
 export function statementsFrom(source: string): string[] {
