@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { POST as createHandler } from '../api/lobby/index';
 import { GET as viewHandler } from '../api/lobby/[code]/index';
 import { POST as joinHandler } from '../api/lobby/[code]/join';
@@ -28,10 +28,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-beforeAll(() => {
-  loadLocalEnv();
-  expect(process.env.DATABASE_URL, 'DATABASE_URL must be available for the lobby tests').toBeTruthy();
-});
+loadLocalEnv();
+const describeDb = process.env.DATABASE_URL ? describe : describe.skip;
 
 afterAll(async () => {
   if (!created.length) return;
@@ -175,7 +173,7 @@ async function lobbyCounters(code: string): Promise<LobbyCounters> {
   return { phase: row?.phase ?? '', version: Number(row?.version ?? 0), barrier: Number(row?.barrier ?? 0) };
 }
 
-describe('lobby lifecycle', () => {
+describeDb('lobby lifecycle', () => {
   it('creates a lobby, joins by code and rejects unknown codes', async () => {
     const lobby = await newLobby('Host');
     expect(lobby.code).toMatch(/^[A-Z2-9]{6}$/);

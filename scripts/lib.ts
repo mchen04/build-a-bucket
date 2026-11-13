@@ -20,7 +20,7 @@ export function parseEnvFile(text: string): Record<string, string> {
 }
 
 export function loadLocalEnv(dir = process.cwd()): void {
-  const file = path.join(dir, '.env.local');
+  const file = process.env.BAB_ENV_FILE ?? path.join(dir, '.env.local');
   if (!existsSync(file)) return;
   const parsed = parseEnvFile(readFileSync(file, 'utf8'));
   for (const [key, value] of Object.entries(parsed)) {

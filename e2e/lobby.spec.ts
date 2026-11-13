@@ -10,13 +10,15 @@ const PROFILE = devices['iPhone 14'];
 const RELOADER = 3;
 const createdCodes: string[] = [];
 
+loadLocalEnv();
+test.skip(!process.env.DATABASE_URL, 'the lobby spec needs the database');
+
 test.beforeAll(() => {
   mkdirSync(SHOTS, { recursive: true });
 });
 
 test.afterAll(async () => {
   if (!createdCodes.length) return;
-  loadLocalEnv();
   const removed = await db().query<{ id: string }>('delete from lobbies where code = any($1::text[]) returning id', [
     createdCodes,
   ]);
