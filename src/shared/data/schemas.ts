@@ -34,6 +34,9 @@ export const PickSchema = v.object({
   playerShort: v.string(),
   team: v.string(),
   number: v.optional(v.union([v.number(), v.string()])),
+  photo: v.optional(v.string()),
+  height: v.optional(v.number()),
+  weight: v.optional(v.number()),
 });
 
 export const BuildSchema = v.object({

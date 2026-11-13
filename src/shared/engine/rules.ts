@@ -46,6 +46,19 @@ export function gradeFor(value: number): string {
   return GRADES[Math.max(0, Math.min(11, Math.round(value)))] ?? 'F';
 }
 
+export function valueLabel(value: number, showGrades: boolean): string {
+  return showGrades ? gradeFor(value) : String(value);
+}
+
+export function heightLabel(inches: number | null | undefined): string | null {
+  if (!inches) return null;
+  return `${Math.floor(inches / 12)}'${inches % 12}"`;
+}
+
+export function weightLabel(pounds: number | null | undefined): string | null {
+  return pounds ? `${pounds} lb` : null;
+}
+
 export const OVR_WEIGHTS: Record<'guard' | 'big', Record<string, number>> = {
   guard: {
     jumpShot: 0.14,

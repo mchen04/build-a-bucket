@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Catalog } from '../../shared/data/loader';
-import { poolFor } from '../../shared/data/loader';
+import { photoFor, poolFor } from '../../shared/data/loader';
 import { archetypeFor } from '../../shared/engine/archetype';
 import { computeOvr } from '../../shared/engine/ovr';
-import { ATTR_LABELS, gradeFor } from '../../shared/engine/rules';
+import { heightLabel, valueLabel, weightLabel } from '../../shared/engine/rules';
 import { spinTarget, teamCandidates } from '../../shared/engine/spin';
 import type { Player } from '../../shared/engine/types';
-import { isBuildComplete, placePick, respinSeedFor, type RunState } from '../../shared/run';
+import { heightWeightFor, isBuildComplete, openOptions, pickOptions, placePick, respinSeedFor, type RunState } from '../../shared/run';
 import { Avatar, SlotGrid, TopBar } from '../components';
+import { readGradesHidden, writeGradesHidden } from '../prefs';
 
 interface Props {
   run: RunState;
@@ -23,6 +24,7 @@ export function Builder(props: Props) {
   const [reelTeam, setReelTeam] = useState('—');
   const [reelPlayer, setReelPlayer] = useState('—');
   const [message, setMessage] = useState<string | null>(null);
+  const [showGrades, setShowGrades] = useState(() => !readGradesHidden());
   const timer = useRef<number | null>(null);
   const ticker = useRef<number | null>(null);
 
@@ -37,9 +39,16 @@ export function Builder(props: Props) {
   const complete = isBuildComplete(run);
   const ovr = computeOvr(run.picks, run.position);
   const archetype = archetypeFor(ovr, run.picks, run.position);
-  const placeable = currentPlayer
-    ? Object.keys(currentPlayer.attrs).filter((attr) => ATTR_LABELS[attr] && !run.picks[attr])
-    : [];
+  const options = currentPlayer ? pickOptions(run, currentPlayer) : [];
+  const placeable = openOptions(options);
+  const size = heightWeightFor(run);
+  const build = [heightLabel(size.height), weightLabel(size.weight)].filter(Boolean).join(' · ');
+
+  const toggleGrades = () => {
+    const next = !showGrades;
+    setShowGrades(next);
+    writeGradesHidden(!next);
+  };
 
   const spin = (teamRespin: boolean, playerRespin: boolean) => {
     if (spinning || complete) return;
@@ -88,7 +97,7 @@ export function Builder(props: Props) {
       return;
     }
     setMessage(null);
-    props.onChange(placePick(run, currentPlayer, attr));
+    props.onChange(placePick(run, currentPlayer, attr, photoFor(catalog, currentPlayer)));
   };
 
   const teamName = catalog.teams.find((team) => team.short === (currentPlayer?.team ?? run.current?.team))?.name;
@@ -98,17 +107,23 @@ export function Builder(props: Props) {
       <TopBar
         title={`${run.position === 'guard' ? 'Guard' : 'Big'} · ${run.era === 'current' ? 'Current' : 'All-Time'}`}
         onBack={props.onBack}
-        right={<span class="tiny muted">{Object.keys(run.picks).length}/10</span>}
+        right={
+          <button class="icon-btn wide" aria-pressed={!showGrades} onClick={toggleGrades}>
+            {showGrades ? 'GRADES' : 'NUMBERS'}
+          </button>
+        }
       />
       <div class="body">
-        <SlotGrid run={run} />
+        <SlotGrid run={run} showGrades={showGrades} />
         <div class="row" style={{ alignItems: 'center' }}>
           <div>
             <div class="tiny muted">OVR</div>
-            <div style={{ fontSize: '22px', fontWeight: 900 }}>{ovr || '—'}</div>
+            <div style={{ fontSize: '22px', fontWeight: 900 }} data-testid="builder-ovr">
+              {ovr || '—'}
+            </div>
           </div>
           <div style={{ flex: 2, textAlign: 'right' }}>
-            <div class="tiny muted">Archetype</div>
+            <div class="tiny muted">{build ? `Archetype · ${build}` : 'Archetype'}</div>
             <div style={{ fontSize: '13px', fontWeight: 800 }}>{archetype}</div>
           </div>
         </div>
@@ -116,47 +131,48 @@ export function Builder(props: Props) {
         <div class="stage">
           {complete ? (
             <div class="card center fade-in">
-              <div class="tiny muted">Build complete</div>
+              <div class="tiny muted">All 10 slots filled — simulate your season</div>
               <div class="title" style={{ marginTop: '4px' }}>{archetype}</div>
               <div class="muted" style={{ fontSize: '12px', marginTop: '4px' }}>
-                OVR {ovr} · 10 traits locked
+                OVR {ovr} · 10 traits locked{build ? ` · ${build}` : ''}
               </div>
             </div>
           ) : currentPlayer ? (
             <div class="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div class="player-card">
-                <Avatar catalog={catalog} player={currentPlayer} />
+                <Avatar photo={photoFor(catalog, currentPlayer)} name={currentPlayer.name} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 900, fontSize: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {currentPlayer.name}
                   </div>
                   <div class="tiny muted">
                     {currentPlayer.team} · {teamName ?? ''} {currentPlayer.number ? `#${currentPlayer.number}` : ''}
+                    {build ? ` · ${build}` : ''}
                   </div>
                 </div>
                 <div class="tiny muted">{currentPlayer.years ?? ''}</div>
               </div>
               {placeable.length === 0 ? (
-                <div class="notice">All available slots filled for this PLAYER</div>
+                <div class="notice" data-testid="no-slots">
+                  All available slots filled for this PLAYER
+                </div>
               ) : null}
               <div class="chips">
-                {Object.keys(currentPlayer.attrs)
-                  .filter((attr) => ATTR_LABELS[attr])
-                  .map((attr) => {
-                    const filled = Boolean(run.picks[attr]);
-                    return (
-                      <button
-                        class="chip"
-                        key={attr}
-                        disabled={filled}
-                        onClick={() => place(attr)}
-                        aria-label={`${ATTR_LABELS[attr]?.label} ${gradeFor(currentPlayer.attrs[attr] ?? 0)}`}
-                      >
-                        <span class="chip-key">{ATTR_LABELS[attr]?.short}</span>
-                        <span class="chip-val">{gradeFor(currentPlayer.attrs[attr] ?? 0)}</span>
-                      </button>
-                    );
-                  })}
+                {options.map((option) => (
+                  <button
+                    class="chip"
+                    key={option.attr}
+                    disabled={option.filled}
+                    onClick={() => place(option.attr)}
+                    data-attr={option.attr}
+                    data-val={option.val}
+                    aria-label={`${option.label} ${valueLabel(option.val, showGrades)}`}
+                  >
+                    <Avatar photo={photoFor(catalog, currentPlayer)} name={currentPlayer.name} size={20} />
+                    <span class="chip-key">{option.short}</span>
+                    <span class="chip-val">{valueLabel(option.val, showGrades)}</span>
+                  </button>
+                ))}
               </div>
               <div class="row">
                 <button

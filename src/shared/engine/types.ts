@@ -31,6 +31,9 @@ export interface Pick {
   playerShort: string;
   team: string;
   number?: number | string;
+  photo?: string;
+  height?: number;
+  weight?: number;
 }
 
 export interface Build {

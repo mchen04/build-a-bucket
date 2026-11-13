@@ -88,6 +88,25 @@ button {
   font-size: 18px;
 }
 
+.icon-btn.wide {
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--line);
+}
+
+.icon-btn.wide[aria-pressed='false'] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.avatar img {
+  display: block;
+}
+
 .body {
   flex: 1;
   min-height: 0;
@@ -209,20 +228,20 @@ button {
 
 .slots {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
 }
 
 .slot {
-  height: 50px;
-  border-radius: 10px;
+  height: 30px;
+  border-radius: 8px;
   border: 1px dashed var(--line);
   background: rgba(255, 255, 255, 0.015);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 1px;
+  gap: 6px;
+  padding: 0 6px;
   overflow: hidden;
 }
 
@@ -232,22 +251,28 @@ button {
 }
 
 .slot-key {
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 800;
   letter-spacing: 0.08em;
   color: var(--muted);
+  width: 22px;
+  flex: none;
 }
 
 .slot-val {
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 900;
+  width: 22px;
+  text-align: right;
+  flex: none;
 }
 
 .slot-name {
-  font-size: 8px;
+  font-size: 10px;
   color: var(--muted);
-  max-width: 100%;
-  padding: 0 2px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -329,7 +354,7 @@ button {
 }
 
 .chip {
-  min-height: 50px;
+  min-height: 56px;
   border-radius: 10px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -338,6 +363,7 @@ button {
   align-items: center;
   justify-content: center;
   gap: 1px;
+  padding: 4px 2px;
 }
 
 .chip:disabled {
@@ -352,7 +378,7 @@ button {
 }
 
 .chip-val {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 900;
 }
 

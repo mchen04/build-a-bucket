@@ -24,6 +24,8 @@ const FILES = {
 
 const CACHE_NAME = 'bab-data-v1';
 const TIMEOUT_MS = 8000;
+export const GENERIC_LIGHT = `${DATA_BASE}/public/genericlight.webp`;
+export const GENERIC_DARK = `${DATA_BASE}/public/genericdark.webp`;
 
 export class DataError extends Error {
   constructor(message: string) {
@@ -172,4 +174,22 @@ export function teamFor(catalog: Catalog, short: string): Team | undefined {
 export function headshotFor(catalog: Catalog, player: Player): string | null {
   const id = catalog.headshots[player.name];
   return id ? `${DATA_BASE}/public/headshots/nba/${id}.webp` : null;
+}
+
+function luminance(hex: string | undefined): number | null {
+  if (!hex) return null;
+  const value = hex.trim().replace(/^#/, '');
+  const full = value.length === 3 ? value.split('').map((char) => char + char).join('') : value;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+export function photoFor(catalog: Catalog, player: Player): string {
+  const shot = headshotFor(catalog, player);
+  if (shot) return shot;
+  const level = luminance(player.skin);
+  return level !== null && level > 155 ? GENERIC_LIGHT : GENERIC_DARK;
 }

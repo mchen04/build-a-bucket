@@ -1,9 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
-import type { Catalog } from '../shared/data/loader';
-import { headshotFor } from '../shared/data/loader';
-import { ATTR_LABELS, gradeFor } from '../shared/engine/rules';
-import type { Player } from '../shared/engine/types';
+import { ATTR_LABELS, BIG_ATTRS, GUARD_ATTRS, valueLabel } from '../shared/engine/rules';
 import type { RunState } from '../shared/run';
 
 export function TopBar(props: { title: string; onBack?: () => void; right?: ComponentChildren }) {
@@ -21,14 +18,20 @@ export function TopBar(props: { title: string; onBack?: () => void; right?: Comp
   );
 }
 
-export function Avatar(props: { catalog: Catalog; player: Player; size?: number }) {
+export function Avatar(props: { photo?: string | null; name: string; size?: number }) {
   const [failed, setFailed] = useState(false);
-  const src = headshotFor(props.catalog, props.player);
-  const initials = props.player.short.slice(0, 2).toUpperCase();
+  const size = props.size ?? 40;
+  const initials = props.name
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => word[0] ?? '')
+    .slice(-2)
+    .join('')
+    .toUpperCase();
   return (
-    <div class="avatar" style={props.size ? { width: `${props.size}px`, height: `${props.size}px` } : undefined}>
-      {src && !failed ? (
-        <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
+    <div class="avatar" style={{ width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.36)}px` }}>
+      {props.photo && !failed ? (
+        <img src={props.photo} width={size} height={size} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
       ) : (
         <span>{initials}</span>
       )}
@@ -36,10 +39,8 @@ export function Avatar(props: { catalog: Catalog; player: Player; size?: number 
   );
 }
 
-export function SlotGrid(props: { run: RunState }) {
-  const attrs = props.run.position === 'guard'
-    ? ['jumpShot', 'finishing', 'passing', 'handles', 'perimeterDefense', 'speed', 'bounce', 'size', 'basketballIQ', 'clutch']
-    : ['jumpShot', 'finishing', 'rebounding', 'playmaking', 'interiorDefense', 'speed', 'bounce', 'size', 'basketballIQ', 'clutch'];
+export function SlotGrid(props: { run: RunState; showGrades: boolean }) {
+  const attrs: readonly string[] = props.run.position === 'guard' ? GUARD_ATTRS : BIG_ATTRS;
   return (
     <div class="slots">
       {attrs.map((attr) => {
@@ -47,9 +48,10 @@ export function SlotGrid(props: { run: RunState }) {
         const meta = ATTR_LABELS[attr];
         return (
           <div class={`slot ${pick ? 'filled' : ''}`} key={attr}>
+            <Avatar photo={pick?.photo} name={pick?.playerName ?? ''} size={22} />
             <span class="slot-key">{meta?.short ?? attr}</span>
-            <span class="slot-val">{pick ? gradeFor(pick.val) : '—'}</span>
-            <span class="slot-name">{pick ? pick.playerShort : ''}</span>
+            <span class="slot-name">{pick ? pick.playerName : meta?.label}</span>
+            <span class="slot-val">{pick ? valueLabel(pick.val, props.showGrades) : '—'}</span>
           </div>
         );
       })}
