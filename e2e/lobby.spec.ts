@@ -333,16 +333,27 @@ test('lets a returning player finish at the barrier and starts the playoffs', as
     await spinAndPick(host);
     await guest.locator('[data-testid="open-builder"]').click();
     await spinAndPick(guest);
-    await guest.waitForTimeout(800);
+    await expect(host.locator('[data-testid="peer-strip"] .peer', { hasText: 'Ben' })).toContainText('1/10', {
+      timeout: 15_000,
+    });
+
+    // Hold the host's release requests so the barrier stays open while the
+    // guest is away; the guest's own return is what the test waits on.
+    await host.route('**/api/lobby/*/release', async (route) => {
+      const force = (route.request().postData() ?? '').includes('"force":true');
+      if (force) return route.continue();
+      return route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'The barrier is held for this test.', reason: 'conflict' }),
+      });
+    });
 
     await guest.goto('about:blank');
     await ageLastSeen(code, 2, 5);
     await finishBuild(host, 9, 'Ava');
     await expect(host.locator('[data-testid="barrier-state"]')).toContainText(/ready/, { timeout: 30_000 });
     await host.screenshot({ path: `${SHOTS}/barrier-return-host.png` });
-
-    await host.goto('about:blank');
-    await ageLastSeen(code, 1, 5);
 
     await guest.goto('/');
     await expect(guest.locator('[data-testid="lobby-status"]')).toHaveText('Barrier', { timeout: 30_000 });
@@ -355,7 +366,6 @@ test('lets a returning player finish at the barrier and starts the playoffs', as
     await expect(guest.locator('[data-testid="lobby-status"]')).toHaveText('Playoffs', { timeout: 60_000 });
     await guest.screenshot({ path: `${SHOTS}/barrier-return-playoffs.png` });
 
-    await host.goto('/');
     await expect(host.locator('[data-testid="lobby-status"]')).toHaveText('Playoffs', { timeout: 60_000 });
     await expect(host.locator('[data-testid="next-reveal"]')).toBeVisible();
   } finally {
