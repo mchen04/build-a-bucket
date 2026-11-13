@@ -206,6 +206,66 @@ test('salary cap plays the daily grid, locks it and keeps an infinite run local'
   await shot(page, 'salary-infinite');
 });
 
+test('salary powers shuffle, scout a grade and survive a reload', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('home-salary').click();
+  await expect(page.getByTestId('salary-grid')).toBeVisible();
+
+  const columns = ['finishing', 'shooting', 'defense', 'playmaking', 'size'];
+  await page.getByTestId('salary-powers').click();
+  await expect(page.getByTestId('salary-powers-menu')).toBeVisible();
+  await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('1');
+  await expect(page.getByTestId('salary-power-scout-badge')).toHaveText('1');
+  await expectNoVerticalOverflow(page, 'salary powers');
+  await page.getByTestId('salary-power-shuffle').click();
+  await expect(page.getByTestId('salary-shuffle-column-shooting')).toBeVisible();
+  await expect(page.getByTestId('salary-shuffle-row-0')).toBeVisible();
+  await expectNoVerticalOverflow(page, 'salary shuffle targets');
+  await page.getByTestId('salary-shuffle-column-shooting').click();
+  await expect(page.getByTestId('salary-shuffle-column-shooting')).toHaveCount(0);
+  await page.getByTestId('salary-powers').click();
+  await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('0');
+  await expect(page.getByTestId('salary-power-shuffle')).toBeDisabled();
+
+  await page.reload();
+  await page.getByTestId('home-salary').click();
+  await expect(page.getByTestId('salary-grid')).toBeVisible();
+  await page.getByTestId('salary-powers').click();
+  await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('0');
+  await expect(page.getByTestId('salary-power-shuffle')).toBeDisabled();
+
+  await page.getByTestId('salary-power-scout').click();
+  await expect(page.getByTestId('salary-scout-hint')).toBeVisible();
+  const target = page.locator('[data-testid="salary-shooting-1"]');
+  await target.click();
+  const grade = page.getByTestId('salary-grade-shooting-1');
+  await expect(grade).toHaveText(/^(F|D|C-?|C\+|B-?|B\+|A-?|A\+|S)$/);
+  const gradeText = (await grade.textContent()) ?? '';
+  await expect(target).toHaveAttribute('aria-pressed', 'false');
+  await page.getByTestId('salary-powers').click();
+  await expect(page.getByTestId('salary-power-scout-badge')).toHaveText('0');
+
+  await page.reload();
+  await page.getByTestId('home-salary').click();
+  await expect(page.getByTestId('salary-grade-shooting-1')).toHaveText(gradeText);
+  await page.getByTestId('salary-powers').click();
+  await expect(page.getByTestId('salary-power-scout-badge')).toHaveText('0');
+
+  for (const column of columns) await page.locator(`[data-testid^="salary-${column}-"]`).nth(4).click();
+  await page.getByTestId('salary-confirm').click();
+  await expect(page.getByTestId('salary-result')).toContainText('OVR');
+  await shot(page, 'salary-powers');
+
+  await page.getByTestId('salary-mode').click();
+  await expect(page.getByTestId('salary-mode')).toHaveText('INFINITE');
+  await page.getByTestId('salary-powers').click();
+  await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('1');
+  await page.getByTestId('salary-power-shuffle').click();
+  await expect(page.getByTestId('salary-shuffle-row-0')).toBeVisible();
+  await page.getByTestId('salary-shuffle-row-0').click();
+  await expect(page.getByTestId('salary-shuffle-row-0')).toHaveCount(0);
+});
+
 test('squad builder fills five slots, simulates the season and survives a reload', async ({ page }) => {
   await page.goto('/');
   await page.getByTestId('home-squad').click();

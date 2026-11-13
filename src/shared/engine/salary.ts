@@ -40,6 +40,7 @@ export interface SalCard {
   attrs: Record<string, number>;
   fullAttrs: Record<string, number>;
   catScore: number;
+  posGroup: Position;
 }
 
 const FIXED_BUDGETS: Record<string, number> = {
@@ -213,6 +214,7 @@ function cardFor(
     attrs,
     fullAttrs: player.attrs,
     catScore: score,
+    posGroup: playerPosGroup(player),
   };
 }
 

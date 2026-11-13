@@ -20,6 +20,26 @@ function writeJson(storage: Storage, key: string, value: unknown): void {
   }
 }
 
+const SalCardSchema = v.object({
+  id: v.string(),
+  name: v.string(),
+  team: v.string(),
+  number: v.nullable(v.number()),
+  price: v.number(),
+  legend: v.boolean(),
+  attrs: v.record(v.string(), v.number()),
+  fullAttrs: v.record(v.string(), v.number()),
+  catScore: v.number(),
+  posGroup: v.picklist(['guard', 'big']),
+});
+
+const SalaryPowersSchema = v.object({
+  shuffle: v.boolean(),
+  scout: v.boolean(),
+  grid: v.nullable(v.array(v.array(SalCardSchema))),
+  scouted: v.record(v.string(), v.string()),
+});
+
 const SalarySchema = v.object({
   v: v.literal(1),
   daily: v.record(
@@ -41,6 +61,7 @@ const SalarySchema = v.object({
     }),
   ),
   infinite: v.number(),
+  powers: v.optional(v.record(v.string(), SalaryPowersSchema), {}),
 });
 
 export interface SalaryPlay {
@@ -59,22 +80,35 @@ export interface SalaryPlay {
   picks: { name: string; price: number; team: string }[];
 }
 
+export interface SalaryPowers {
+  shuffle: boolean;
+  scout: boolean;
+  grid: SalCard[][] | null;
+  scouted: Record<string, string>;
+}
+
 export interface SalaryStore {
   v: 1;
   daily: Record<string, SalaryPlay>;
   infinite: number;
+  powers: Record<string, SalaryPowers>;
 }
 
 export function readSalary(storage: Storage = localStorage): SalaryStore {
   const parsed = v.safeParse(SalarySchema, readJson(storage, SALARY_KEY));
-  if (!parsed.success) return { v: 1, daily: {}, infinite: 0 };
+  if (!parsed.success) return { v: 1, daily: {}, infinite: 0, powers: {} };
   const output = parsed.output as unknown as SalaryStore;
-  return { v: 1, daily: output.daily ?? {}, infinite: output.infinite ?? 0 };
+  return { v: 1, daily: output.daily ?? {}, infinite: output.infinite ?? 0, powers: output.powers ?? {} };
 }
 
 export function saveSalaryPlay(dateStr: string, play: SalaryPlay, storage: Storage = localStorage): void {
   const store = readSalary(storage);
   writeJson(storage, SALARY_KEY, { ...store, daily: { ...store.daily, [dateStr]: play } });
+}
+
+export function saveSalaryPowers(dateStr: string, powers: SalaryPowers, storage: Storage = localStorage): void {
+  const store = readSalary(storage);
+  writeJson(storage, SALARY_KEY, { ...store, powers: { ...store.powers, [dateStr]: powers } });
 }
 
 export function bumpInfinite(storage: Storage = localStorage): void {
