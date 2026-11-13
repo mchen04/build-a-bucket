@@ -15,4 +15,13 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    files: ['.claude/skills/**/*.mjs'],
+    languageOptions: {
+      globals: Object.fromEntries(
+        ['process', 'console', 'fetch', 'AbortSignal', 'performance', 'setTimeout', 'window', 'document', 'localStorage', 'requestAnimationFrame', 'PerformanceObserver'].map((name) => [name, 'readonly']),
+      ),
+    },
+    rules: { 'no-empty': ['error', { allowEmptyCatch: true }] },
+  },
 );
