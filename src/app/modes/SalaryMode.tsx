@@ -117,11 +117,21 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
     if (!grid || powersLocked || powers.shuffle) return;
     const nextGrid =
       target.kind === 'column' ? shuffleColumn(grid, target.index, Math.random) : shuffleRow(grid, target.tier, Math.random);
+    const oldIds = new Map<string, string>();
+    for (const column of grid) for (const card of column) oldIds.set(card.name, card.id);
+    const nextScouted: Record<string, string> = {};
+    for (const column of nextGrid) {
+      for (const card of column) {
+        const oldId = oldIds.get(card.name);
+        if (oldId && scouted[oldId]) nextScouted[card.id] = scoutGrade(card);
+      }
+    }
     const nextPowers = { ...powers, shuffle: true };
     setGrid(nextGrid);
+    setScouted(nextScouted);
     setPowers(nextPowers);
     setShuffleArmed(false);
-    persist(nextPowers, nextGrid, scouted);
+    persist(nextPowers, nextGrid, nextScouted);
   };
 
   const revealScout = (card: SalCard) => {
