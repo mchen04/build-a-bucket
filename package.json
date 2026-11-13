@@ -4,16 +4,19 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev-server.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "db:migrate": "node scripts/migrate.ts",
+    "prune:lobbies": "node scripts/prune-lobbies.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
     "json5": "^2.2.3",
     "preact": "^10.27.2",
     "valibot": "^1.1.0"
