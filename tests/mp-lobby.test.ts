@@ -655,6 +655,36 @@ describe('lobby lifecycle', () => {
     expect(after.barrier).toBe(before.barrier);
   });
 
+  it('restores the status of a player who rejoins after the start', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'low'))).status).toBe(200);
+    const submitted = await view(lobby.code, guest.seat.secret);
+    const keptStatus = submitted.me.status;
+    expect(['qualified', 'eliminated']).toContain(keptStatus);
+
+    const left = await leaveHandler(authed(guest.seat.secret, `lobby/${lobby.code}/leave`, { actionId: newActionId() }));
+    expect(left.status).toBe(200);
+    expect((await view(lobby.code, lobby.host.secret)).participants.find((entry) => entry.seat === 2)?.status).toBe('left');
+    await sleep(HOLD_WAIT);
+
+    const rejoin = await joinHandler(
+      authed(guest.seat.secret, `lobby/${lobby.code}/join`, { name: 'Guest', actionId: newActionId() }),
+    );
+    expect(rejoin.status).toBe(200);
+    const rejoined = (await read<{ lobby: LobbyView }>(rejoin)).lobby;
+    expect(rejoined.me.seat).toBe(2);
+    expect(rejoined.me.status, 'a rejoin keeps the stored result').toBe(keptStatus);
+    expect(rejoined.me.season?.wins).toBe(submitted.me.season?.wins);
+
+    const released = await release(lobby.code, lobby.host.secret);
+    expect(released.status, 'a rejoin does not hold the barrier').toBe(200);
+    const opened = (await read<{ lobby: LobbyView }>(released)).lobby;
+    expect(opened.phase).toBe('playoffs');
+  });
+
   it('hands the host role to the next present participant', async () => {
     const lobby = await newLobby('Host');
     const guest = await join(lobby.code, 'Guest');

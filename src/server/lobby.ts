@@ -555,7 +555,10 @@ export async function createLobby(input: {
 
 const JOIN_SQL = `
 with l as (select id, phase from lobbies where code = $1),
-mine as (select p.seat from participants p where p.lobby_id = (select id from l) and p.token_hash = $2),
+mine as (
+  select p.seat, p.status, p.season from participants p
+  where p.lobby_id = (select id from l) and p.token_hash = $2
+),
 free_seat as (
   select s as seat from generate_series(1, $4::int) s
   where not exists (select 1 from participants p where p.lobby_id = (select id from l) and p.seat = s)
@@ -564,12 +567,25 @@ free_seat as (
 target as (select coalesce((select seat from mine), (select seat from free_seat)) as seat),
 seated as (
   insert into participants (lobby_id, token_hash, name, seat, status)
-  select l.id, $2, $3, t.seat, 'joined'
+  select l.id, $2, $3, t.seat,
+    case
+      when m.seat is null then 'joined'
+      when m.status <> 'left' then m.status
+      when m.season is not null then
+        case
+          when coalesce((m.season->>'madePlayoffs')::boolean, false) then
+            case when l.phase in ('playoffs', 'finished') then 'playoffs' else 'qualified' end
+          else
+            case when l.phase in ('playoffs', 'finished') then 'done' else 'eliminated' end
+        end
+      when l.phase = 'building' then 'joined'
+      else 'left'
+    end
   from l, target t
-  where t.seat is not null and (l.phase = 'lobby' or (select seat from mine) is not null)
+  left join mine m on true
+  where t.seat is not null and (l.phase = 'lobby' or m.seat is not null)
   on conflict (lobby_id, token_hash) do update
-    set name = excluded.name, last_seen = now(),
-        status = case when participants.status = 'left' then 'joined' else participants.status end
+    set name = excluded.name, last_seen = now(), status = excluded.status
   returning id, seat
 ),
 log as (
