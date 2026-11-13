@@ -36,6 +36,27 @@ export class DataError extends Error {
   }
 }
 
+async function readCached(url: string): Promise<string | null> {
+  if (typeof caches === 'undefined') return null;
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const hit = await cache.match(url);
+    return hit ? await hit.text() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCached(url: string, text: string): Promise<void> {
+  if (typeof caches === 'undefined') return;
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.put(url, new Response(text));
+  } catch {
+    return;
+  }
+}
+
 export async function fetchSource(path: string): Promise<string> {
   const url = `${DATA_BASE}/${path}`;
   let lastError: unknown = null;
@@ -46,18 +67,10 @@ export async function fetchSource(path: string): Promise<string> {
       const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) throw new DataError(`HTTP ${response.status} for ${path}`);
       const text = await response.text();
-      if (typeof caches !== 'undefined') {
-        const cache = await caches.open(CACHE_NAME);
-        await cache.put(url, new Response(text));
-      }
+      await writeCached(url, text);
       return text;
     } catch (error) {
       lastError = error;
-      if (typeof caches !== 'undefined') {
-        const cache = await caches.open(CACHE_NAME);
-        const cached = await cache.match(url);
-        if (cached) return cached.text();
-      }
       await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
     } finally {
       clearTimeout(timer);
@@ -138,30 +151,57 @@ function parseExport<T>(source: string, name: string, schema: v.GenericSchema<T>
   return result.output;
 }
 
-export async function loadCatalog(): Promise<Catalog> {
-  const [guardsText, bigsText, legendGuardsText, legendBigsText, salaryText, teamsText, headshotsText] = await Promise.all([
-    fetchSource(FILES.guards),
-    fetchSource(FILES.bigs),
-    fetchSource(FILES.legendGuards),
-    fetchSource(FILES.legendBigs),
-    fetchSource(FILES.salaryLegends),
-    fetchSource(FILES.teams),
-    fetchSource(FILES.headshots),
-  ]);
-  let headshots: Record<string, string> = {};
+function tryParseExport<T>(source: string, name: string, schema: v.GenericSchema<T>): T | null {
   try {
-    const parsed = v.safeParse(HeadshotSchema, JSON.parse(headshotsText));
-    if (parsed.success) headshots = parsed.output;
+    return parseExport(source, name, schema);
   } catch {
-    headshots = {};
+    return null;
   }
+}
+
+async function loadExport<T>(path: string, name: string, schema: v.GenericSchema<T>): Promise<T> {
+  const cached = await readCached(`${DATA_BASE}/${path}`);
+  if (cached !== null) {
+    const parsed = tryParseExport(cached, name, schema);
+    if (parsed !== null) return parsed;
+  }
+  return parseExport(await fetchSource(path), name, schema);
+}
+
+async function loadHeadshots(): Promise<Record<string, string>> {
+  const parse = (text: string): Record<string, string> | null => {
+    try {
+      const parsed = v.safeParse(HeadshotSchema, JSON.parse(text));
+      return parsed.success ? parsed.output : null;
+    } catch {
+      return null;
+    }
+  };
+  const cached = await readCached(`${DATA_BASE}/${FILES.headshots}`);
+  if (cached !== null) {
+    const value = parse(cached);
+    if (value) return value;
+  }
+  return parse(await fetchSource(FILES.headshots)) ?? {};
+}
+
+export async function loadCatalog(): Promise<Catalog> {
+  const [teams, currentGuards, currentBigs, legendGuards, legendBigs, salaryLegends, headshots] = await Promise.all([
+    loadExport(FILES.teams, 'NBA_TEAMS', TeamListSchema),
+    loadExport(FILES.guards, 'NBA_GUARD_PLAYERS', PlayerListSchema),
+    loadExport(FILES.bigs, 'NBA_BIG_PLAYERS', PlayerListSchema),
+    loadExport(FILES.legendGuards, 'NBA_ALLTIME_GUARD_PLAYERS', PlayerListSchema),
+    loadExport(FILES.legendBigs, 'NBA_ALLTIME_BIG_PLAYERS', PlayerListSchema),
+    loadExport(FILES.salaryLegends, 'GOAT_SALARY_PLAYERS', SalaryLegendListSchema),
+    loadHeadshots(),
+  ]);
   return {
-    teams: parseExport(teamsText, 'NBA_TEAMS', TeamListSchema),
-    currentGuards: parseExport(guardsText, 'NBA_GUARD_PLAYERS', PlayerListSchema),
-    currentBigs: parseExport(bigsText, 'NBA_BIG_PLAYERS', PlayerListSchema),
-    legendGuards: parseExport(legendGuardsText, 'NBA_ALLTIME_GUARD_PLAYERS', PlayerListSchema),
-    legendBigs: parseExport(legendBigsText, 'NBA_ALLTIME_BIG_PLAYERS', PlayerListSchema),
-    salaryLegends: parseExport(salaryText, 'GOAT_SALARY_PLAYERS', SalaryLegendListSchema).map((player) => ({
+    teams,
+    currentGuards,
+    currentBigs,
+    legendGuards,
+    legendBigs,
+    salaryLegends: salaryLegends.map((player) => ({
       ...player,
       short: player.short ?? player.name.split(' ').slice(-1)[0] ?? player.name,
     })) as Player[],
@@ -180,9 +220,22 @@ export function parseAges(source: string): Record<string, number> | null {
 }
 
 export async function loadCareerAges(): Promise<Record<string, number> | null> {
+  const path = 'src/data/player-ages.js';
+  const cached = await readCached(`${DATA_BASE}/${path}`);
+  if (cached !== null) {
+    const ages = tryAges(cached);
+    if (ages) return ages;
+  }
   try {
-    const text = await fetchSource('src/data/player-ages.js');
-    return parseAges(text);
+    return parseAges(await fetchSource(path));
+  } catch {
+    return null;
+  }
+}
+
+function tryAges(source: string): Record<string, number> | null {
+  try {
+    return parseAges(source);
   } catch {
     return null;
   }
