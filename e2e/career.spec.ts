@@ -102,6 +102,7 @@ async function leaveOffseason(page: Page): Promise<boolean> {
     }
     if (await visible(page, 'career-off-sign')) {
       await page.getByTestId('career-off-sign').click();
+      await expect(page.getByTestId('career-contract').or(page.getByTestId('career-talks'))).toBeVisible();
       const stay = page.getByTestId('career-offer-stay');
       if (await stay.isVisible().catch(() => false)) {
         await stay.getByRole('button', { name: 'Sign' }).click();
