@@ -9,7 +9,7 @@ import { clearLocalDraft, readLocalDraft, saveLocalDraft } from '../mp/draftStor
 import { activityLine, awaitingCount, phaseLabel, readyLabel } from '../mp/format';
 import type { MpSession } from '../mp/session';
 import { clearMpSession } from '../mp/session';
-import { leaveLobbyRequest, releaseRequest, startLobbyRequest, submitBuildRequest, syncDraftRequest } from '../mp/api';
+import { MpError, leaveLobbyRequest, releaseRequest, startLobbyRequest, submitBuildRequest, syncDraftRequest } from '../mp/api';
 import { useLobby } from '../mp/useLobby';
 import { Builder } from './Builder';
 import { Roster } from './Roster';
@@ -116,6 +116,14 @@ export function Lobby(props: Props) {
     : false;
 
   useEffect(() => {
+    if (!view) return;
+    if (view.phase !== 'playoffs' && view.phase !== 'finished') return;
+    if (screen !== 'build') return;
+    setScreen('lobby');
+    setNotice('The playoffs have already started.');
+  }, [view?.phase, screen]);
+
+  useEffect(() => {
     if (!view || view.phase !== 'barrier' || awaiting > 0) return undefined;
     let handle = 0;
     const attempt = () => {
@@ -149,6 +157,7 @@ export function Lobby(props: Props) {
       setScreen('lobby');
     } catch (caught) {
       setNotice(messageOf(caught));
+      if (caught instanceof MpError && caught.status === 409) setScreen('lobby');
     } finally {
       setBusy(false);
     }
@@ -246,7 +255,7 @@ export function Lobby(props: Props) {
   );
   const fullRoster = view.phase === 'lobby' || view.phase === 'building' || view.phase === 'season';
 
-  if (screen === 'build' && run) {
+  if (screen === 'build' && run && phase !== 'playoffs' && phase !== 'finished') {
     if (run.screen === 'team') {
       return (
         <TeamSpin
