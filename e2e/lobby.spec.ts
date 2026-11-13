@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { devices, expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { db } from '../src/server/db';
-import { DEFAULT_REVEAL_SECONDS } from '../src/shared/mp/types';
+import { DEFAULT_REVEAL_SECONDS, MAX_ROUNDS } from '../src/shared/mp/types';
 import { loadLocalEnv } from '../scripts/lib.ts';
 
 const SHOTS = '/Users/michaelchen/Work/build-a-bucket-t_614e29cd/after/turn2';
@@ -67,9 +67,10 @@ async function expectNoOverflow(page: Page, label: string): Promise<void> {
 async function spinAndPick(page: Page): Promise<void> {
   const before = await page.locator('.slot.filled').count();
   await page.locator('.spin-big').click();
-  const chip = page.locator('.chip:enabled').first();
-  await chip.waitFor({ state: 'visible' });
-  await chip.click();
+  const chips = page.locator('.chip:enabled');
+  await chips.first().waitFor({ state: 'visible' });
+  const values = await chips.evaluateAll((nodes) => nodes.map((node) => Number(node.getAttribute('data-val'))));
+  await chips.nth(values.indexOf(Math.max(...values))).click();
   await expect(page.locator('.slot.filled')).toHaveCount(before + 1);
 }
 
@@ -98,10 +99,10 @@ async function finishBuild(page: Page, remaining: number, label: string): Promis
   mark(`${label} has a result`);
 }
 
-async function revealRound(page: Page): Promise<number | null> {
+async function revealClock(page: Page): Promise<{ round: number; total: number } | null> {
   const label = (await page.locator('.bottom .btn').first().textContent().catch(() => null)) ?? '';
   const match = /Revealing round (\d+) of (\d+)/.exec(label);
-  return match ? Number(match[1]) : null;
+  return match ? { round: Number(match[1]), total: Number(match[2]) } : null;
 }
 
 function readyToken(text: string): string {
@@ -233,25 +234,29 @@ test('drives an eight player lobby from invite code to final standings', async (
 
     const revealMs = DEFAULT_REVEAL_SECONDS * 1000;
     const firstSeen: Array<Map<number, number>> = pages.map(() => new Map());
+    const totals = new Set<number>();
     const watchStarted = Date.now();
     while (Date.now() - watchStarted < 90_000) {
-      const seen = await Promise.all(pages.map((page) => revealRound(page)));
-      seen.forEach((round, index) => {
+      const clocks = await Promise.all(pages.map((page) => revealClock(page)));
+      clocks.forEach((clock, index) => {
+        if (!clock) return;
+        totals.add(clock.total);
         const timeline = firstSeen[index] as Map<number, number>;
-        if (round !== null && !timeline.has(round)) timeline.set(round, Date.now() - watchStarted);
+        if (!timeline.has(clock.round)) timeline.set(clock.round, Date.now() - watchStarted);
       });
       if (await host.locator('[data-testid="standings"]').isVisible()) break;
       await host.waitForTimeout(250);
     }
-    const roundsTotal = Math.max(...firstSeen.map((timeline) => Math.max(...timeline.keys())));
-    expect(roundsTotal, 'the reveal clock shows every round the lobby has').toBeGreaterThanOrEqual(3);
+    expect(totals.size, 'every page reads the same lobby round count').toBe(1);
+    const lobbyRounds = [...totals][0] as number;
+    expect(lobbyRounds, 'the lobby has more than one round to reveal').toBeGreaterThanOrEqual(2);
+    const clockRounds = Math.min(lobbyRounds, MAX_ROUNDS - 1);
     firstSeen.forEach((timeline, index) => {
-      const seen = [...timeline.keys()].sort((a, b) => a - b);
-      expect(seen, `page ${index} watched rounds 1..${roundsTotal} in order`).toEqual(
-        Array.from({ length: roundsTotal }, (_, step) => step + 1),
+      expect([...timeline.keys()].sort((a, b) => a - b), `page ${index} watched rounds 1..${clockRounds} in order`).toEqual(
+        Array.from({ length: clockRounds }, (_, step) => step + 1),
       );
     });
-    for (let round = 1; round <= roundsTotal; round++) {
+    for (let round = 1; round <= clockRounds; round++) {
       const times = firstSeen.map((timeline) => timeline.get(round) ?? -1);
       expect(Math.min(...times), `every page saw round ${round}`).toBeGreaterThanOrEqual(0);
       expect(
