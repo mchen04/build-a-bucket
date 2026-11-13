@@ -19,6 +19,26 @@ export function hashString(input: string): number {
   return h >>> 0;
 }
 
+export function hashRng(seed: number): Rng {
+  let h = seed | 0;
+  return () => {
+    h ^= h >>> 16;
+    h = Math.imul(h, 0x45d9f3b) | 0;
+    h ^= h >>> 16;
+    h = Math.imul(h, 0x119de1f3) | 0;
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  };
+}
+
+export function teamPickHash(seed: number): number {
+  let h = seed | 0;
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x45d9f3b) | 0;
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
 export function seededRng(key: string): Rng {
   return mulberry32(hashString(key));
 }
