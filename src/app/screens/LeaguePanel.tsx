@@ -111,28 +111,26 @@ export function LeaguePanel(props: Props) {
 
   return (
     <>
-      <div class="card" data-testid="league-stage">
-        <div class="row" style={{ alignItems: 'center' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div class="tiny muted">{league.stageName}</div>
-            <div style={{ fontWeight: 900, fontSize: 'var(--text-md)' }}>
-              {progress !== null
-                ? `${progress} / ${league.stageTotal}`
-                : league.phase === 'recap'
-                  ? 'Champion'
-                  : 'Checkpoint'}
+      {league.phase !== 'recap' ? (
+        <div class="card" data-testid="league-stage">
+          <div class="row" style={{ alignItems: 'center' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div class="tiny muted">{league.stageName}</div>
+              <div style={{ fontWeight: 900, fontSize: 'var(--text-md)' }}>
+                {progress !== null ? `${progress} / ${league.stageTotal}` : 'Checkpoint'}
+              </div>
+            </div>
+            <div class="tiny muted" style={{ textAlign: 'right' }}>
+              {status}
             </div>
           </div>
-          <div class="tiny muted" style={{ textAlign: 'right' }}>
-            {status}
-          </div>
+          {progress !== null && league.stageTotal > 0 ? (
+            <div class="progress" style={{ marginTop: 'var(--space-2)' }}>
+              <div style={{ width: `${Math.round((progress / league.stageTotal) * 100)}%` }} />
+            </div>
+          ) : null}
         </div>
-        {progress !== null && league.stageTotal > 0 ? (
-          <div class="progress" style={{ marginTop: 'var(--space-2)' }}>
-            <div style={{ width: `${Math.round((progress / league.stageTotal) * 100)}%` }} />
-          </div>
-        ) : null}
-      </div>
+      ) : null}
 
       {atCheckpoint ? (
         <div class="card" data-testid="checkpoint">
@@ -254,6 +252,7 @@ export function LeaguePanel(props: Props) {
                 }))}
                 showSeed
                 showLosses
+                showGB
                 compact
               />
             </div>

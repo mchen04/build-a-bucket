@@ -1384,6 +1384,11 @@ export async function advanceLobby(input: { code: string; secret: string; action
       if (hostRow.host !== hostRow.me_id) {
         return { ok: false, status: 403, error: { error: 'Only the host can lock the builds.', reason: 'forbidden' } };
       }
+      const hostNameRows = await sql.query<{ name: string }>(
+        'select name from participants where lobby_id = $1::uuid and id = $2::uuid',
+        [hostRow.lobby_id, hostRow.me_id],
+      );
+      const hostName = hostNameRows[0]?.name ?? 'Host';
       await autoCompleteMissing(lobby, data);
       const updated = await sql.query<{ id: string }>(
         `update lobbies set phase = 'preview', version = version + 1, updated_at = now()
@@ -1393,8 +1398,8 @@ export async function advanceLobby(input: { code: string; secret: string; action
       if (updated[0]) {
         await sql.query(
           `insert into events (lobby_id, kind, payload)
-           values ($1::uuid, 'preview', jsonb_build_object('detail', 'locked the builds'))`,
-          [lobby.id],
+           values ($1::uuid, 'preview', jsonb_build_object('detail', 'locked the builds', 'name', $2::text))`,
+          [lobby.id, hostName],
         );
       }
       return readLobby({ code: input.code, secret: input.secret });

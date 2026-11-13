@@ -348,11 +348,13 @@ export function Lobby(props: Props) {
           </div>
         ) : null}
 
-        <Roster participants={view.participants} phase={view.phase} capacity={view.capacity} />
-        <div class="ticker" data-testid="activity-ticker">
-          <span class="ticker-dot" />
-          {activityLine(view.events[0])}
-        </div>
+        <Roster participants={view.participants} phase={view.phase} capacity={leaguePhase ? present.length : view.capacity} />
+        {view.phase === 'recap' ? null : (
+          <div class="ticker" data-testid="activity-ticker">
+            <span class="ticker-dot" />
+            {activityLine(view.events[0])}
+          </div>
+        )}
 
         {view.phase === 'lobby' ? (
           me.isHost ? (

@@ -92,14 +92,17 @@ export function StandingsTable(props: {
   rows: StandingRow[];
   showSeed?: boolean;
   showLosses?: boolean;
+  showGB?: boolean;
   compact?: boolean;
 }) {
+  const leader = props.rows.reduce((best, row) => Math.max(best, row.wins), 0);
   return (
-    <div class={`table${props.showSeed ? ' seeded' : ''}${props.compact ? ' compact' : ''}`}>
+    <div class={`table${props.showSeed ? ' seeded' : ''}${props.showGB ? ' gb' : ''}${props.compact ? ' compact' : ''}`}>
       <div class="table-row head">
         {props.showSeed ? <span class="table-seed">#</span> : null}
         <span class="table-team">TEAM</span>
         <span class="table-wins">{props.showLosses ? 'W-L' : 'W'}</span>
+        {props.showGB ? <span class="table-gb">GB</span> : null}
       </div>
       {props.rows.map((row) => (
         <div class={`table-row${row.isMine ? ' us' : ''}`} key={row.key}>
@@ -113,6 +116,7 @@ export function StandingsTable(props: {
             {row.wins}
             {props.showLosses ? `-${row.losses ?? 0}` : ''}
           </span>
+          {props.showGB ? <span class="table-gb">{row.wins === leader ? '—' : leader - row.wins}</span> : null}
         </div>
       ))}
     </div>

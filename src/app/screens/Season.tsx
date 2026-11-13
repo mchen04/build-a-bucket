@@ -104,12 +104,17 @@ export function Season(props: Props) {
                   </div>
                 </div>
                 <StandingsTable
-                  rows={result.standings.map((row) => ({
+                  rows={result.standings.map((row, index) => ({
                     key: row.short,
+                    seed: index + 1,
                     team: row.short,
                     wins: row.wins,
+                    losses: row.losses ?? 82 - row.wins,
                     isMine: row.isUs,
                   }))}
+                  showSeed
+                  showLosses
+                  showGB
                 />
                 <StatGrid
                   items={[
