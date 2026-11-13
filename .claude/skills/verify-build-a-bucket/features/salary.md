@@ -12,6 +12,8 @@ A 5x5 grid of players priced $10M to $50M per column (Finishing, Shooting, Defen
 - `salary-shuffle` (`salary-power-shuffle`) arms a target on every column header (`salary-shuffle-column-<key>`) and every price row (`salary-shuffle-row-<tier>`). One use covers one column or one row: the column's players are deranged so none keeps its row and each takes its new row's price, or the row's players move across columns; picks in the changed column are cleared, and the result is scored on the shuffled board.
 - `salary-scout` (`salary-power-scout`) reveals one card's grade (`salary-scout-hint`); the hint stays on the card.
 - Powers are one use per daily puzzle, remembered per day across reloads; Infinite starts each run with both powers fresh.
+- An armed power can be cancelled (`salary-power-cancel`) without spending it; arming resets when the day locks, and in Infinite the powers are disabled once that run's result is shown.
+- The build's position comes from the SIZE pick: a big in the size column simulates as a big.
 
 ## How to get to it (user POV)
 
@@ -34,3 +36,4 @@ Preconditions:
 - The daily grid is generated locally from the date with the original's generator; the original stores its grid in its own database, which we never read. The supervisor compared 2026-11-13: 25/25 cards and the $130M cap matched.
 - Picking the $50M row in every column exceeds any cap; confirm stays disabled.
 - Shuffling a column clears that column's pick, so the cap total drops by that card's price.
+- Only today's powers are kept; saving a new day drops the older entries.

@@ -11,8 +11,8 @@ Two to eight people share a lobby by invite code. The host starts; everyone buil
 - `lobby-barrier` holds qualifiers until every present player is done; eliminated players never enter.
 - `lobby-playoffs` reveals rounds together and never shows a result ahead of the current round.
 - `lobby-reconnect` restores a seat after reload (same browser storage).
-- `lobby-draft` keeps a pick through an immediate reload: the draft is saved on the phone (`bab:mp:draft:v1`) and restored, and the restored pick reaches the server (peers see n/10).
-- `lobby-submit-clears` clears the local draft after a successful submit; the lobby keeps showing the result, not the builder, after a reload.
+- `lobby-draft` keeps a pick through an immediate reload: the draft is saved on the phone (`bab:mp:draft:v1`) and restored, and the restored pick is synced to the server on reopen without a tap (peers see n/10).
+- `lobby-submit-clears` clears the local draft after a successful submit, a refused submit, a move to playoffs/finished, or a gone lobby; the lobby keeps showing the result, not the builder, after a reload.
 - `lobby-refused-submit` lands a submit after the host starts the playoffs on the lobby screen with "The playoffs have already started." and the player spectates.
 - `lobby-leave` frees the seat before start and hands host over when the host leaves.
 
