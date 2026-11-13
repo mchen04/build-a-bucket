@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../src/shared/engine/rng';
-import { simulateSeason } from '../src/shared/engine/season';
+import { seasonHeadline, simulateSeason } from '../src/shared/engine/season';
+import { archetypeFor } from '../src/shared/engine/archetype';
 import type { Build, PlayInRound, SeasonResult, SeriesRound } from '../src/shared/engine/types';
 import { BIG_KEYS, GUARD_KEYS, picksFor } from './fixtures/pool';
 
@@ -22,6 +23,89 @@ function run(seed: number, team: string, position: 'guard' | 'big' = 'guard'): S
 
 const seeds = Array.from({ length: 60 }, (_, index) => index * 7919 + 13);
 const teams = ['MIA', 'LAL', 'OKC', 'BOS', 'SAS', 'DEN'];
+
+function fakeSeason(overrides: Partial<SeasonResult>): SeasonResult {
+  return {
+    ovr: 80,
+    archetype: 'Elite Scorer',
+    wins: 41,
+    losses: 41,
+    position: 'guard',
+    ppg: 20,
+    rpg: 4,
+    apg: 5,
+    spg: 1,
+    bpg: 0.3,
+    tov: 2,
+    fgPct: 45,
+    threePct: 36,
+    ftPct: 80,
+    per: 16,
+    games: [],
+    gameLog: [],
+    bestGame: null,
+    conference: 'east',
+    seed: 8,
+    madePlayoffs: false,
+    standings: [],
+    playoffRounds: [],
+    champion: false,
+    team: 'MIA',
+    mvp: false,
+    dpoy: false,
+    finalsOpp: null,
+    finalsSeries: null,
+    displayMvp: { name: 'Someone', short: 'Some' },
+    displayDpoy: { name: 'Someone', short: 'Some' },
+    goatRank: null,
+    ...overrides,
+  };
+}
+
+describe('season headline', () => {
+  it('reads the result, not the build, when the run has no picks left', () => {
+    const restored = run(777, 'MIA');
+    expect(restored.archetype).toBe(archetypeFor(restored.ovr, build('guard', 'current', 6).picks, 'guard'));
+    expect(restored.archetype.length).toBeGreaterThan(0);
+    expect(restored.archetype).not.toBe('Spin to start building');
+  });
+
+  it('uses the original wording for each finish', () => {
+    expect(seasonHeadline(fakeSeason({ champion: true, madePlayoffs: true }))).toBe('NBA CHAMPIONS');
+    expect(
+      seasonHeadline(
+        fakeSeason({
+          madePlayoffs: true,
+          playoffRounds: [
+            { type: 'series', name: 'First Round', roundIndex: 0, opponent: { short: 'NYK', wins: 50 }, won: true, wins: 4, losses: 2, games: [] },
+            { type: 'series', name: 'NBA Finals', roundIndex: 3, opponent: { short: 'OKC', wins: 55 }, won: false, wins: 2, losses: 4, games: [] },
+          ],
+        }),
+      ),
+    ).toBe('LOST THE NBA FINALS');
+    expect(
+      seasonHeadline(
+        fakeSeason({
+          madePlayoffs: true,
+          playoffRounds: [
+            { type: 'series', name: 'Conference Semifinals', roundIndex: 1, opponent: { short: 'MIL', wins: 48 }, won: false, wins: 1, losses: 4, games: [] },
+          ],
+        }),
+      ),
+    ).toBe('OUT IN THE CONFERENCE SEMIS');
+    expect(
+      seasonHeadline(
+        fakeSeason({
+          madePlayoffs: false,
+          playoffRounds: [
+            { type: 'playin', advanced: false, newSeed: null, games: ['L'], opponent: { short: 'PHI', wins: 40 }, label: 'Eliminated in Play-In' },
+          ],
+        }),
+      ),
+    ).toBe('MISSED THE PLAYOFFS');
+    expect(seasonHeadline(fakeSeason({ madePlayoffs: false }))).toBe('MISSED THE PLAYOFFS');
+  });
+});
 
 describe('simulateSeason', () => {
   it('plays 82 games and keeps wins and losses consistent', () => {

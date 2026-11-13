@@ -74,6 +74,7 @@ export const AwardSchema = v.object({
 
 export const SeasonSchema = v.object({
   ovr: v.number(),
+  archetype: v.optional(v.string()),
   wins: v.number(),
   losses: v.number(),
   position: v.picklist(['guard', 'big']),

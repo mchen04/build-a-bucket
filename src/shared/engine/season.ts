@@ -1,4 +1,5 @@
 import { computeOvr } from './ovr';
+import { archetypeFor } from './archetype';
 import {
   ALLTIME_FINALS_OPPS,
   ALLTIME_TEAMS,
@@ -28,6 +29,25 @@ import type {
 } from './types';
 
 type TeamTable = Record<string, { off: number; def: number }>;
+
+const ROUND_HEADLINES: Record<string, string> = {
+  'First Round': 'OUT IN THE FIRST ROUND',
+  'Conference Semifinals': 'OUT IN THE CONFERENCE SEMIS',
+  'Conference Finals': 'LOST THE CONFERENCE FINALS',
+  'NBA Finals': 'LOST THE NBA FINALS',
+};
+
+export function seasonHeadline(season: SeasonResult): string {
+  if (season.champion) return 'NBA CHAMPIONS';
+  if (season.madePlayoffs) {
+    const series = season.playoffRounds.filter((round): round is SeriesRound => round.type === 'series');
+    const lastRound = series[series.length - 1];
+    if (lastRound) return ROUND_HEADLINES[lastRound.name] ?? `OUT IN THE ${lastRound.name.toUpperCase()}`;
+    if (season.playoffRounds.some((round) => round.type === 'playin' && !round.advanced)) return 'OUT IN THE PLAY-IN';
+    return 'MADE THE PLAYOFFS';
+  }
+  return 'MISSED THE PLAYOFFS';
+}
 
 const leagueAstFg = PER_LEAGUE.ast / PER_LEAGUE.fg;
 const leagueFactor = 2 / 3 - (0.5 * leagueAstFg) / (2 * (PER_LEAGUE.fg / PER_LEAGUE.ft));
@@ -509,6 +529,7 @@ export function simulateSeason(options: SeasonOptions): SeasonResult {
 
   return {
     ovr,
+    archetype: archetypeFor(ovr, build.picks, position),
     wins,
     losses,
     position,

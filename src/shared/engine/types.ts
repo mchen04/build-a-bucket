@@ -93,6 +93,7 @@ export interface AwardWinner {
 
 export interface SeasonResult {
   ovr: number;
+  archetype: string;
   wins: number;
   losses: number;
   position: Position;

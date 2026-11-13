@@ -1,5 +1,6 @@
 import { archetypeFor } from '../../shared/engine/archetype';
 import { computeOvr } from '../../shared/engine/ovr';
+import { seasonHeadline } from '../../shared/engine/season';
 import type { RunState } from '../../shared/run';
 import { StatGrid, TopBar } from '../components';
 
@@ -11,34 +12,38 @@ interface Props {
 export function End(props: Props) {
   const season = props.run.season;
   if (!season) return null;
-  const ovr = computeOvr(props.run.picks, props.run.position);
-  const archetype = archetypeFor(ovr, props.run.picks, props.run.position);
-  const headline = season.champion
-    ? 'CHAMPION'
-    : season.madePlayoffs
-      ? 'PLAYOFF RUN'
-      : season.seed <= 10
-        ? 'PLAY-IN EXIT'
-        : 'MISSED PLAYOFFS';
+  const ovr = season.ovr || computeOvr(props.run.picks, props.run.position);
+  const archetype = season.archetype || archetypeFor(ovr, props.run.picks, props.run.position);
+  const headline = seasonHeadline(season);
+  const ribbons = [season.champion && 'NBA CHAMPS', season.mvp && 'MVP', season.dpoy && 'DPOY'].filter(
+    (entry): entry is string => typeof entry === 'string',
+  );
   return (
     <div class="screen">
-      <TopBar title="Career Result" right={<span class="tiny muted">{season.team}</span>} />
+      <TopBar title="Final Report" right={<span class="tiny muted">{season.team}</span>} />
       <div class="body">
-        <div class={`banner ${season.champion ? '' : 'miss'}`}>
+        <div class={`banner ${season.champion ? '' : 'miss'}`} data-testid="outcome">
           <h1>{headline}</h1>
           <p>
             {season.wins}-{season.losses} · Seed #{season.seed}
             {season.finalsOpp ? ` · Finals vs ${season.finalsOpp} (${season.finalsSeries})` : ''}
           </p>
+          {ribbons.length ? (
+            <p class="tiny">{[...ribbons, `${props.run.era === 'alltime' ? 'ALL-TIME' : 'CURRENT'} · ${props.run.position.toUpperCase()}`].join(' · ')}</p>
+          ) : null}
         </div>
         <div class="row" style={{ alignItems: 'center' }}>
           <div>
             <div class="tiny muted">OVR</div>
-            <div style={{ fontSize: '24px', fontWeight: 900 }}>{ovr}</div>
+            <div style={{ fontSize: '24px', fontWeight: 900 }} data-testid="ovr">
+              {ovr}
+            </div>
           </div>
           <div style={{ flex: 2, textAlign: 'right' }}>
             <div class="tiny muted">Archetype</div>
-            <div style={{ fontSize: '13px', fontWeight: 800 }}>{archetype}</div>
+            <div style={{ fontSize: '13px', fontWeight: 800 }} data-testid="archetype">
+              {archetype}
+            </div>
           </div>
         </div>
         <StatGrid
