@@ -183,6 +183,13 @@ button {
   text-transform: uppercase;
 }
 
+.line {
+  font-size: 12.5px;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .center {
   text-align: center;
 }

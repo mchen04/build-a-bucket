@@ -43,9 +43,9 @@ function FeedRow({ item }: { item: FeedItem }) {
       </div>
     );
   }
-  if (item.kind === 'note' || item.kind === 'injury' || item.kind === 'award') return <div class="tiny muted">{item.text}</div>;
+  if (item.kind === 'note' || item.kind === 'injury' || item.kind === 'award') return <div class="line muted">{item.text}</div>;
   return (
-    <div class="tiny">
+    <div class="line">
       {item.title}: {item.detail}
     </div>
   );
@@ -144,7 +144,7 @@ export function CareerHub({ career, actions, onExit }: Props) {
           <div class="card">
             <div class="tiny muted">THE SUMMER</div>
             {career.aging.slice(0, 6).map((note, index) => (
-              <div class="tiny" key={index}>
+              <div class="line" key={index}>
                 {note}
               </div>
             ))}
@@ -238,7 +238,7 @@ export function CareerHub({ career, actions, onExit }: Props) {
               {talks.years} yrs · ${talks.perYear}M
             </div>
             {talks.lines.map((line, index) => (
-              <div class="tiny muted" key={index}>
+              <div class="line muted" key={index}>
                 {line}
               </div>
             ))}
@@ -321,12 +321,12 @@ export function CareerHub({ career, actions, onExit }: Props) {
         <div class="card">
           <div class="tiny muted">TEAM NEWS</div>
           {(career.off?.moves ?? []).slice(0, 4).map((move, index) => (
-            <div class="tiny" key={index}>
+            <div class="line" key={index}>
               {move}
             </div>
           ))}
           {(career.off?.news ?? []).map((item, index) => (
-            <div class="tiny muted" key={`n${index}`}>
+            <div class="line muted" key={`n${index}`}>
               {item}
             </div>
           ))}
@@ -475,12 +475,12 @@ export function CareerHub({ career, actions, onExit }: Props) {
         <div class="title" style={{ marginTop: '2px' }}>
           {legacy.score} · {legacy.tier}
         </div>
-        <div class="tiny muted">Hall of Fame progress: {hofProgress(career)}%</div>
+        <div class="line muted">Hall of Fame progress: {hofProgress(career)}%</div>
       </div>
       <div class="card">
         <div class="tiny muted">DECISIONS</div>
         {career.decisions.slice(-6).map((decision, index) => (
-          <div class="tiny" key={index}>
+          <div class="line" key={index}>
             Year {decision.year}: {decision.text}
           </div>
         ))}
@@ -498,7 +498,7 @@ export function CareerHub({ career, actions, onExit }: Props) {
         <div class="muted" style={{ fontSize: '11px', marginTop: '4px' }}>
           {totals.seasons} seasons · {totals.rings} rings · {totals.awards} MVP · {totals.proBowls} All-Star
         </div>
-        <div class="tiny muted" style={{ marginTop: '4px' }}>
+        <div class="line muted" style={{ marginTop: '4px' }}>
           Legacy {legacy.score} · {legacyTier(legacy.score)}
         </div>
       </div>
