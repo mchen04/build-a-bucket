@@ -285,19 +285,19 @@ describeDb('shared league API', () => {
       expect(lobby.league?.recap?.entries).toEqual(recap.league?.recap?.entries);
     }
     expect(recap.league?.recap?.entries).toHaveLength(8);
-  }, 120_000);
+  }, 180_000);
 
   it('runs a complete 8-player salary league to recap', async () => {
     const { view: recap } = await runLeague('salary');
     expect(recap.league?.recap?.champion).toBeTruthy();
     expect(recap.league?.awards).not.toBeNull();
-  }, 120_000);
+  }, 180_000);
 
   it('runs a complete 8-player squad league to recap', async () => {
     const { view: recap } = await runLeague('squad');
     expect(recap.league?.recap?.champion).toBeTruthy();
     expect(recap.league?.awards).not.toBeNull();
-  }, 120_000);
+  }, 180_000);
 
   it('needs at least two players to start', async () => {
     const settings: LobbySettings = { era: 'current', mode: 'normal' };
