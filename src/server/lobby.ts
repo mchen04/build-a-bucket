@@ -378,13 +378,14 @@ with waiting as (
 ), moved as (
   update lobbies l set phase = 'barrier', version = l.version + 1, updated_at = now()
   from waiting w
-  where l.id = w.lobby_id
+  where l.id = w.lobby_id and l.phase in ('building', 'season')
   returning l.id
 )
 insert into events (lobby_id, participant_id, kind, payload)
-select w.lobby_id, w.participant_id, 'barrier',
+select m.id, w.participant_id, 'barrier',
   jsonb_build_object('name', w.name, 'detail', 'is waiting at the playoff barrier')
-from waiting w
+from moved m
+join waiting w on w.lobby_id = m.id
 `;
 
 const REVEAL_SQL = `

@@ -9,6 +9,7 @@ import { POST as releaseHandler } from '../api/lobby/[code]/release';
 import { POST as leaveHandler } from '../api/lobby/[code]/leave';
 import { loadLocalEnv } from '../scripts/lib.ts';
 import { db } from '../src/server/db';
+import { maintenancePlan } from '../src/server/lobby';
 import { loadCatalog, poolFor } from '../src/shared/data/loader';
 import { BIG_ATTRS, GUARD_ATTRS } from '../src/shared/engine/rules';
 import { seededRng } from '../src/shared/engine/rng';
@@ -161,6 +162,29 @@ async function eventCount(code: string, kind: string): Promise<number> {
 
 function jsonClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function barrierStatement(code: string): { text: string; params: unknown[] } {
+  const statement = maintenancePlan(code).find((entry) => entry.text.includes("'barrier'"));
+  if (!statement) throw new Error('the maintenance plan has no barrier statement');
+  return statement;
+}
+
+interface LobbyCounters {
+  phase: string;
+  version: number;
+  barrier: number;
+}
+
+async function lobbyCounters(code: string): Promise<LobbyCounters> {
+  const rows = await db().query<{ phase: string; version: string; barrier: string }>(
+    `select l.phase, l.version,
+            (select count(*)::text from events e where e.lobby_id = l.id and e.kind = 'barrier') as barrier
+     from lobbies l where l.code = $1`,
+    [code],
+  );
+  const row = rows[0];
+  return { phase: row?.phase ?? '', version: Number(row?.version ?? 0), barrier: Number(row?.barrier ?? 0) };
 }
 
 describe('lobby lifecycle', () => {
@@ -571,6 +595,64 @@ describe('lobby lifecycle', () => {
     const lateView = await view(lobby.code, guest.seat.secret);
     expect(lateView.phase).toBe('playoffs');
     expect(lateView.me.season).toBeNull();
+  });
+
+  it('leaves a lobby that already left the building phase alone', async () => {
+    const lobby = await newLobby('Host');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    await db().query(
+      "update lobbies set phase = 'playoffs', playoffs_started_at = now(), rounds_revealed = 1 where code = $1",
+      [lobby.code],
+    );
+    const before = await lobbyCounters(lobby.code);
+    const statement = barrierStatement(lobby.code);
+    await db().query(statement.text, statement.params);
+    const after = await lobbyCounters(lobby.code);
+    expect(after.phase).toBe('playoffs');
+    expect(after.version).toBe(before.version);
+    expect(after.barrier).toBe(before.barrier);
+  });
+
+  it('keeps the playoffs when a release commits while the barrier statement runs', async () => {
+    const lobby = await newLobby('Host');
+    const guest = await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    expect((await submit(lobby.code, guest.seat.secret, await draftFor('big', 'current', 'high'))).status).toBe(200);
+    await sleep(HOLD_WAIT);
+
+    await db().query("update lobbies set phase = 'season' where code = $1", [lobby.code]);
+    const before = await lobbyCounters(lobby.code);
+    const fn = `mp_slow_release_${lobby.code}`;
+    await db().query(
+      `create or replace function ${fn}() returns trigger language plpgsql as $fn$
+        begin
+          if new.phase = 'playoffs' then
+            perform pg_sleep(2);
+          end if;
+          return new;
+        end
+      $fn$`,
+    );
+    await db().query(
+      `create trigger ${fn}_trigger before update on lobbies for each row when (old.code = '${lobby.code}') execute function ${fn}()`,
+    );
+    let released: Response | null = null;
+    try {
+      const releasing = release(lobby.code, lobby.host.secret);
+      await sleep(600);
+      const statement = barrierStatement(lobby.code);
+      await db().query(statement.text, statement.params);
+      released = await releasing;
+    } finally {
+      await db().query(`drop trigger if exists ${fn}_trigger on lobbies`);
+      await db().query(`drop function if exists ${fn}()`);
+    }
+    expect(released?.status).toBe(200);
+    const after = await lobbyCounters(lobby.code);
+    expect(after.phase).toBe('playoffs');
+    expect(after.barrier).toBe(before.barrier);
   });
 
   it('hands the host role to the next present participant', async () => {
