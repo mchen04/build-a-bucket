@@ -123,3 +123,159 @@ test('shows the limitation text for the online modes', async ({ page }) => {
   await expect(page.locator('.home-item .lock').first()).toHaveText('Coming in this rebuild');
   await expectNoVerticalOverflow(page, 'home limitations');
 });
+
+function savedPlayoffRun(): unknown {
+  const games = Array.from({ length: 82 }, (_, index) => ({
+    g: index + 1,
+    won: index % 2 === 0,
+    home: index % 3 === 0,
+    opponent: index % 2 === 0 ? 'BOS' : 'NYK',
+    mySc: index % 2 === 0 ? 110 : 102,
+    oppSc: index % 2 === 0 ? 102 : 110,
+    pts: 24,
+    reb: 6,
+    ast: 5,
+  }));
+  const standings = [
+    { short: 'BOS', wins: 58 },
+    { short: 'NYK', wins: 54 },
+    { short: 'MIL', wins: 50 },
+    { short: 'CLE', wins: 48 },
+    { short: 'ORL', wins: 45 },
+    { short: 'IND', wins: 43 },
+    { short: 'MIA', wins: 44, isUs: true },
+    { short: 'PHI', wins: 42 },
+    { short: 'ATL', wins: 40 },
+    { short: 'CHI', wins: 38 },
+    { short: 'BKN', wins: 34 },
+    { short: 'TOR', wins: 33 },
+    { short: 'CHA', wins: 31 },
+    { short: 'DET', wins: 30 },
+    { short: 'WAS', wins: 22 },
+  ];
+  return {
+    v: 1,
+    seed: 'b-e2e-playoffs',
+    position: 'guard',
+    era: 'current',
+    picks: {},
+    spinIndex: 10,
+    teamRespinUsed: true,
+    playerRespinUsed: false,
+    current: null,
+    team: 'MIA',
+    screen: 'season',
+    season: {
+      ovr: 88,
+      wins: 44,
+      losses: 38,
+      position: 'guard',
+      ppg: 26.4,
+      rpg: 5.1,
+      apg: 7.2,
+      spg: 1.4,
+      bpg: 0.4,
+      tov: 2.6,
+      fgPct: 47,
+      threePct: 38,
+      ftPct: 86,
+      per: 19.4,
+      games,
+      gameLog: games.map((game) => (game.won ? 'W' : 'L')),
+      bestGame: { ...games[0], pts: 42 },
+      conference: 'east',
+      seed: 7,
+      madePlayoffs: true,
+      standings,
+      playoffRounds: [
+        {
+          type: 'playin',
+          advanced: true,
+          newSeed: 7,
+          games: ['W'],
+          opponent: { short: 'PHI', wins: 42 },
+          label: 'Beat PHI — Earned #7 Seed',
+        },
+        {
+          type: 'series',
+          name: 'First Round',
+          roundIndex: 0,
+          opponent: { short: 'NYK', wins: 54, seed: 2 },
+          won: true,
+          wins: 4,
+          losses: 2,
+          games: ['W', 'L', 'W', 'W', 'L', 'W'],
+        },
+        {
+          type: 'series',
+          name: 'Conference Semifinals',
+          roundIndex: 1,
+          opponent: { short: 'MIL', wins: 50, seed: 3 },
+          won: true,
+          wins: 4,
+          losses: 3,
+          games: ['W', 'W', 'L', 'L', 'W', 'L', 'W'],
+        },
+        {
+          type: 'series',
+          name: 'Conference Finals',
+          roundIndex: 2,
+          opponent: { short: 'BOS', wins: 58, seed: 1 },
+          won: true,
+          wins: 4,
+          losses: 1,
+          games: ['W', 'W', 'L', 'W', 'W'],
+        },
+        {
+          type: 'series',
+          name: 'NBA Finals',
+          roundIndex: 3,
+          opponent: { short: 'OKC', wins: 58, seed: 1, isOtherConf: true },
+          won: false,
+          wins: 2,
+          losses: 4,
+          games: ['L', 'W', 'L', 'W', 'L', 'L'],
+        },
+      ],
+      champion: false,
+      team: 'MIA',
+      mvp: true,
+      dpoy: false,
+      finalsOpp: 'OKC',
+      finalsSeries: '2-4',
+      displayMvp: { name: 'You', short: 'You', team: 'MIA', ppg: 26.4, rpg: 5.1, apg: 7.2, isPlayer: true },
+      displayDpoy: { name: 'Victor Wembanyama', short: 'Wembanyama', team: 'SAS', spg: 1.4, bpg: 3.5 },
+      goatRank: 22,
+    },
+  };
+}
+
+test('reveals the saved playoff bracket and the end screen', async ({ page }) => {
+  await page.addInitScript((run) => {
+    localStorage.setItem('bab:v1', JSON.stringify(run));
+  }, savedPlayoffRun());
+  await page.goto('/');
+
+  await expect(page.getByText('Record')).toBeVisible();
+  await page.getByRole('button', { name: 'Skip to Result' }).click();
+  await expect(page.locator('.award').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Enter Playoffs' }).click();
+
+  await expect(page.getByRole('button', { name: 'Skip to Result' })).toBeVisible();
+  await expectNoVerticalOverflow(page, 'playoffs tip off');
+  await shot(page, '12-playoffs-tip-off');
+
+  await page.getByRole('button', { name: 'Skip to Result' }).click();
+  await expect(page.locator('.round')).toHaveCount(5);
+  await expect(page.locator('.round').first()).toContainText('Play-In');
+  await expect(page.locator('.round').last()).toContainText('NBA Finals');
+  await expect(page.locator('.banner h1')).toHaveText('SEASON OVER');
+  await expectNoVerticalOverflow(page, 'playoffs bracket');
+  await shot(page, '13-playoffs-bracket');
+
+  await page.getByRole('button', { name: 'See Results' }).click();
+  await expect(page.getByRole('button', { name: 'New Build' })).toBeVisible();
+  await expect(page.locator('.award').filter({ hasText: 'GOAT' })).toContainText('#22 all-time');
+  await expectNoVerticalOverflow(page, 'end screen');
+  await shot(page, '14-end-after-playoffs');
+});
