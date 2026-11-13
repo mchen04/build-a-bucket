@@ -1,7 +1,7 @@
 import * as v from 'valibot';
 import { LEAGUE_TEAMS, simulateLeague, type HumanTeamInput, type LeagueResult } from '../shared/engine/league.js';
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
-import { isCheckpoint, revealLeague, stageCursorAt, stageTotal } from '../shared/mp/league.js';
+import { isCheckpoint, revealLeague, stageCursorAt, stageGamesTotal } from '../shared/mp/league.js';
 import {
   BuildSummarySchema,
   LobbyBuildSchema,
@@ -380,8 +380,8 @@ async function maintain(row: ReadRow): Promise<void> {
       stage,
     ]);
   }
-  const total = stageTotal(league, stage);
-  if (!isCheckpoint(stage, cursor, total)) return;
+  const total = stageGamesTotal(league, stage);
+  if (!isCheckpoint(cursor, total)) return;
   if (active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage)) {
     await advanceStage(raw.id, stage);
   }
@@ -403,9 +403,9 @@ function needsMaintenance(row: ReadRow, now: number): boolean {
   const stage = Number(raw.stage);
   const startedAt = raw.stage_started_at ? Date.parse(raw.stage_started_at) : null;
   if (stageCursorAt(league, stage, startedAt, now) > Number(raw.stage_cursor)) return true;
-  const total = stageTotal(league, stage);
+  const total = stageGamesTotal(league, stage);
   const cursor = Math.max(Number(raw.stage_cursor), stageCursorAt(league, stage, startedAt, now));
-  if (!isCheckpoint(stage, cursor, total)) return false;
+  if (!isCheckpoint(cursor, total)) return false;
   return active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage);
 }
 
@@ -1123,7 +1123,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
       stageCursorAt(parsed, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null, Date.now()),
     );
     if (input.stage !== stage) return readLobby({ code: input.code, secret: input.secret });
-    if (!isCheckpoint(stage, cursor, stageTotal(parsed, stage))) {
+    if (!isCheckpoint(cursor, stageGamesTotal(parsed, stage))) {
       return { ok: false, status: 409, error: { error: 'This checkpoint is still revealing.', reason: 'conflict' } };
     }
     const next = Math.min(10, stage + 1);

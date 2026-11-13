@@ -201,7 +201,7 @@ const PlayInSchema = v.object({
 const AwardSchema = v.object({
   name: v.string(),
   team: v.string(),
-  participantId: v.nullable(v.string()),
+  mine: v.boolean(),
   ppg: v.optional(v.number()),
   rpg: v.optional(v.number()),
   apg: v.optional(v.number()),
@@ -253,6 +253,7 @@ const RecapSchema = v.object({
 const LeagueViewSchema = v.object({
   stage: v.number(),
   stageName: v.string(),
+  phase: v.picklist(['season', 'awards', 'playin', 'playoffs', 'recap']),
   stageTotal: v.number(),
   cursor: v.number(),
   checkpoint: v.boolean(),

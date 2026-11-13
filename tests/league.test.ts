@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   LEAGUE_TEAMS,
   buildSchedule,
+  nextRoundSeries,
   rankConference,
   simulateLeague,
   stageTotals,
+  teamWinProbability,
   type HumanTeamInput,
   type LeagueGameResult,
   type LeagueResult,
+  type SeriesResult,
   type TeamRecord,
 } from '../src/shared/engine/league';
 import { revealLeague, stageTotal } from '../src/shared/mp/league';
@@ -232,5 +235,108 @@ describe('conference tiebreakers', () => {
     const second = rankConference(['AAA', 'BBB'], records, games, 'coin-seed').map((row) => row.team);
     expect(first).toEqual(second);
     expect([['AAA', 'BBB'], ['BBB', 'AAA']]).toContainEqual(first);
+  });
+});
+
+function series(id: string, high: string, low: string, highSeed: number, lowSeed: number, winner: string): SeriesResult {
+  return {
+    id,
+    round: 1,
+    name: 'First Round',
+    conference: 'east',
+    high,
+    low,
+    highSeed,
+    lowSeed,
+    games: [],
+    winner,
+    wins: 4,
+    losses: 0,
+  };
+}
+
+describe('multi-team tiebreakers', () => {
+  it('orders a three-way head-to-head cycle by conference record', () => {
+    const records = new Map([
+      ['AAA', record('AAA', 41, 20, 20)],
+      ['BBB', record('BBB', 41, 25, 15)],
+      ['CCC', record('CCC', 41, 30, 10)],
+    ]);
+    const games = [
+      game(1, 'AAA', 'BBB', 'AAA'),
+      game(2, 'BBB', 'AAA', 'BBB'),
+      game(3, 'BBB', 'CCC', 'BBB'),
+      game(4, 'CCC', 'BBB', 'CCC'),
+      game(5, 'CCC', 'AAA', 'CCC'),
+      game(6, 'AAA', 'CCC', 'AAA'),
+    ];
+    const order = rankConference(['AAA', 'BBB', 'CCC'], records, games, 'cycle-seed');
+    expect(order.map((row) => row.team)).toEqual(['CCC', 'BBB', 'AAA']);
+    expect(rankConference(['AAA', 'BBB', 'CCC'], records, games, 'cycle-seed')).toEqual(order);
+  });
+
+  it('lifts the team that swept the tied group before falling back to conference record', () => {
+    const records = new Map([
+      ['AAA', record('AAA', 41, 20, 20)],
+      ['BBB', record('BBB', 41, 30, 10)],
+      ['CCC', record('CCC', 41, 25, 15)],
+    ]);
+    const games = [
+      game(1, 'AAA', 'BBB', 'AAA'),
+      game(2, 'BBB', 'AAA', 'AAA'),
+      game(3, 'AAA', 'CCC', 'AAA'),
+      game(4, 'CCC', 'AAA', 'AAA'),
+      game(5, 'BBB', 'CCC', 'BBB'),
+      game(6, 'CCC', 'BBB', 'CCC'),
+    ];
+    const order = rankConference(['AAA', 'BBB', 'CCC'], records, games, 'sweep-seed');
+    expect(order.map((row) => row.team)).toEqual(['AAA', 'BBB', 'CCC']);
+  });
+});
+
+describe('bracket reseeding', () => {
+  it('uses the winner seed, not the bracket slot, in the next round', () => {
+    const seeds = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    const first = [
+      series('e-r1-1', 'A', 'H', 1, 8, 'H'),
+      series('e-r1-2', 'D', 'E', 4, 5, 'D'),
+      series('e-r1-3', 'C', 'F', 3, 6, 'C'),
+      series('e-r1-4', 'B', 'G', 2, 7, 'B'),
+    ];
+    const second = nextRoundSeries(2, 'east', first, seeds, new Map(), 'current', 'reseed');
+    expect(second[0]?.high).toBe('D');
+    expect(second[0]?.low).toBe('H');
+    expect(second[0]?.highSeed).toBe(4);
+    expect(second[0]?.lowSeed).toBe(8);
+    expect(second[1]?.high).toBe('B');
+    expect(second[1]?.low).toBe('C');
+  });
+});
+
+describe('one strength scale', () => {
+  it('treats a computer team as a neutral human on the same team', () => {
+    const neutral: HumanTeamInput[] = [
+      {
+        participantId: 'p1',
+        seat: 1,
+        name: 'Neutral',
+        team: 'BOS',
+        position: 'guard',
+        ovr: 82,
+        values: {},
+      },
+    ];
+    expect(teamWinProbability('BOS', neutral, 'current')).toBeCloseTo(teamWinProbability('BOS', [], 'current'), 10);
+    expect(teamWinProbability('BOS', neutral, 'alltime')).toBeCloseTo(teamWinProbability('BOS', [], 'alltime'), 10);
+  });
+
+  it('moves a human up and down the same scale as the computer teams', () => {
+    const base = teamWinProbability('BOS', [], 'current');
+    const strong = teamWinProbability('BOS', [{ participantId: 'p1', seat: 1, name: 'S', team: 'BOS', position: 'guard', ovr: 95, values: {} }], 'current');
+    const weak = teamWinProbability('BOS', [{ participantId: 'p1', seat: 1, name: 'W', team: 'BOS', position: 'guard', ovr: 60, values: {} }], 'current');
+    expect(strong).toBeGreaterThan(base);
+    expect(weak).toBeLessThan(base);
+    expect(strong).toBeLessThanOrEqual(0.87);
+    expect(weak).toBeGreaterThanOrEqual(0.12);
   });
 });

@@ -27,7 +27,7 @@ export function stagePhase(stage: number): 'season' | 'awards' | 'playin' | 'pla
   return 'recap';
 }
 
-export function stageTotal(league: LeagueResult, stage: number): number {
+export function stageGamesTotal(league: LeagueResult, stage: number): number {
   if (stage <= 3) return stageTotals(league.games)[stage] ?? 0;
   if (stage === 5) return league.playin.length;
   if (stage >= 6 && stage <= 9) {
@@ -36,8 +36,15 @@ export function stageTotal(league: LeagueResult, stage: number): number {
   return 0;
 }
 
+export function stageTotal(league: LeagueResult, stage: number): number {
+  if (stage <= 3) return stageTotals(league.games)[stage] ?? 0;
+  if (stage === 5) return 6;
+  if (stage >= 6 && stage <= 9) return 7 * league.series.filter((entry) => entry.round === stage - 5).length;
+  return 0;
+}
+
 export function stageCursorAt(league: LeagueResult, stage: number, startedAt: number | null, now: number): number {
-  const total = stageTotal(league, stage);
+  const total = stageGamesTotal(league, stage);
   if (total === 0) return 0;
   if (startedAt === null) return 0;
   const elapsed = Math.max(0, now - startedAt);
@@ -50,8 +57,7 @@ export function stageCursorAt(league: LeagueResult, stage: number, startedAt: nu
   return total;
 }
 
-export function isCheckpoint(stage: number, cursor: number, total: number): boolean {
-  if (stage >= 4) return true;
+export function isCheckpoint(cursor: number, total: number): boolean {
   return cursor >= total;
 }
 
@@ -116,7 +122,7 @@ export interface PlayInView {
 export interface AwardView {
   name: string;
   team: string;
-  participantId: string | null;
+  mine: boolean;
   ppg?: number;
   rpg?: number;
   apg?: number;
@@ -168,6 +174,7 @@ export interface RecapView {
 export interface LeagueView {
   stage: number;
   stageName: string;
+  phase: 'season' | 'awards' | 'playin' | 'playoffs' | 'recap';
   stageTotal: number;
   cursor: number;
   checkpoint: boolean;
@@ -281,17 +288,23 @@ function playoffViews(league: LeagueResult, stage: number, cursor: number): Seri
   return out;
 }
 
-function myView(league: LeagueResult, stage: number, meParticipantId: string | null): MyLeagueView | null {
+function myView(
+  league: LeagueResult,
+  stage: number,
+  meParticipantId: string | null,
+  standings: StandingView[],
+): MyLeagueView | null {
   if (!meParticipantId) return null;
   const human = league.humans.find((entry) => entry.participantId === meParticipantId);
   if (!human) return null;
   const awardsRevealed = stage >= 4;
   const playInRevealed = stage >= 5;
   const recapRevealed = stage >= 10;
+  const partial = standings.find((row) => row.team === human.team) ?? null;
   return {
     team: human.team,
-    wins: human.wins,
-    losses: human.losses,
+    wins: awardsRevealed ? human.wins : partial?.wins ?? 0,
+    losses: awardsRevealed ? human.losses : partial?.losses ?? 0,
     seed: awardsRevealed ? human.seed : null,
     madePlayoffs: playInRevealed ? human.madePlayoffs : null,
     finish: recapRevealed ? human.finish : null,
@@ -311,7 +324,7 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
   const humanTeams = new Set(league.humans.map((entry) => entry.team));
   const revealed = revealedRegular(league, stage, cursor);
   const total = stageTotal(league, stage);
-  const checkpoint = isCheckpoint(stage, cursor, total);
+  const checkpoint = isCheckpoint(cursor, stageGamesTotal(league, stage));
 
   const visible = league.games.filter((game) => game.gameNo <= revealed);
   const mine = visible.filter((game) => game.home === meTeam || game.away === meTeam);
@@ -340,8 +353,26 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
   const awards =
     stage >= 4
       ? {
-          mvp: { ...league.awards.mvp },
-          dpoy: { ...league.awards.dpoy },
+          mvp: {
+            name: league.awards.mvp.name,
+            team: league.awards.mvp.team,
+            mine: league.awards.mvp.participantId !== null && league.awards.mvp.participantId === meParticipantId,
+            ppg: league.awards.mvp.ppg,
+            rpg: league.awards.mvp.rpg,
+            apg: league.awards.mvp.apg,
+            spg: league.awards.mvp.spg,
+            bpg: league.awards.mvp.bpg,
+          },
+          dpoy: {
+            name: league.awards.dpoy.name,
+            team: league.awards.dpoy.team,
+            mine: league.awards.dpoy.participantId !== null && league.awards.dpoy.participantId === meParticipantId,
+            ppg: league.awards.dpoy.ppg,
+            rpg: league.awards.dpoy.rpg,
+            apg: league.awards.dpoy.apg,
+            spg: league.awards.dpoy.spg,
+            bpg: league.awards.dpoy.bpg,
+          },
         }
       : null;
   const playin =
@@ -378,8 +409,8 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
             Object.entries(opponents)
               .filter(([b]) => a < b)
               .map(([b, record]) => ({
-                a: league.humans.find((entry) => entry.participantId === a)?.name ?? a,
-                b: league.humans.find((entry) => entry.participantId === b)?.name ?? b,
+                a: league.humans.find((entry) => entry.participantId === a)?.name ?? 'A',
+                b: league.humans.find((entry) => entry.participantId === b)?.name ?? 'B',
                 wins: record.wins,
                 losses: record.losses,
               })),
@@ -390,6 +421,7 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
   return {
     stage,
     stageName: STAGE_NAMES[stage] ?? 'Season',
+    phase: stagePhase(stage),
     stageTotal: total,
     cursor,
     checkpoint,
@@ -398,7 +430,7 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
     awards,
     playin,
     playoffs,
-    my: myView(league, stage, meParticipantId),
+    my: myView(league, stage, meParticipantId, standings),
     recap,
   };
 }

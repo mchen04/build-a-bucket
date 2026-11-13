@@ -30,6 +30,8 @@ export function LeaguePanel(props: Props) {
     ? [...new Set(league.playoffs.map((entry) => entry.round))].sort((a, b) => a - b)
     : [];
   const atCheckpoint = league.checkpoint && props.view.phase !== 'recap';
+  const regular = league.phase === 'season';
+  const progress = regular && league.stageTotal > 0 ? Math.min(league.cursor, league.stageTotal) : null;
 
   return (
     <>
@@ -38,16 +40,16 @@ export function LeaguePanel(props: Props) {
           <div style={{ flex: 1 }}>
             <div class="tiny muted">Stage {league.stage + 1} · {league.stageName}</div>
             <div style={{ fontWeight: 900, fontSize: '14px' }}>
-              {league.stageTotal > 0 ? `${Math.min(league.cursor, league.stageTotal)} / ${league.stageTotal}` : 'Checkpoint'}
+              {progress !== null ? `${progress} / ${league.stageTotal}` : league.phase === 'playoffs' ? `Game ${league.cursor}` : 'Checkpoint'}
             </div>
           </div>
           <div class="tiny muted" style={{ textAlign: 'right' }}>
-            {atCheckpoint ? 'Paused for everyone' : league.stageTotal > 0 ? 'Revealing' : 'Ready'}
+            {atCheckpoint ? 'Paused for everyone' : league.phase === 'season' || league.phase === 'playoffs' ? 'Revealing' : 'Ready'}
           </div>
         </div>
-        {league.stageTotal > 0 ? (
+        {progress !== null && league.stageTotal > 0 ? (
           <div class="bar" style={{ marginTop: '6px' }}>
-            <span style={{ width: `${Math.round((Math.min(league.cursor, league.stageTotal) / league.stageTotal) * 100)}%` }} />
+            <span style={{ width: `${Math.round((progress / league.stageTotal) * 100)}%` }} />
           </div>
         ) : null}
       </div>

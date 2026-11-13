@@ -1,9 +1,7 @@
 import { ovrFromValues } from './ovr.js';
 import { clamp, seededRng, seededShuffle, type Rng } from './rng.js';
-import { rollStats, teamStrength, winProbFor } from './season.js';
+import { rollStats, winProbFor } from './season.js';
 import {
-  ALLTIME_TEAMS,
-  CURRENT_TEAMS,
   DISPLAY_DPOY_ALLTIME,
   DISPLAY_DPOY_CURRENT,
   DISPLAY_MVP_ALLTIME,
@@ -153,10 +151,6 @@ function conferenceOf(team: string): Conference {
   return EAST_SET.has(team) ? 'east' : 'west';
 }
 
-function tableFor(era: Era): Record<string, { off: number; def: number }> {
-  return era === 'alltime' ? ALLTIME_TEAMS : CURRENT_TEAMS;
-}
-
 function circleRounds(teams: string[]): [string, string][][] {
   const n = teams.length;
   const arr = [...teams];
@@ -239,18 +233,27 @@ function matchupProbability(a: number, b: number): number {
   return clamp(0.5 + (raw - 0.5) * 1.12, 0.15, 0.85);
 }
 
+function squadProbability(strength: { off: number; def: number }, era: Era): number {
+  const score = (strength.off + strength.def) / 200;
+  const base = clamp(0.2 + ((score - 0.59) / 0.24) * 0.57, 0.13, 0.77);
+  return era === 'current' ? 0.5 + (base - 0.5) * 0.8 : base;
+}
+
 function humanProbability(human: HumanTeamInput, era: Era): number {
-  if (human.squadStrength) {
-    const score = (human.squadStrength.off + human.squadStrength.def) / 200;
-    return clamp(0.2 + ((score - 0.59) / 0.24) * 0.57, 0.13, 0.87);
-  }
+  if (human.squadStrength) return squadProbability(human.squadStrength, era);
   return winProbFor(human.ovr, human.team, era);
+}
+
+export function teamWinProbability(team: string, humans: readonly HumanTeamInput[], era: Era): number {
+  const human = humans.find((entry) => entry.team === team);
+  if (human) return humanProbability(human, era);
+  return winProbFor(82, team, era);
 }
 
 function probabilityFor(team: string, humans: Map<string, HumanTeamInput>, era: Era): number {
   const human = humans.get(team);
   if (human) return humanProbability(human, era);
-  return teamStrength(team, tableFor(era));
+  return winProbFor(82, team, era);
 }
 
 function scoreGame(rng: Rng, homeWon: boolean): { homeScore: number; awayScore: number } {
@@ -295,6 +298,43 @@ function headToHeadWins(a: string, b: string, games: readonly LeagueGameResult[]
   return wins;
 }
 
+function conferencePct(record: TeamRecord): number {
+  return record.confWins / Math.max(1, record.confWins + record.confLosses);
+}
+
+function orderTiedGroup(
+  group: readonly string[],
+  record: (team: string) => TeamRecord,
+  games: readonly LeagueGameResult[],
+  coin: Map<string, number>,
+): string[] {
+  const remaining = [...group];
+  const out: string[] = [];
+  while (remaining.length > 1) {
+    const combined = remaining.map((team) => {
+      let wins = 0;
+      let losses = 0;
+      for (const other of remaining) {
+        if (other === team) continue;
+        wins += headToHeadWins(team, other, games);
+        losses += headToHeadWins(other, team, games);
+      }
+      return {
+        team,
+        h2h: wins + losses === 0 ? 0.5 : wins / (wins + losses),
+        conf: conferencePct(record(team)),
+        coin: coin.get(team) ?? 0,
+      };
+    });
+    combined.sort((a, b) => b.h2h - a.h2h || b.conf - a.conf || b.coin - a.coin || a.team.localeCompare(b.team));
+    const best = combined[0] as { team: string };
+    out.push(best.team);
+    remaining.splice(remaining.indexOf(best.team), 1);
+  }
+  if (remaining.length === 1) out.push(remaining[0] as string);
+  return out;
+}
+
 export function rankConference(
   teams: string[],
   records: Map<string, TeamRecord>,
@@ -303,20 +343,16 @@ export function rankConference(
 ): TeamRecord[] {
   const coin = new Map(teams.map((team) => [team, seededRng(`${seed}:coin:${team}`)()]));
   const record = (team: string) => records.get(team) ?? emptyRecord(team);
-  return [...teams].sort((a, b) => {
-    const ra = record(a);
-    const rb = record(b);
-    if (ra.wins !== rb.wins) return rb.wins - ra.wins;
-    const h2h = headToHeadWins(a, b, games) - headToHeadWins(b, a, games);
-    if (h2h !== 0) return -h2h;
-    const pa = ra.confWins / Math.max(1, ra.confWins + ra.confLosses);
-    const pb = rb.confWins / Math.max(1, rb.confWins + rb.confLosses);
-    if (pa !== pb) return pb - pa;
-    const ca = coin.get(a) ?? 0;
-    const cb = coin.get(b) ?? 0;
-    if (ca !== cb) return cb - ca;
-    return a.localeCompare(b);
-  }).map(record);
+  const byWins = new Map<number, string[]>();
+  for (const team of teams) {
+    const wins = record(team).wins;
+    byWins.set(wins, [...(byWins.get(wins) ?? []), team]);
+  }
+  const out: string[] = [];
+  for (const wins of [...byWins.keys()].sort((a, b) => b - a)) {
+    out.push(...orderTiedGroup(byWins.get(wins) as string[], record, games, coin));
+  }
+  return out.map(record);
 }
 
 function playInFor(
@@ -401,23 +437,25 @@ function bracketRound(
   return [];
 }
 
-function nextRound(
+export function nextRoundSeries(
   round: number,
   conference: Conference,
   previous: SeriesResult[],
+  seeds: readonly string[],
   humans: Map<string, HumanTeamInput>,
   era: Era,
   seed: string,
 ): SeriesResult[] {
   const out: SeriesResult[] = [];
+  const seedOf = (team: string) => seeds.indexOf(team) + 1;
   for (let index = 0; index < previous.length; index += 2) {
     const a = previous[index] as SeriesResult;
     const b = previous[index + 1] as SeriesResult;
-    const high = a.highSeed <= b.highSeed ? a.winner : b.winner;
+    const high = seedOf(a.winner) <= seedOf(b.winner) ? a.winner : b.winner;
     const low = high === a.winner ? b.winner : a.winner;
-    const highSeed = high === a.winner ? a.highSeed : b.highSeed;
-    const lowSeed = low === a.winner ? a.highSeed : b.highSeed;
-    out.push(playSeries(`${conference}-r${round}-${index / 2 + 1}`, round, conference, high, low, highSeed, lowSeed, humans, era, seed));
+    out.push(
+      playSeries(`${conference}-r${round}-${index / 2 + 1}`, round, conference, high, low, seedOf(high), seedOf(low), humans, era, seed),
+    );
   }
   return out;
 }
@@ -532,15 +570,25 @@ export function simulateLeague(input: {
 
   const eastR1 = bracketRound(1, 'east', eastPlayIn.seeds, humans, era, seed);
   const westR1 = bracketRound(1, 'west', westPlayIn.seeds, humans, era, seed);
-  const eastR2 = nextRound(2, 'east', eastR1, humans, era, seed);
-  const westR2 = nextRound(2, 'west', westR1, humans, era, seed);
-  const eastR3 = nextRound(3, 'east', eastR2, humans, era, seed);
-  const westR3 = nextRound(3, 'west', westR2, humans, era, seed);
+  const eastR2 = nextRoundSeries(2, 'east', eastR1, eastPlayIn.seeds, humans, era, seed);
+  const westR2 = nextRoundSeries(2, 'west', westR1, westPlayIn.seeds, humans, era, seed);
+  const eastR3 = nextRoundSeries(3, 'east', eastR2, eastPlayIn.seeds, humans, era, seed);
+  const westR3 = nextRoundSeries(3, 'west', westR2, westPlayIn.seeds, humans, era, seed);
   const eastChamp = (eastR3[0] as SeriesResult).winner;
   const westChamp = (westR3[0] as SeriesResult).winner;
   const eastSeed = eastPlayIn.seeds.indexOf(eastChamp) + 1;
   const westSeed = westPlayIn.seeds.indexOf(westChamp) + 1;
-  const finalsHigh = eastSeed <= westSeed ? eastChamp : westChamp;
+  const eastRecord = records.get(eastChamp) as TeamRecord;
+  const westRecord = records.get(westChamp) as TeamRecord;
+  const eastHome =
+    eastSeed !== westSeed
+      ? eastSeed < westSeed
+      : eastRecord.wins !== westRecord.wins
+        ? eastRecord.wins > westRecord.wins
+        : eastRecord.pointsFor - eastRecord.pointsAgainst !== westRecord.pointsFor - westRecord.pointsAgainst
+          ? eastRecord.pointsFor - eastRecord.pointsAgainst > westRecord.pointsFor - westRecord.pointsAgainst
+          : seededRng(`${seed}:finals:home`)() < 0.5;
+  const finalsHigh = eastHome ? eastChamp : westChamp;
   const finalsLow = finalsHigh === eastChamp ? westChamp : eastChamp;
   const finals = playSeries(
     'finals',
