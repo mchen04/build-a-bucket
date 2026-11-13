@@ -169,6 +169,22 @@ export async function loadCatalog(): Promise<Catalog> {
   };
 }
 
+export async function loadCareerAges(): Promise<Record<string, number> | null> {
+  try {
+    const text = await fetchSource('src/data/player-ages.js');
+    const parsed = JSON5.parse(extractLiteral(text, 'BIRTH')) as { bucket?: Record<string, unknown> };
+    const table = parsed?.bucket;
+    if (!table || typeof table !== 'object') return null;
+    const clean: Record<string, number> = {};
+    for (const [name, year] of Object.entries(table)) {
+      if (typeof year === 'number' && Number.isFinite(year)) clean[name] = year;
+    }
+    return Object.keys(clean).length ? clean : null;
+  } catch {
+    return null;
+  }
+}
+
 export function poolFor(catalog: Catalog, position: Position, era: Era): Player[] {
   if (era === 'alltime') return position === 'guard' ? catalog.legendGuards : catalog.legendBigs;
   return position === 'guard' ? catalog.currentGuards : catalog.currentBigs;
