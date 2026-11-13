@@ -355,7 +355,7 @@ export function finishRegular(c: C.Career, ctx: C.Ctx): C.Career {
   const conference = fit.conf;
   const { rows, seedNumber } = C.conferenceStandings(ctx, c.team as string, conference, wins, `${c.seed}-${c.year}`);
   const final: C.FinalSeason = { wins, losses, seed: seedNumber, standings: rows, conference };
-  const made = seedNumber <= 10;
+  const made = C.madePlayoffs(wins, seedNumber);
   if (!made) return bookSeason({ ...c, active: { ...a, final, po: null } }, ctx);
   const po = C.buildBracket({ ...c, active: { ...a, final } } as C.Career, ctx, final);
   if (a.injury?.serious) return bookSeason({ ...c, active: { ...a, final, po: C.watchBracket(c, ctx, po) } }, ctx);

@@ -21,6 +21,8 @@ export interface GroupRatings {
 export const ROUNDS = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'] as const;
 export const FINAL_ROUND = 'NBA Finals';
 export const PLAY_IN = 'Play-In';
+export const PLAYOFF_WIN_BAR = 40;
+export const PLAYOFF_SEEDS = 10;
 
 export const HONOR_KNEE = 8;
 export const AWARD_REPEAT = 4;

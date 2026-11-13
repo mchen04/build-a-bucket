@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { Career, FeedItem, Offer, Round } from '../../../shared/engine/career/core';
-import { legacyTier } from '../../../shared/engine/career/core';
+import { legacyTier, playInExit } from '../../../shared/engine/career/core';
+import { PLAY_IN } from '../../../shared/engine/career/rules';
 import { ASKS, canRetire, careerTotals, hofProgress, legacyOf, marketValue, retireReason } from '../../../shared/engine/career/engine';
 import { gradeFor } from '../../../shared/engine/rules';
 import { TopBar } from '../../components';
@@ -186,7 +187,7 @@ export function CareerHub({ career, actions, onExit }: Props) {
       return (
         <>
           <div class="card" data-testid="career-bracket">
-            <div class="tiny muted">PLAYOFFS · SEED {active.final?.seed}</div>
+            <div class="tiny muted">{active.po.rounds[0]?.name === PLAY_IN ? 'PLAY-IN' : 'PLAYOFFS'} · SEED {active.final?.seed}</div>
             {active.po.rounds.map((entry, index) => (
               <RoundRow key={index} round={entry} />
             ))}
@@ -295,7 +296,7 @@ export function CareerHub({ career, actions, onExit }: Props) {
             </div>
             <div class="title" style={{ marginTop: '2px' }}>
               {last.wins}-{last.losses}
-              {last.champion ? ' · CHAMPIONS' : last.playoffs ? ' · PLAYOFFS' : ''}
+              {last.champion ? ' · CHAMPIONS' : last.playoffs ? ' · PLAYOFFS' : playInExit(last) ? ' · PLAY-IN' : ''}
             </div>
             <div class="muted" style={{ fontSize: '11px', marginTop: '4px' }}>
               {last.stats.ppg} PPG · {last.stats.rpg} RPG · {last.stats.apg} APG · {last.stats.gp} games

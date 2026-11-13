@@ -5,27 +5,32 @@ import {
   bestOf7,
   bucketRoundOdds,
   closeChance,
+  conferenceStandings,
   draftOrder,
   drillValue,
   gameOf,
   hashN,
   injuryRoll,
+  madePlayoffs,
   makeRoster,
   runDraft,
   seasonSwing,
   seriesPlay,
+  playInExit,
   seriesState,
   stockOf,
   teamFit,
+  type ActiveSeason,
   type Career,
   type CareerTeam,
   type Ctx,
   type Injury,
   type Roster,
+  type SeasonRecord,
   type RosterPlayer,
 } from '../src/shared/engine/career/core';
-import { newCareer, advance, startSeason, resolveInjury, playRound, nextSeason, retire, legacyOf, careerTotals, hofProgress, retireReason } from '../src/shared/engine/career/engine';
-import { rookieDeal } from '../src/shared/engine/career/rules';
+import { newCareer, advance, finishRegular, startSeason, resolveInjury, playRound, nextSeason, retire, legacyOf, careerTotals, hofProgress, retireReason } from '../src/shared/engine/career/engine';
+import { PLAY_IN, rookieDeal } from '../src/shared/engine/career/rules';
 
 const GUARD_KEYS = [
   'jumpShot',
@@ -314,5 +319,76 @@ describe('career engine: life cycle', () => {
     const players: RosterPlayer[] = [...roster.guard, ...roster.big];
     expect(players.length).toBe(9);
     for (const p of players) expect(Number.isFinite(p.ovr)).toBe(true);
+  });
+});
+
+describe('career playoffs: the playoff bar and the conference', () => {
+  const ctx = goldenCtx();
+
+  function season82(wins: number): ActiveSeason['base'] {
+    return Array.from({ length: 82 }, (_, i) => ({
+      g: i + 1,
+      won: i < wins,
+      home: i % 2 === 0,
+      opponent: golden.teams[i % golden.teams.length] as string,
+      mySc: i < wins ? 108 : 96,
+      oppSc: i < wins ? 96 : 108,
+      pts: 20,
+      reb: 5,
+      ast: 4,
+      sat: false,
+    }));
+  }
+
+  it('gives the conference a realistic spread from the seeded standings', () => {
+    const { rows, seedNumber } = conferenceStandings(ctx, golden.teams[0] as string, 'east', 41, 'conf-a');
+    const wins = rows.map((row) => row.wins);
+    expect(rows.length).toBeGreaterThanOrEqual(12);
+    expect(Math.max(...wins)).toBeGreaterThanOrEqual(45);
+    expect(Math.min(...wins)).toBeLessThanOrEqual(33);
+    expect(rows[seedNumber - 1]?.isUs).toBe(true);
+    expect(wins.filter((count) => count >= 40).length).toBeLessThanOrEqual(11);
+  });
+
+  it('keeps a 20-62 team out of the playoff field', () => {
+    const { seedNumber } = conferenceStandings(ctx, golden.teams[0] as string, 'east', 20, 'conf-b');
+    expect(seedNumber).toBeGreaterThan(10);
+    expect(madePlayoffs(20, 1)).toBe(false);
+    expect(madePlayoffs(39, 10)).toBe(false);
+    expect(madePlayoffs(40, 11)).toBe(false);
+    expect(madePlayoffs(40, 7)).toBe(true);
+  });
+
+  it('books a 20-win season with no bracket and no playoff tag', () => {
+    const drafted = runDraft(draftCareer('bar-1', 74, [0, 0, 0]), ctx);
+    const active: ActiveSeason = {
+      k: 0,
+      base: season82(20),
+      mods: [],
+      sat: [],
+      lines: [],
+      feed: [],
+      injury: null,
+      moment: null,
+      benched: null,
+      goals: [],
+      seed: drafted.seed,
+      po: null,
+      final: null,
+      streak: null,
+    };
+    const booked = finishRegular({ ...drafted, active }, ctx);
+    const season = booked.seasons[booked.seasons.length - 1] as SeasonRecord;
+    expect(season.wins).toBe(20);
+    expect(season.losses).toBe(62);
+    expect(season.playoffs).toBe(false);
+    expect(season.rounds).toEqual([]);
+    expect(booked.active?.po ?? null).toBe(null);
+  });
+
+  it('labels a lost play-in as a play-in exit', () => {
+    expect(playInExit({ playoffs: false, rounds: [{ round: PLAY_IN, won: false }] })).toBe(true);
+    expect(playInExit({ playoffs: true, rounds: [{ round: PLAY_IN, won: true }] })).toBe(false);
+    expect(playInExit({ playoffs: false, rounds: [{ round: 'First Round', won: false }] })).toBe(false);
   });
 });

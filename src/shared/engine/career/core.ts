@@ -475,15 +475,20 @@ export function simTeam(fit: Fit, mods: { off?: number; def?: number } | null, c
   };
 }
 
+export function teamRating(team: { off: number; def: number }): number {
+  return (55 + team.off * 3.3 + (55 + team.def * 3.3)) / 200;
+}
+
 export function teamWinProb(team: { off: number; def: number }, ovr: number): number {
-  const tr = { off: 55 + team.off * 3.3, def: 55 + team.def * 3.3 };
-  const score = (tr.off + tr.def) / 200;
-  const baseWP = clamp(0.2 + ((score - 0.59) / 0.24) * 0.57, 0.13, 0.77);
+  const baseWP = clamp(0.2 + ((teamRating(team) - 0.59) / 0.24) * 0.57, 0.13, 0.77);
   const rawDelta = (ovr - 82) / 17;
   const boost = rawDelta >= 0 ? Math.min(0.2, rawDelta * 0.2) : Math.max(-0.1, rawDelta * 0.1);
   return clamp(baseWP + boost, 0.12, 0.87);
 }
 
+export function madePlayoffs(wins: number, seedNumber: number): boolean {
+  return wins >= K.PLAYOFF_WIN_BAR && seedNumber <= K.PLAYOFF_SEEDS;
+}
 export function teamSeason(seed: string, team: { off: number; def: number }, ovr: number, ctx: Ctx, teamShort: string): { games: GameLine[]; wins: number; losses: number; winProb: number } {
   const rand = seededRng(`${seed}-games`);
   const winProb = teamWinProb(team, ovr);
@@ -521,8 +526,7 @@ export function conferenceStandings(ctx: Ctx, teamShort: string, conf: 'east' | 
   const rows = ctx.teams
     .filter((t) => t.conf === conf && t.short !== teamShort)
     .map((t) => {
-      const score = (t.off + t.def) / 200;
-      const baseWP = clamp(0.2 + ((score - 0.59) / 0.24) * 0.57 + (rand() * 0.12 - 0.06), 0.13, 0.77);
+      const baseWP = clamp(0.2 + ((teamRating(t) - 0.59) / 0.24) * 0.57 + (rand() * 0.12 - 0.06), 0.13, 0.77);
       let wins = 0;
       for (let i = 0; i < K.REGULAR_GAMES; i++) if (rand() < baseWP) wins++;
       return { short: t.short, wins, isUs: false };
@@ -532,6 +536,10 @@ export function conferenceStandings(ctx: Ctx, teamShort: string, conf: 'east' | 
   return { rows, seedNumber: rows.findIndex((r) => r.isUs) + 1 };
 }
 
+export function playInExit(season: { playoffs: boolean; rounds: { round: string; won: boolean }[] }): boolean {
+  const first = season.rounds[0];
+  return !season.playoffs && !!first && first.round === K.PLAY_IN && !first.won;
+}
 export function drillValue(id: K.DrillId, v: number, score: number, raw: { made?: number; of?: number; secs?: number; reps?: number; inches?: number } | null, pos: Position): { text: string; pct: number } {
   const t = clamp(v, 0, 11) / 11;
   const run = score - 0.6;
