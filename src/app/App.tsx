@@ -1,64 +1,52 @@
 import { Component, type ComponentChildren } from 'preact';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { loadCatalog, type Catalog } from '../shared/data/loader';
 import { loadMomentBank, type MomentBank } from '../shared/data/moments';
 import type { DailyPlan } from '../shared/engine/daily';
-import { mulberry32, randomSeed } from '../shared/engine/rng';
-import { rollStats, seasonHeadline, simulateSeason, startSeason, finalizeDraft, chooseMoment, passStop, type SeasonDraft } from '../shared/engine/season';
-import { squadSeason, squadStarters, squadStrength, honorsFor } from '../shared/engine/squad';
+import { randomSeed } from '../shared/engine/rng';
 import {
-  SAL_COLUMNS,
-  budgetForDateStr,
-  budgetForSeed,
-  buildFromCards,
-  dailyGrid,
-  infiniteGrid,
-  previewFor,
-  salaryPool,
-  spentFor,
-  teamForSeed,
-} from '../shared/engine/salary';
-import type { Build, Era, MomentCard, Position } from '../shared/engine/types';
-import { generateSecret, normalizeCode } from '../shared/mp/codes';
-import { DEFAULT_REVEAL_SECONDS, type LobbySettings } from '../shared/mp/types';
-import {
-  bumpInfinite,
-  cardSummary,
-  dailyDay,
-  newSquadState,
-  planForToday,
-  readSalary,
-  readSquad,
-  saveDailyDay,
-  saveSalaryPlay,
-  saveSquad,
-  type DailyDay,
-  type SquadState,
-} from '../shared/modes';
+  chooseMoment,
+  finalizeDraft,
+  passStop,
+  startSeason,
+  type SeasonDraft,
+} from '../shared/engine/season';
+import type { Era, MomentCard, Position } from '../shared/engine/types';
+import { dailyDay, planForToday, saveDailyDay, type DailyDay } from '../shared/modes';
 import { clearRun, loadRun, saveRun } from '../shared/persistence';
 import { createRun, type RunState } from '../shared/run';
-import { createLobbyRequest, joinLobbyRequest } from './mp/api';
-import { loadMpSession, saveMpSession, type MpSession } from './mp/session';
+import { LazyScreen } from './lazy';
+import type { MpEntry } from './modes/LobbyMode';
+import type { MpSession } from './mp/session';
 import { pickMoment } from './momentFlow';
 import { readMomentsOff, recentMoments, rememberMoment, writeMomentsOff } from './prefs';
 import { Builder } from './screens/Builder';
-import { Daily } from './screens/Daily';
 import { End } from './screens/End';
 import { Home } from './screens/Home';
-import { Lobby } from './screens/Lobby';
 import { Playoffs } from './screens/Playoffs';
-import { Salary, type SalaryOutcome } from './screens/Salary';
-import { Squad, type SquadOutcome } from './screens/Squad';
 import { Season } from './screens/Season';
 import { TeamSpin } from './screens/TeamSpin';
 
-const MP_DEFAULT_SETTINGS: LobbySettings = {
-  era: 'current',
-  positions: ['guard', 'big'],
-  revealSeconds: DEFAULT_REVEAL_SECONDS,
-};
+const loadDaily = () => import('./screens/Daily').then((module) => module.Daily);
+const loadSalary = () => import('./modes/SalaryMode').then((module) => module.SalaryMode);
+const loadSquad = () => import('./modes/SquadMode').then((module) => module.SquadMode);
+const loadLobby = () => import('./modes/LobbyMode').then((module) => module.LobbyMode);
 
-type Flow = 'classic' | 'daily' | 'squad';
+type Flow = 'classic' | 'daily' | 'squad' | 'salary';
+
+function savedMpEntry(): MpEntry | null {
+  try {
+    const raw = localStorage.getItem('bab:mp:v1');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { v?: unknown; code?: unknown; secret?: unknown; name?: unknown };
+    if (parsed?.v !== 1) return null;
+    if (typeof parsed.code !== 'string' || typeof parsed.secret !== 'string' || typeof parsed.name !== 'string') return null;
+    const session: MpSession = { v: 1, code: parsed.code, secret: parsed.secret, name: parsed.name };
+    return { kind: 'resume', session };
+  } catch {
+    return null;
+  }
+}
 
 class ErrorBoundary extends Component<{ children: ComponentChildren }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -84,12 +72,6 @@ class ErrorBoundary extends Component<{ children: ComponentChildren }, { error: 
   }
 }
 
-function picksFromValues(values: Record<string, number>, team: string): Build['picks'] {
-  return Object.fromEntries(
-    Object.entries(values).map(([attr, val]) => [attr, { attr, val, playerName: 'Salary Cap', playerShort: 'CAP', team }]),
-  );
-}
-
 export function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -97,21 +79,14 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [momentsOff, setMomentsOff] = useState(() => readMomentsOff());
-  const [mp, setMp] = useState<MpSession | null>(() => loadMpSession());
+  const [mpEntry, setMpEntry] = useState<MpEntry | null>(() => savedMpEntry());
   const [mpNotice, setMpNotice] = useState<string | null>(null);
-  const [mpBusy, setMpBusy] = useState(false);
   const bank = useRef<MomentBank | null>(null);
 
   const [flow, setFlow] = useState<Flow>('classic');
   const [plan] = useState<DailyPlan>(() => planForToday());
   const [daily, setDaily] = useState<DailyDay | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
-  const [squad, setSquad] = useState<SquadState | null>(null);
-  const [squadSlot, setSquadSlot] = useState<string | null>(null);
-  const [squadOutcome, setSquadOutcome] = useState<SquadOutcome | null>(null);
-  const [salary, setSalary] = useState<{ mode: 'daily' | 'infinite'; seed: number } | null>(null);
-  const [salaryNotice, setSalaryNotice] = useState<string | null>(null);
-  const [salaryPlay, setSalaryPlay] = useState<SalaryOutcome | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -138,11 +113,6 @@ export function App() {
     const today = dailyDay(plan.key);
     setDaily(today);
     if (today.run && !today.done) setFlow('daily');
-    const savedSquad = readSquad();
-    if (savedSquad) {
-      setSquad(savedSquad);
-      setSquadOutcome((savedSquad.result as SquadOutcome | null) ?? null);
-    }
   }, [plan.key]);
 
   const commit = useCallback((next: RunState) => {
@@ -155,41 +125,6 @@ export function App() {
     setMpNotice(null);
     setFlow('classic');
     commit(createRun(randomSeed(), position, era));
-  };
-
-  const enterLobby = (code: string, secret: string, name: string) => {
-    const session: MpSession = { v: 1, code, secret, name };
-    saveMpSession(session);
-    setMpNotice(null);
-    setMp(session);
-  };
-
-  const createLobby = async (name: string) => {
-    setMpBusy(true);
-    setMpNotice(null);
-    const secret = generateSecret();
-    try {
-      const view = await createLobbyRequest(name, secret, MP_DEFAULT_SETTINGS);
-      enterLobby(view.code, secret, name);
-    } catch (error) {
-      setMpNotice(error instanceof Error ? error.message : 'Could not create a lobby.');
-    } finally {
-      setMpBusy(false);
-    }
-  };
-
-  const joinLobby = async (name: string, code: string) => {
-    setMpBusy(true);
-    setMpNotice(null);
-    const secret = generateSecret();
-    try {
-      const view = await joinLobbyRequest(normalizeCode(code), name, secret);
-      enterLobby(view.code, secret, name);
-    } catch (error) {
-      setMpNotice(error instanceof Error ? error.message : 'Could not join that lobby.');
-    } finally {
-      setMpBusy(false);
-    }
   };
 
   const advanceDraft = (start: SeasonDraft, source: RunState, catalogRef: Catalog): { draft: SeasonDraft; card: MomentCard | null } => {
@@ -289,133 +224,6 @@ export function App() {
     }
     setConfirmLeave(false);
     setFlow('classic');
-  };
-
-  const openSquad = () => {
-    const state = squad ?? newSquadState(randomSeed());
-    if (!squad) saveSquad(state);
-    setSquad(state);
-    setSquadSlot(null);
-    setFlow('squad');
-  };
-
-  const putSquad = (next: SquadState) => {
-    saveSquad(next);
-    setSquad(next);
-  };
-
-  const buildSlot = (slotId: string) => {
-    if (!squad) return;
-    const slot = squad.slots.find((entry) => entry.id === slotId);
-    if (!slot) return;
-    const next = createRun(randomSeed(), slot.pos, 'current');
-    putSquad({ ...squad, slots: squad.slots.map((entry) => (entry.id === slotId ? { ...entry, run: next } : entry)), result: null });
-    setSquadOutcome(null);
-    setSquadSlot(slotId);
-  };
-
-  const commitSlot = (next: RunState) => {
-    if (!squad || !squadSlot) return;
-    putSquad({ ...squad, slots: squad.slots.map((entry) => (entry.id === squadSlot ? { ...entry, run: next } : entry)) });
-  };
-
-  const closeSlot = (keep: boolean) => {
-    if (!squad || !squadSlot) return;
-    if (!keep) {
-      putSquad({
-        ...squad,
-        slots: squad.slots.map((entry) => (entry.id === squadSlot ? { ...entry, run: null } : entry)),
-      });
-    }
-    setSquadSlot(null);
-  };
-
-  const dropSlot = (slotId: string) => {
-    if (!squad) return;
-    putSquad({
-      ...squad,
-      slots: squad.slots.map((entry) => (entry.id === slotId ? { ...entry, run: null } : entry)),
-      result: null,
-    });
-    setSquadOutcome(null);
-  };
-
-  const simulateSquad = () => {
-    if (!squad || !catalog || !squad.team) return;
-    const builds = squad.slots
-      .filter((slot) => slot.run)
-      .map((slot) => ({
-        pos: slot.pos,
-        values: Object.fromEntries(Object.entries(slot.run?.picks ?? {}).map(([attr, pick]) => [attr, pick.val])),
-      }));
-    const starters = squadStarters(squad.team, catalog.currentGuards, catalog.currentBigs);
-    const strength = squadStrength(squad.team, starters, builds);
-    const seasonNumber = squad.season + 1;
-    const season = squadSeason(`${squad.seed}-season-${seasonNumber}`, squad.team, strength);
-    const lines = squad.slots
-      .filter((slot) => slot.run)
-      .map((slot, index) => {
-        const rolled = rollStats(builds[index]?.values ?? {}, slot.pos, mulberry32(0));
-        return { id: slot.id, ppg: rolled.ppg, rpg: rolled.rpg, apg: rolled.apg, spg: rolled.spg, bpg: rolled.bpg };
-      });
-    const outcome: SquadOutcome = { strength, season, honors: honorsFor(lines, season.wins), lines };
-    putSquad({ ...squad, season: seasonNumber, result: outcome });
-    setSquadOutcome(outcome);
-  };
-
-  const openSalary = (mode: 'daily' | 'infinite') => {
-    const seed = mode === 'daily' ? Number(plan.key.replace(/-/g, '')) : Math.floor(Math.random() * 0x7fffffff);
-    setSalary({ mode, seed });
-    setSalaryNotice(null);
-    if (mode === 'daily') {
-      const saved = readSalary().daily[plan.key] ?? null;
-      setSalaryPlay(saved ? { ...saved, locked: true, dateStr: plan.key } : null);
-    } else {
-      setSalaryPlay(null);
-    }
-  };
-
-  const salaryPoolPlayers = useMemo(
-    () => (catalog ? salaryPool(catalog.currentGuards, catalog.currentBigs, catalog.salaryLegends) : []),
-    [catalog],
-  );
-
-  const salaryGrid = useMemo(() => {
-    if (!salary || !salaryPoolPlayers.length) return null;
-    return salary.mode === 'daily' ? dailyGrid(SAL_COLUMNS, salaryPoolPlayers, plan.key) : infiniteGrid(SAL_COLUMNS, salaryPoolPlayers, salary.seed);
-  }, [salary, salaryPoolPlayers, plan.key]);
-
-  const salaryCap = salary ? (salary.mode === 'daily' ? budgetForDateStr(plan.key) : budgetForSeed(salary.seed)) : 0;
-
-  const confirmSalary = (cards: Parameters<typeof spentFor>[0]) => {
-    if (!catalog || !salary) return;
-    const { position, values } = buildFromCards(cards);
-    const team = teamForSeed(salary.seed, catalog.teams.map((entry) => entry.short));
-    const rand = mulberry32(salary.seed);
-    const season = simulateSeason({
-      build: { position, era: 'current', picks: picksFromValues(values, team) },
-      team,
-      playerName: 'YOU',
-      rng: rand,
-      displayRng: rand,
-    });
-    const outcome: SalaryOutcome = {
-      dateStr: salary.mode === 'daily' ? plan.key : `SEED ${salary.seed}`,
-      cap: salaryCap,
-      spent: spentFor(cards),
-      ovr: season.ovr,
-      wins: season.wins,
-      losses: season.losses,
-      seed: salary.seed,
-      champion: season.champion,
-      madePlayoffs: season.madePlayoffs,
-      headline: seasonHeadline(season),
-      preview: previewFor(cards),
-      locked: salary.mode === 'daily',
-    };
-    setSalaryPlay(outcome);
-    if (salary.mode === 'daily') saveSalaryPlay(plan.key, { ...outcome, picks: cardSummary(cards) });
-    else bumpInfinite();
   };
 
   const dailyDone = flow === 'daily' && daily?.run?.screen === 'end' && Boolean(daily.run.season);
@@ -526,85 +334,31 @@ export function App() {
       const day = daily ?? dailyDay(plan.key);
       if (day.done || !day.run) {
         return (
-          <Daily plan={plan} day={day} catalog={catalog} onPlay={startDaily} onExit={() => setFlow('classic')} />
+          <LazyScreen
+            load={loadDaily}
+            screenProps={{ plan, day, catalog, onPlay: startDaily, onExit: () => setFlow('classic') }}
+          />
         );
       }
       return renderRun(day.run, commitDaily, () => setConfirmLeave(true), <>{dailyStrip}{dailyConfirm}</>, () => void simulateFor(day.run as RunState, commitDaily));
     }
-    if (flow === 'squad' && squad) {
-      if (squadSlot) {
-        const slot = squad.slots.find((entry) => entry.id === squadSlot);
-        if (slot?.run) {
-          return (
-            <Builder
-              run={slot.run}
-              catalog={catalog}
-              onChange={commitSlot}
-              onBack={() => closeSlot(false)}
-              completeLabel="Add to squad"
-              onComplete={() => closeSlot(true)}
-              header={
-                <div class="daily-strip" data-testid="squad-strip">
-                  <span class="ticker-dot" />
-                  <span class="tiny">SQUAD · {slot.id} · {slot.pos.toUpperCase()}</span>
-                </div>
-              }
-            />
-          );
-        }
-      }
-      return (
-        <Squad
-          squad={squad}
-          catalog={catalog}
-          starters={squad.team ? squadStarters(squad.team, catalog.currentGuards, catalog.currentBigs) : []}
-          outcome={squadOutcome}
-          onBuildSlot={buildSlot}
-          onDropSlot={dropSlot}
-          onPickTeam={(team) => putSquad({ ...squad, team })}
-          onSimulate={simulateSquad}
-          onReset={() => {
-            const fresh = newSquadState(randomSeed());
-            putSquad(fresh);
-            setSquadOutcome(null);
-          }}
-          onExit={() => {
-            setFlow('classic');
-            setSquadSlot(null);
-          }}
-        />
-      );
+    if (flow === 'squad') {
+      return <LazyScreen load={loadSquad} screenProps={{ catalog, onExit: () => setFlow('classic') }} />;
     }
-    if (salary && salaryGrid) {
-      return (
-        <Salary
-          mode={salary.mode}
-          dateStr={salary.mode === 'daily' ? plan.key : `#${salary.seed}`}
-          cap={salaryCap}
-          grid={salaryGrid}
-          play={salaryPlay}
-          notice={salaryNotice}
-          onToggleMode={() => openSalary(salary.mode === 'daily' ? 'infinite' : 'daily')}
-          onConfirm={confirmSalary}
-          onExit={() => {
-            setSalary(null);
-            setSalaryNotice(null);
-          }}
-        />
-      );
+    if (flow === 'salary') {
+      return <LazyScreen load={loadSalary} screenProps={{ catalog, plan, onExit: () => setFlow('classic') }} />;
     }
     if (!run) {
       return (
         <Home
           onStart={start}
-          onCreateLobby={(name) => void createLobby(name)}
-          onJoinLobby={(name, code) => void joinLobby(name, code)}
+          onCreateLobby={(name) => setMpEntry({ kind: 'create', name, code: '' })}
+          onJoinLobby={(name, code) => setMpEntry({ kind: 'join', name, code })}
           notice={notice}
           mpNotice={mpNotice}
-          mpBusy={mpBusy}
           onDaily={openDaily}
-          onSalary={() => openSalary('daily')}
-          onSquad={openSquad}
+          onSalary={() => setFlow('salary')}
+          onSquad={() => setFlow('squad')}
           dailyLabel={`${plan.pos.toUpperCase()} · ${plan.mode === 'all-time' ? 'ALL-TIME' : 'CURRENT'}${daily?.done ? (daily.forfeit ? ' · left today' : ` · ${daily.ovr} OVR`) : ''}`}
           dailyStatus={plan.key}
         />
@@ -625,13 +379,16 @@ export function App() {
   return (
     <div class="app">
       <ErrorBoundary>
-        {mp ? (
-          <Lobby
-            session={mp}
-            catalog={catalog}
-            onExit={(message) => {
-              setMp(null);
-              if (message) setMpNotice(message);
+        {mpEntry ? (
+          <LazyScreen
+            load={loadLobby}
+            screenProps={{
+              catalog,
+              initial: mpEntry,
+              onExit: (message: string | null) => {
+                setMpEntry(null);
+                if (message) setMpNotice(message);
+              },
             }}
           />
         ) : (

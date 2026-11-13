@@ -1,7 +1,7 @@
 import type { Catalog } from '../../shared/data/loader';
 import { SQUAD_SLOTS, type SquadSeasonResult, type SquadStarter, type SquadStrength } from '../../shared/engine/squad';
 import { ovrFromValues } from '../../shared/engine/ovr';
-import type { SquadState } from '../../shared/modes';
+import type { SquadState } from '../../shared/squadStore';
 import { TopBar } from '../components';
 
 export interface SquadOutcome {

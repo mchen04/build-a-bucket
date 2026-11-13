@@ -14,7 +14,6 @@ interface Props {
   onJoinLobby: (name: string, code: string) => void;
   notice: string | null;
   mpNotice: string | null;
-  mpBusy: boolean;
   onDaily: () => void;
   onSalary: () => void;
   onSquad: () => void;
@@ -114,10 +113,10 @@ export function Home(props: Props) {
             <button
               class="btn btn-ghost btn-small"
               data-testid="create-lobby"
-              disabled={!named || props.mpBusy}
+              disabled={!named}
               onClick={() => props.onCreateLobby(name.trim())}
             >
-              {props.mpBusy ? 'Working…' : 'Create lobby'}
+              Create lobby
             </button>
             <input
               class="field code"
@@ -132,7 +131,7 @@ export function Home(props: Props) {
             <button
               class="btn btn-ghost btn-small"
               data-testid="join-lobby"
-              disabled={!named || !codeReady || props.mpBusy}
+              disabled={!named || !codeReady}
               onClick={() => props.onJoinLobby(name.trim(), code.trim())}
             >
               Join
