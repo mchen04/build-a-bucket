@@ -1,7 +1,13 @@
 import { neon } from '@neondatabase/serverless';
 
+export interface BatchQuery {
+  text: string;
+  params: unknown[];
+}
+
 export interface QueryRunner {
   query<Row>(text: string, params?: unknown[]): Promise<Row[]>;
+  batch(queries: BatchQuery[]): Promise<void>;
 }
 
 let runner: QueryRunner | null = null;
@@ -19,6 +25,10 @@ export function db(): QueryRunner {
       async query<Row>(text: string, params: unknown[] = []): Promise<Row[]> {
         const rows = await client.query(text, params);
         return rows as unknown as Row[];
+      },
+      async batch(queries: BatchQuery[]): Promise<void> {
+        if (!queries.length) return;
+        await client.transaction((txn) => queries.map((entry) => txn.query(entry.text, entry.params)));
       },
     };
   }

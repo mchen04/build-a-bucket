@@ -659,3 +659,31 @@ describe('seat maths', () => {
     expect(taken.length).toBe(7);
   });
 });
+
+describe('database round trips', () => {
+  it('syncs a draft in a handful of requests instead of three maintenance statements', async () => {
+    await loadCatalog();
+    const lobby = await newLobby('Round Trips');
+    await join(lobby.code, 'Guest');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const real = globalThis.fetch;
+    const requests: string[] = [];
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      return real(input, init);
+    }) as typeof fetch;
+    let status = 0;
+    try {
+      const response = await buildHandler(
+        authed(lobby.host.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft }),
+      );
+      status = response.status;
+    } finally {
+      globalThis.fetch = real;
+    }
+    expect(status).toBe(200);
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.length).toBeLessThanOrEqual(4);
+  });
+});

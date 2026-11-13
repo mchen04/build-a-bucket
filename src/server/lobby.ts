@@ -430,11 +430,16 @@ where l.code = $1 and l.phase = 'playoffs' and l.playoffs_started_at is not null
   and l.playoffs_started_at + make_interval(secs => coalesce((l.settings->>'revealSeconds')::int, 5) * $2::int) < now()
 `;
 
+export function maintenancePlan(code: string): { text: string; params: unknown[] }[] {
+  return [
+    { text: HOST_SQL, params: [code, Math.floor(HOST_IDLE_MS / 1000)] },
+    { text: BARRIER_SQL, params: [code, Math.floor(AWAY_MS / 1000)] },
+    { text: FINISH_SQL, params: [code, MAX_ROUNDS - 1] },
+  ];
+}
+
 async function maintain(code: string): Promise<void> {
-  const sql = db();
-  await sql.query(HOST_SQL, [code, Math.floor(HOST_IDLE_MS / 1000)]);
-  await sql.query(BARRIER_SQL, [code, Math.floor(AWAY_MS / 1000)]);
-  await sql.query(FINISH_SQL, [code, MAX_ROUNDS - 1]);
+  await db().batch(maintenancePlan(code));
 }
 
 function needsMaintenance(row: ReadRow, now: number): boolean {
@@ -820,7 +825,6 @@ export async function syncDraft(input: {
   try {
     const written = await writeBuild({ ...input, status: 'building', season: null });
     if (!written.ok) return written;
-    await maintain(input.code);
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
     return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
@@ -854,7 +858,6 @@ export async function submitBuild(input: {
     const status: ParticipantStatus = season.madePlayoffs ? 'qualified' : 'eliminated';
     const written = await writeBuild({ ...input, status, season });
     if (!written.ok) return written;
-    await maintain(input.code);
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
     return { ok: false, status: 503, error: { error: errorMessage(error), reason: 'server' } };
@@ -915,7 +918,6 @@ export async function leaveLobby(input: { code: string; secret: string; actionId
     if (!row.me_id) {
       return { ok: false, status: 404, error: { error: 'You are not in this lobby.', reason: 'not_found' } };
     }
-    await maintain(input.code);
     const outcome = await readLobby({ code: input.code, secret: input.secret });
     return outcome.ok ? outcome : { ok: true, view: null };
   } catch (error) {
