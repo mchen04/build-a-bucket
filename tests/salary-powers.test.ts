@@ -43,6 +43,24 @@ function grid(): SalCard[][] {
   return SAL_COLUMNS.map((_, columnIndex) => PRICES.map((_, tier) => card(columnIndex, tier)));
 }
 
+function bigCard(columnIndex: number, tier: number): SalCard {
+  const column = SAL_COLUMNS[columnIndex]!;
+  const attrs = Object.fromEntries(column.bigTypes.map((type, index) => [type, 4 + index + tier]));
+  const fullAttrs = Object.fromEntries(ALL_ATTRS.map((key, index) => [key, 3 + ((index + tier + columnIndex) % 10)]));
+  return {
+    id: `${column.key}-${PRICES[tier]}-Big ${columnIndex}-${tier}`,
+    name: `Big ${columnIndex}-${tier}`,
+    team: 'TST',
+    number: null,
+    price: PRICES[tier]!,
+    legend: false,
+    attrs,
+    fullAttrs,
+    catScore: column.bigTypes.reduce((sum, type) => sum + (attrs[type] ?? 5), 0) / column.bigTypes.length,
+    posGroup: 'big',
+  };
+}
+
 function seeded(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -82,6 +100,27 @@ describe('salary powers', () => {
       for (const type of types) expect(entry.attrs[type]).toBe(entry.fullAttrs[type] ?? 5);
     });
     expect(after[0]![0]!.name).toBe(before[0]![0]!.name);
+  });
+
+  it('deranges a row of big cards and shows the big attributes of the new column', () => {
+    const before = grid();
+    const big = bigCard(0, 1);
+    before[0]![1] = big;
+    const after = shuffleRow(before, 1, seeded(3));
+    const columnIndex = after.findIndex((column) => column[1]!.name === big.name);
+    expect(columnIndex).toBeGreaterThan(0);
+    const entry = after[columnIndex]![1]!;
+    const types = SAL_COLUMNS[columnIndex]!.bigTypes;
+    expect(Object.keys(entry.attrs).sort()).toEqual([...types].sort());
+    for (const type of types) expect(entry.attrs[type]).toBe(entry.fullAttrs[type] ?? 5);
+    expect(entry.id).toBe(`${SAL_COLUMNS[columnIndex]!.key}-${PRICES[1]}-${big.name}`);
+  });
+
+  it('takes the position from the size-column pick', () => {
+    const cards = SAL_COLUMNS.map((_, index) => card(index, 0));
+    expect(buildFromCards(cards).position).toBe('guard');
+    const bigSize = { ...cards[4]!, posGroup: 'big' as const };
+    expect(buildFromCards([...cards.slice(0, 4), bigSize]).position).toBe('big');
   });
 
   it('scouts the mean of the shown attributes on the player grade scale', () => {

@@ -190,6 +190,7 @@ export function Salary(props: Props) {
                     class={`sc-cell${on ? ' on' : ''}${card.legend ? ' legend' : ''}${props.scoutMode ? ' scouting' : ''}`}
                     key={`${column.key}-${tier}`}
                     data-testid={`salary-${column.key}-${tier}`}
+                    data-attrs={JSON.stringify(card.attrs)}
                     aria-pressed={on}
                     onClick={() => choose(columnIndex, card)}
                   >

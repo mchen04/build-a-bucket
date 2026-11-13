@@ -1,6 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { shotDir } from './shots';
 import { expect, test, type Page } from '@playwright/test';
+import { previewFor, type SalCard } from '../src/shared/engine/salary';
 
 const SHOTS = shotDir('modes');
 const GUARD_KEYS = [
@@ -212,6 +213,11 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
   await expect(page.getByTestId('salary-grid')).toBeVisible();
 
   const columns = ['finishing', 'shooting', 'defense', 'playmaking', 'size'];
+  const shootingNames = () => page.locator('[data-testid^="salary-shooting-"] .sc-name').allTextContents();
+  const before = await shootingNames();
+  await page.getByTestId('salary-shooting-2').click();
+  await expect(page.getByTestId('salary-shooting-2')).toHaveAttribute('aria-pressed', 'true');
+
   await page.getByTestId('salary-powers').click();
   await expect(page.getByTestId('salary-powers-menu')).toBeVisible();
   await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('1');
@@ -229,6 +235,10 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
   await expect(page.getByTestId('salary-shuffle-column-shooting')).toBeVisible();
   await page.getByTestId('salary-shuffle-column-shooting').click();
   await expect(page.getByTestId('salary-shuffle-column-shooting')).toHaveCount(0);
+  const after = await shootingNames();
+  expect(after).not.toEqual(before);
+  expect([...after].sort()).toEqual([...before].sort());
+  await expect(page.getByTestId('salary-shooting-2')).toHaveAttribute('aria-pressed', 'false');
   await page.getByTestId('salary-powers').click();
   await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('0');
   await expect(page.getByTestId('salary-power-shuffle')).toBeDisabled();
@@ -236,6 +246,7 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
   await page.reload();
   await page.getByTestId('home-salary').click();
   await expect(page.getByTestId('salary-grid')).toBeVisible();
+  expect(await shootingNames()).toEqual(after);
   await page.getByTestId('salary-powers').click();
   await expect(page.getByTestId('salary-power-shuffle-badge')).toHaveText('0');
   await expect(page.getByTestId('salary-power-shuffle')).toBeDisabled();
@@ -257,9 +268,20 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
   await page.getByTestId('salary-powers').click();
   await expect(page.getByTestId('salary-power-scout-badge')).toHaveText('0');
 
-  for (const column of columns) await page.locator(`[data-testid^="salary-${column}-"]`).nth(4).click();
+  const picked: SalCard[] = [];
+  for (const column of columns) {
+    const cell = page.locator(`[data-testid^="salary-${column}-"]`).nth(4);
+    await cell.click();
+    picked.push({ attrs: JSON.parse((await cell.getAttribute('data-attrs')) ?? '{}') } as SalCard);
+  }
+  const spent = ((await page.getByTestId('salary-cap').locator('.sc-spent').textContent()) ?? '').trim();
+  const expected = previewFor(picked);
   await page.getByTestId('salary-confirm').click();
   await expect(page.getByTestId('salary-result')).toContainText('OVR');
+  await expect(page.getByTestId('salary-result')).toContainText(spent);
+  await expect(page.getByTestId('salary-result')).toContainText(
+    `PREVIEW ${expected.ppg} PPG · ${expected.rpg} RPG · ${expected.apg} APG`,
+  );
   await shot(page, 'salary-powers');
 
   await page.getByTestId('salary-mode').click();
