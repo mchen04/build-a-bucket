@@ -1,5 +1,5 @@
-import { seededShuffle, weightedShuffle } from './rng';
-import type { Player } from './types';
+import { seededShuffle, weightedShuffle } from './rng.js';
+import type { Player } from './types.js';
 
 export interface SpinTarget {
   team: string;

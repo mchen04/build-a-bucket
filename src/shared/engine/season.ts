@@ -712,13 +712,17 @@ export function finalizeDraft(draft: SeasonDraft, options: { playerName: string;
 
   const awardScore = (points: number, assists: number, boards: number) => points + assists * 1.5 + boards * 0.75;
   const playerScore = awardScore(ppg, apg, rpg);
-  const benchmarks = (allTime ? MVP_BENCHMARKS_ALLTIME : MVP_BENCHMARKS_CURRENT).map(([pMin, pSpan, aMin, aSpan, rMin, rSpan]) =>
-    awardScore(
-      (pMin as number) + rng() * (pSpan as number),
-      (aMin as number) + rng() * (aSpan as number),
-      (rMin as number) + rng() * (rSpan as number),
-    ),
-  );
+  const drawBenchmarks = (list: readonly (readonly number[])[]) =>
+    list.map(([pMin, pSpan, aMin, aSpan, rMin, rSpan]) =>
+      awardScore(
+        (pMin as number) + rng() * (pSpan as number),
+        (aMin as number) + rng() * (aSpan as number),
+        (rMin as number) + rng() * (rSpan as number),
+      ),
+    );
+  const benchmarksCurrent = drawBenchmarks(MVP_BENCHMARKS_CURRENT);
+  const benchmarksAllTime = drawBenchmarks(MVP_BENCHMARKS_ALLTIME);
+  const benchmarks = allTime ? benchmarksAllTime : benchmarksCurrent;
   const mvp = madePlayoffs && playerScore > Math.max(...benchmarks);
   const dpoyScore = rolled.spg * 10 + rolled.bpg * 8 + (seed <= 4 ? 4 : seed <= 8 ? 2 : 0);
   const dpoyThreshold = 26 + rng() * 10;

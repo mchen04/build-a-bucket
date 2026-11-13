@@ -1,5 +1,6 @@
 import type { Player, Position } from './types.js';
 import { hashRng, teamPickHash, type Rng } from './rng.js';
+import fixedGrids from './salaryFixed.json' with { type: 'json' };
 
 export interface SalColumn {
   key: string;
@@ -47,7 +48,37 @@ const FIXED_BUDGETS: Record<string, number> = {
   '2026-07-15': 140,
   '2026-07-16': 150,
   '2026-07-17': 140,
+  '2026-07-18': 150,
 };
+
+interface FixedCard {
+  id: string;
+  name: string;
+  team: string;
+  number?: number;
+  price: number;
+  position: string;
+  attrs: Record<string, number>;
+}
+
+const FIXED_GRIDS = fixedGrids as Record<string, FixedCard[][]>;
+
+function fixedSalCard(card: FixedCard): SalCard {
+  const attrs = card.attrs ?? {};
+  const value = Object.values(attrs)[0] ?? 0;
+  return {
+    id: card.id,
+    name: card.name,
+    team: card.team,
+    number: card.number ?? null,
+    price: card.price,
+    legend: false,
+    attrs,
+    fullAttrs: attrs,
+    catScore: value,
+    posGroup: card.position === 'PF' || card.position === 'C' ? 'big' : 'guard',
+  };
+}
 
 export function dateSeedOf(dateStr: string): number {
   const [year, month, day] = dateStr.split('-').map(Number);
@@ -259,6 +290,8 @@ export function dailyGrid(
   players: (Player & { posGroup?: string; legend?: boolean })[],
   dateStr: string,
 ): SalCard[][] {
+  const fixed = FIXED_GRIDS[dateStr.replace(/-/g, '')];
+  if (fixed) return fixed.map((column) => column.map(fixedSalCard));
   const recent = pickedNamesForSeed(yesterdaySeedOf(dateStr), columns, players);
   const seed = dateSeedOf(dateStr);
   return generateGrid(columns, players, hashRng(seed), recent, seed);
