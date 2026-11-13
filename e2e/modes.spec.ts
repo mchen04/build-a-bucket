@@ -63,6 +63,7 @@ async function spinAndPick(page: Page): Promise<void> {
 async function finishSeason(page: Page): Promise<void> {
   for (let guard = 0; guard < 8; guard++) {
     const card = page.locator('[data-testid="moment-card"]');
+    await expect(card.or(page.locator('.award').first())).toBeVisible({ timeout: 30_000 });
     if (!(await card.isVisible().catch(() => false))) break;
     await card.locator('button').first().click();
     await page.waitForTimeout(200);
@@ -145,6 +146,8 @@ test('daily challenge plays to its end state, resumes after reload and locks the
   await expect(page.getByText('Record')).toBeVisible();
   await finishSeason(page);
   await advanceToEnd(page);
+  await page.waitForTimeout(500);
+  await expect(page.locator('[data-testid="ovr"]')).toBeVisible();
   await expect(page.locator('.banner h1')).toHaveText(
     /NBA CHAMPIONS|LOST THE|OUT IN THE|MADE THE PLAYOFFS|MISSED THE PLAYOFFS/,
   );

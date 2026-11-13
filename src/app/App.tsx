@@ -104,6 +104,7 @@ export function App() {
   const [plan] = useState<DailyPlan>(() => planForToday());
   const [daily, setDaily] = useState<DailyDay | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [dailyPlaying, setDailyPlaying] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -129,7 +130,10 @@ export function App() {
     }
     const today = dailyDay(plan.key);
     setDaily(today);
-    if (today.run && !today.done) setFlow('daily');
+    if (today.run && !today.done) {
+      setFlow('daily');
+      setDailyPlaying(true);
+    }
   }, [plan.key]);
 
   const commit = useCallback((next: RunState) => {
@@ -210,6 +214,7 @@ export function App() {
     const day = daily ?? dailyDay(plan.key);
     setDaily(day);
     setConfirmLeave(false);
+    setDailyPlaying(false);
     setFlow('daily');
   };
 
@@ -222,6 +227,7 @@ export function App() {
     saveDailyDay(saved);
     setDaily(saved);
     setConfirmLeave(false);
+    setDailyPlaying(true);
     setFlow('daily');
   };
 
@@ -240,6 +246,7 @@ export function App() {
       setDaily(saved);
     }
     setConfirmLeave(false);
+    setDailyPlaying(false);
     setFlow('classic');
   };
 
@@ -349,7 +356,7 @@ export function App() {
   const body = () => {
     if (flow === 'daily') {
       const day = daily ?? dailyDay(plan.key);
-      if (day.done || !day.run) {
+      if (!day.run || (day.done && !dailyPlaying)) {
         return (
           <LazyScreen
             load={loadDaily}
