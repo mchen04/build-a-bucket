@@ -486,7 +486,6 @@ function healDurability(c: C.Career): { durability: number; durBase: number } {
   return d >= base ? { durBase: base, durability: d } : { durBase: base, durability: C.r10(d + (base - d) * (c.age >= fadeAt ? 0.4 : 0.65)) };
 }
 
-// ── Offseason ────────────────────────────────────────────────────────────────
 function careerDrift(c: C.Career, ctx: C.Ctx, r: Rng): Record<string, { off: number; def: number }> {
   const keep = 0.7;
   const swing = Math.sqrt(1 - keep * keep);

@@ -316,7 +316,6 @@ export interface Ctx {
   birth: Record<string, number> | null;
 }
 
-// ── Teams ────────────────────────────────────────────────────────────────────
 export function careerTeams(catalogTeams: Team[], ratings: Record<string, { off: number; def: number }>, east: Set<string>): CareerTeam[] {
   return catalogTeams.map((team) => {
     const r = ratings[team.short] ?? { off: 68, def: 65 };
@@ -343,7 +342,6 @@ const avgOvr = (list: { ovr: number }[]) => {
   return values.length ? values.reduce((s, x) => s + x, 0) / values.length : 72;
 };
 
-// ── Rosters ──────────────────────────────────────────────────────────────────
 export const RETIRE_AT: Record<string, number> = { guard: 38, big: 38 };
 export const KEEP: Record<Position, number> = { guard: 5, big: 4 };
 export const STARTERS: Record<Position, number> = { guard: 3, big: 2 };
@@ -477,7 +475,6 @@ export function simTeam(fit: Fit, mods: { off?: number; def?: number } | null, c
   };
 }
 
-// ── Team season ──────────────────────────────────────────────────────────────
 export function teamWinProb(team: { off: number; def: number }, ovr: number): number {
   const tr = { off: 55 + team.off * 3.3, def: 55 + team.def * 3.3 };
   const score = (tr.off + tr.def) / 200;
@@ -535,7 +532,6 @@ export function conferenceStandings(ctx: Ctx, teamShort: string, conf: 'east' | 
   return { rows, seedNumber: rows.findIndex((r) => r.isUs) + 1 };
 }
 
-// ── Combine ──────────────────────────────────────────────────────────────────
 export function drillValue(id: K.DrillId, v: number, score: number, raw: { made?: number; of?: number; secs?: number; reps?: number; inches?: number } | null, pos: Position): { text: string; pct: number } {
   const t = clamp(v, 0, 11) / 11;
   const run = score - 0.6;
@@ -715,7 +711,6 @@ export function runDraft(c: Career, ctx: Ctx): Career {
   };
 }
 
-// ── Injuries and swings ──────────────────────────────────────────────────────
 export function injuryRisk(durability: number, age: number, sat: boolean): number {
   const perGame = K.INJ_RATE * clamp(1 + (5.5 - durability) * K.INJ_PULL, 0.3, 1.8);
   return perGame * (age >= 31 ? 1.25 : 1) * (sat ? 0 : 1) * K.INJ_SCALE;
@@ -767,7 +762,6 @@ export function seasonSwing(seed: string, year: number, age: number, contractLef
   return { dir, streak };
 }
 
-// ── Playoffs ─────────────────────────────────────────────────────────────────
 export const closeChance = (p: number) => clamp(0.62 - Math.abs(p - 0.5) * 0.8, 0.35, 0.62);
 
 export function bestOf7(g: number): number {
@@ -872,7 +866,6 @@ export function averageTrait(build: Traits, traits: string[]): number {
   return list.length ? list.reduce((s, t) => s + (build[t]?.val ?? 5), 0) / list.length : 5;
 }
 
-// ── Aging, training, legacy ──────────────────────────────────────────────────
 export const fadeOf = (pos: Position, t: string) => {
   const entry = K.FADE[pos]?.[t];
   return entry ? { cls: entry[0], from: entry[1], ...(K.FADE_CLASS[entry[0]] as K.FadeClass) } : null;
