@@ -483,6 +483,14 @@ async function openPlayoffBarrier(browser: Browser): Promise<{
   back = await backContext.newPage();
   await back.goto('/');
   await expect(back.locator('[data-testid="open-builder"]')).toContainText('Spin for team', { timeout: 30_000 });
+  // The builder's debounced draft sync must not deliver a playoffs view.
+  await back.route('**/api/lobby/*/build', (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'The draft sync is held for this test.', reason: 'conflict' }),
+    }),
+  );
   await back.locator('[data-testid="open-builder"]').click();
   const spinForTeam = back.getByRole('button', { name: 'Spin for Team' });
   if (await spinForTeam.isVisible().catch(() => false)) await spinForTeam.click();
