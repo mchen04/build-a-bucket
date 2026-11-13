@@ -75,3 +75,38 @@ The constants and generators of the three rebuilt offline modes were traced from
 Expected values for the golden tests were produced by a throwaway transcription of those algorithms kept
 outside this repository (`tools/parity/` in the card's working folder); the original's code is never executed.
 See `docs/MODES.md` for what matches, and where a limitation is recorded.
+
+## Career
+
+Career's constants and roll families were traced from the pinned public source at
+`92cb2a155bb2261cd68038ac366b994ad5dbb873` (`src/lib/career.js`, `src/lib/careerAging.js`,
+`src/lib/ageLadder.js`, `src/lib/mg/combineNorms.js`, `src/utils/bucketSimulation.js`) and re-expressed in our
+own modules:
+
+- `src/shared/engine/career/rules.ts` — the stock table by OVR (95/90/86/82/78/74/70), the rookie deal
+  (`4 yrs` to pick 30 with an option, `2` after; $12.5/9.5/6.5/5/2.8/1.9M), the injury table and its weights,
+  the season-enders, `INJ_RATE 0.019`, `INJ_PULL 0.15`, `INJ_SCALE 26/82`, `INJ_SERIOUS 0.05`, the combine
+  drills and their norms (a B guard 3.25s over three-quarters, a B big 10 bench reps), the goals, the award
+  thresholds (All-Star 21/20 ppg, All-NBA 25/24 ppg, `minGames` 65/65/40 of 82), the legacy weights
+  (`seasons 2, honors 6, firsts 10, awards 18, rings 20, playoffs 3, records 8`), the tiers 0/80/170/280, the
+  Hall bar 80 and `HOF_LEGACY 209`, the money ranges (guard 2-55, big 2-52), `STEP 10`, `MAX_SEASONS 20`,
+  `RETIRE_AGE 38`, the offseason event bank with its weights and reputation tilts, the fade classes and the
+  age ladder.
+- `src/shared/engine/career/core.ts` — `drillValue` (the original's combine maths), `stockOf` (the window, its
+  `0.5 + mid·0.08` span and the combine/interview shift), `draftOrder`, `runDraft` (the roulette weighted by
+  `need² + 1 + 8·interest`), `teamFit`/`depthChart`, `teamWinProb` (`55 + off·3.3` and the OVR boost, capped
+  at ±0.20/0.10), `teamSeason`, `conferenceStandings`, `injuryRisk`/`injuryRoll`, `seasonSwing`,
+  `bucketRoundOdds`/`bestOf7`/`gameOf`/`seriesState`/`seriesPlay`, `buildBracket` (play-in for seeds 7-10,
+  home flags, `pw`), `fadeYear`, `trainWindow`, `legacyScore` and `hofVote`.
+- `src/shared/engine/career/engine.ts` — the life cycle: creation (age 19-20, durability from the Size chip
+  with a seeded ±1 grade of luck), the combine, interviews, the draft, seasons (10 games a press, injuries,
+  moments), the playoffs, awards, the offseason (development points, training, aging, body work, events,
+  contracts and talks, trades, shoe deals), retirement and legacy.
+- `src/shared/careerStore.ts` — five slots and the 20-deep finished-career history in our own versioned keys
+  (`bab:career:v1`, `bab:career:history:v1`), validated with valibot.
+
+Expected values for the golden tests were produced by a throwaway transcription of those algorithms kept
+outside this repository (`tools/parity/career.mjs` in the card's working folder): the combine readings, the
+draft window, the draft order, the team pick, the rookie deal, the per-game injury rolls, the swing rolls and
+the playoff series maths, on synthetic inputs. The original's code is never executed. See `docs/CAREER.md` for
+what matches and where a limitation is recorded.

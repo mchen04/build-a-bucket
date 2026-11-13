@@ -4,9 +4,9 @@ A faster, crash-free, mobile-first rebuild of the single-player Build a Bucket g
 and grades, one 82-game season with the original's decision moments, play-in and playoffs, awards, and a final
 report. Built with Vite, Preact and strict TypeScript.
 
-The single-player core is complete, and so are the Daily Challenge, Salary Cap (daily and infinite) and Squad
-Builder modes (`docs/MODES.md`). Multiplayer is built as realtime lobbies for 2 to 8 players with invite codes,
-a host, live activity, a barrier before the playoffs and a shared reveal. Career stays "coming next", and the
+The single-player core is complete, and so are the Daily Challenge, Salary Cap (daily and infinite), Squad
+Builder (`docs/MODES.md`) and Career (`docs/CAREER.md`) modes. Multiplayer is built as realtime lobbies for 2
+to 8 players with invite codes, a host, live activity, a barrier before the playoffs and a shared reveal. The
 original live modes (Blacktop, Compete, Versus) stay visible limitations.
 
 ## Modes
@@ -17,6 +17,13 @@ The home screen opens four ways to play. **Play** is the classic ten-pick build,
 **Squad Builder** builds five slots (PG, SG, SF, PF, C) that share one seeded season. Each mode keeps its own
 versioned key (`bab:daily:v1`, `bab:salary:v1`, `bab:squad:v1`) and the seeded outputs are covered by golden
 tests; the details and the known limits are in `docs/MODES.md`.
+
+**Career** builds a player, then runs the combine, the draft, seasons ten games at a time, injuries, form
+swings, playoffs, awards, contracts, retirement and the Hall of Fame. Five save slots and the last twenty
+finished careers live in `bab:career:v1` / `bab:career:history:v1`; the seeded rolls (draft, contracts,
+injuries, swings, series odds) reproduce the original's for the same career seed and are covered by golden
+tests. Its JavaScript is code-split, so opening the app does not pay for it. Advanced (3D) mini-games are a
+visible limitation; simulated and a light simple mode are in. Details in `docs/CAREER.md`.
 
 ## Run
 
@@ -52,6 +59,8 @@ npm run db:migrate  # apply db/schema.sql to the Neon branch in .env.local
 ```
 
 `npm run e2e` starts the dev server itself and runs a WebKit iPhone 14 project and a Chromium Pixel 7 project.
+`e2e/career.spec.ts` plays a career from creation through several seasons to retirement, with a reload in the
+middle and no vertical overflow at 390x844.
 `e2e/lobby.spec.ts` drives eight browser contexts through a full lobby and runs on the Chromium project.
 Screenshots are written to the turn folder outside the repo.
 One vitest case loads the real data files from jsDelivr; set `BAB_SKIP_NETWORK=1` to skip it offline
