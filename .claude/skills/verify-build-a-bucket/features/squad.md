@@ -25,5 +25,5 @@ Preconditions:
 
 ## Gotchas
 
-- `e2e/modes.spec.ts` writes four of the five slots into storage to save time; only this recipe proves all five through the UI.
+- `e2e/modes.spec.ts` builds one slot through the UI and seeds the squad in storage; only this recipe proves all five through the UI.
 - Per-player box scores are our own formula (see docs/MODES.md); only the record, seed and playoff run are proven equal to the original.

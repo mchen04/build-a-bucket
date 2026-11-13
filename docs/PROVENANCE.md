@@ -52,9 +52,7 @@ needs the injury table and a body part rolled from the build; the `when` predica
 requirements (`alive`/`clinched`/`eliminated` plus `left >= n`) rather than evaluated; `window` and `dur`, which
 are recorded on the decision but do not change later games; and the `xp` value, which no system reads yet.
 Because of that a season shows two or three moments rather than the original's three or four.
-- `qbRespinBonus` (suspected rewarded ad). Always 0, per `CONTRACT.md`.
-- Daily, Salary Cap, Squad, Career and the original online modes. Later phases. Multiplayer is built
-  as lobbies; see `docs/MULTIPLAYER.md`. Lobby seasons run with moments off.
+`qbRespinBonus` (a suspected rewarded ad) is always 0.
 
 ## Offline modes (daily, salary cap, squad)
 
@@ -72,9 +70,8 @@ The constants and generators of the three rebuilt offline modes were traced from
 - The team-pick hash (`0x45d9f3b`) and the hash RNG (`0x45d9f3b`/`0x119de1f3`) live in
   `src/shared/engine/rng.ts` beside the mulberry32 and string-hash RNGs used elsewhere.
 
-Expected values for the golden tests were produced by a throwaway transcription of those algorithms kept
-outside this repository (`tools/parity/` in the card's working folder); the original's code is never executed.
-See `docs/MODES.md` for what matches, and where a limitation is recorded.
+Expected values for the golden tests were transcribed from those algorithms; the original's code is never
+executed. See `docs/MODES.md` for what matches, and where a limitation is recorded.
 
 ## Career
 
@@ -105,8 +102,7 @@ own modules:
 - `src/shared/careerStore.ts` — five slots and the 20-deep finished-career history in our own versioned keys
   (`bab:career:v1`, `bab:career:history:v1`), validated with valibot.
 
-Expected values for the golden tests were produced by a throwaway transcription of those algorithms kept
-outside this repository (`tools/parity/career.mjs` in the card's working folder): the combine readings, the
-draft window, the draft order, the team pick, the rookie deal, the per-game injury rolls, the swing rolls and
-the playoff series maths, on synthetic inputs. The original's code is never executed. See `docs/CAREER.md` for
-what matches and where a limitation is recorded.
+Expected values for the golden tests were transcribed from those algorithms: the combine readings, the draft
+window, the draft order, the team pick, the rookie deal, the per-game injury rolls, the swing rolls and the
+playoff series maths, on synthetic inputs. The original's code is never executed. See `docs/CAREER.md` for what
+matches and where a limitation is recorded.

@@ -8,9 +8,12 @@ Single-player is unaffected: lobbies are an extra entry on the home screen.
 - The host picks the shared era (current or all-time) and which builds are allowed (guards, bigs, or both).
 - Every player builds at the same time with the same builder as single-player: 10 traits, one team respin, one player respin.
 - Season moments are off in lobbies. The season runs straight through so the barrier stays fair.
-- The server validates each build against the runtime catalog, then runs the 82 game season with a server seed.
+- The server validates each build against the runtime catalog, then runs the 82 game season once from a server
+  seed (`season_secret` plus the action id). A stored result is final: submitting again is refused.
 - Qualified or eliminated follows the single-player rule: seed 6 or better, or a play-in win.
-- Playoff rounds reveal on one shared clock, so all qualifiers advance together.
+- Playoff rounds reveal on one shared clock, so all qualifiers advance together, and the lobby carries a reveal
+  watermark (`roundsRevealed`). A round, a finish label, the champion flag and the rank appear only once that
+  round is revealed.
 - Eliminated players watch. They never enter the playoffs and never hold the barrier.
 - Final standings rank by playoff finish, then by wins, then by OVR.
 
@@ -56,12 +59,15 @@ All endpoints are Web-standard handlers under `api/`, and all send the participa
 | POST | `/api/lobby/:code/join` | take the lowest free seat; same secret resumes the same seat |
 | POST | `/api/lobby/:code/start` | host only, phase `lobby` to `building` |
 | POST | `/api/lobby/:code/build` | best effort draft sync for the live roster |
-| POST | `/api/lobby/:code/submit` | validate the build, run the season, store the result |
+| POST | `/api/lobby/:code/submit` | validate the build, run the season once, store the result |
 | POST | `/api/lobby/:code/release` | release the barrier; `force` is host only |
 | POST | `/api/lobby/:code/leave` | mark the seat as left and hand over the host role |
 
 Every POST carries a client action id. The server stores `(participant_id, action_id)` in `actions`,
 so a retry returns the same outcome and never applies a change twice.
+
+Idempotency lives in that table, so `events` stays a plain activity feed. A late draft sync can never
+overwrite a stored result: the guard sits in the update that writes the build.
 
 Errors use `{ error, reason }` with reasons `not_found` (404), `full` (409), `started` (409),
 `forbidden` (403), `conflict` (409), `invalid` (400) and `server` (503).
@@ -83,6 +89,10 @@ Run `npm run db:migrate` to apply it. The script is idempotent.
 The client polls every second while visible and every five seconds while hidden. It re-fetches
 immediately after its own actions. Errors show a "reconnecting" badge and back off to eight seconds.
 Requests time out after eight seconds.
+
+Polls are deltas. The client sends the version it holds plus a progress token (newest event, away seats,
+filled slots); the server answers 204 when nothing changed, a small delta when only peer progress moved, and
+the full view after a join, start, submit or phase change.
 
 The lobby view exposes names, seats, statuses, build summaries, results and the last 30 events.
 It never exposes another player's secret, hash, participant id, or IP. A lobby is only reachable by code.
@@ -109,12 +119,3 @@ and never logged or committed.
   `POST /api/lobby/:code/join`, so a client can open lobbies or probe codes as fast as it likes.
 - Stale lobbies are pruned by `npm run prune:lobbies` (24 hours idle by default); nothing else collects them.
 
-## Where this differs from CONTRACT.md
-
-- Idempotency uses a dedicated `actions` table instead of expression indexes on `events`. The events
-  table stays a plain activity feed.
-- The barrier holds for 3 seconds after the last result (`BARRIER_HOLD_SECONDS`) so every client sees
-  the wait and the reveal starts on one clock.
-- The `season` phase means "results are coming in"; `barrier` is entered by a conditional maintenance
-  update when no present player is still building.
-- A late draft sync can never overwrite a stored result; the guard sits in the update that writes the build.

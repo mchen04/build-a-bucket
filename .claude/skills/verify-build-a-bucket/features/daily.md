@@ -4,7 +4,7 @@ Everyone gets the same seeded spins for the New York date, with position and era
 
 ## Sub-features
 
-- `daily-card` shows today's date, position and era, and the seed `BAP-DAILY-<date>`.
+- `daily-card` shows today's date, position and era, and the seed `bap-daily-<date>`.
 - `daily-resume` restores a partial daily run after reload.
 - `daily-lock` shows today's result and no play button after finishing, also after reload.
 - `daily-football` on football days in the original's rotation, shows that the day is not a basketball day.

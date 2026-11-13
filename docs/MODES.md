@@ -2,8 +2,8 @@
 
 Three of the original's offline modes are rebuilt next to the classic builder: the Daily Challenge, Salary Cap
 (daily and infinite) and the Squad Builder. All three reuse the shared engine (`src/shared/engine`), the classic
-builder screen and the classic spin rules. The seeded parts are reproduced from the original's own algorithm;
-the reconciliation harness is described at the bottom.
+builder screen and the classic spin rules, and the seeded parts reproduce the original's own algorithm. They read
+the same runtime catalog as the classic run (pinned data, kept in the Cache API as `bab-data-v1`).
 
 ## Daily Challenge
 
@@ -50,12 +50,10 @@ the reconciliation harness is described at the bottom.
 
 ## Parity harness
 
-Golden tests live in `tests/daily.test.ts`, `tests/salary.test.ts` and `tests/squad.test.ts`. Their expected
-values come from a throwaway transcription of the original's algorithms kept outside the application repo
-(`tools/parity/` in the card's working folder): the daily mapping and spins, the cap per date, two daily
-boards, the team pick, and a squad's strength, record, seed, playoff run and honours for a fixed squad. The
-original's code is never executed; the harness re-expresses the traced rules read from the public source at
-commit `92cb2a155bb2261cd68038ac366b994ad5dbb873`.
+Golden tests live in `tests/daily.test.ts`, `tests/salary.test.ts` and `tests/squad.test.ts`. They pin the daily
+mapping and spins, the cap per date, two daily boards, the team pick, and a squad's strength, record, seed,
+playoff run and honours for a fixed squad. Expected values were transcribed from the original's own algorithms
+read at commit `92cb2a155bb2261cd68038ac366b994ad5dbb873`; the original's code is never executed.
 
 ## Known limits
 
@@ -64,4 +62,4 @@ commit `92cb2a155bb2261cd68038ac366b994ad5dbb873`.
 - The original's posting and boards need login and its own service; results stay on the device.
 - Squad Builder box scores come from our engine's stat model; the strength, record, seed, playoff run and the
   honour composite and thresholds follow the original's algorithm.
-- Career, Blacktop, Compete and Versus stay visible limitations as before.
+- Blacktop, Compete and Versus are not rebuilt and stay visible limitations on the home screen.
