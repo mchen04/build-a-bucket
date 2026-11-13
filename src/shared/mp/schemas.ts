@@ -1,5 +1,6 @@
 import * as v from 'valibot';
 import { PickSchema } from '../data/schemas.js';
+import { ATTRS_PER_BUILD } from './types.js';
 
 const ParticipantStatusSchema = v.picklist([
   'joined',
@@ -27,13 +28,21 @@ export const SettingsSchema = v.object({
 export const BuildDraftSchema = v.object({
   position: v.picklist(['guard', 'big']),
   era: v.picklist(['current', 'alltime']),
-  picks: v.record(v.string(), PickSchema),
+  picks: v.pipe(
+    v.record(v.pipe(v.string(), v.maxLength(32)), PickSchema),
+    v.check((picks) => Object.keys(picks).length <= ATTRS_PER_BUILD, `A build has ${ATTRS_PER_BUILD} traits.`),
+  ),
   spinIndex: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(64)),
   teamRespinUsed: v.boolean(),
   playerRespinUsed: v.boolean(),
-  current: v.nullable(v.object({ team: v.string(), playerName: v.string() })),
-  team: v.nullable(v.string()),
-  latest: v.optional(v.nullable(v.object({ attr: v.string(), playerName: v.string() })), null),
+  current: v.nullable(
+    v.object({ team: v.pipe(v.string(), v.maxLength(32)), playerName: v.pipe(v.string(), v.maxLength(64)) }),
+  ),
+  team: v.nullable(v.pipe(v.string(), v.maxLength(16))),
+  latest: v.optional(
+    v.nullable(v.object({ attr: v.pipe(v.string(), v.maxLength(32)), playerName: v.pipe(v.string(), v.maxLength(64)) })),
+    null,
+  ),
 });
 
 export const BuildSummarySchema = v.object({

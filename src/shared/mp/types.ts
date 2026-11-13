@@ -19,6 +19,7 @@ export const HOST_IDLE_MS = 45_000;
 export const DEFAULT_REVEAL_SECONDS = 5;
 export const BARRIER_HOLD_SECONDS = 3;
 export const MAX_ROUNDS = 5;
+export const ATTRS_PER_BUILD = 10;
 export const EVENT_LIMIT = 30;
 
 export interface LobbySettings {

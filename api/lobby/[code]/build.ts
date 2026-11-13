@@ -1,13 +1,13 @@
 import { DraftBodySchema } from '../../../src/shared/mp/schemas.js';
 import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, readBody } from '../../../src/server/http.js';
-import { syncDraft } from '../../../src/server/lobby.js';
+import { syncBuildDraft } from '../../../src/server/submit.js';
 
 export async function POST(request: Request): Promise<Response> {
   const route = lobbyRoute(request);
   if (!route.ok) return route.response;
   const parsed = await readBody(request, DraftBodySchema);
   if (!parsed.ok) return parsed.response;
-  const outcome = await syncDraft({
+  const outcome = await syncBuildDraft({
     code: route.code,
     secret: route.secret,
     actionId: parsed.value.actionId,

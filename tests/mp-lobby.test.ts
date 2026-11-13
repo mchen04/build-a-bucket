@@ -390,6 +390,78 @@ describe('lobby lifecycle', () => {
     expect(Object.keys(guestView.me.build?.picks ?? {})).toHaveLength(3);
   });
 
+  it('rejects draft syncs that are not real picks', async () => {
+    const lobby = await newLobby('Host');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const entry = Object.entries(draft.picks)[0] as [string, Pick];
+    const sync = (body: BuildDraft) =>
+      buildHandler(authed(lobby.host.secret, `lobby/${lobby.code}/build`, { actionId: newActionId(), draft: body }));
+
+    const unknownTrait = await sync({ ...draft, picks: { ...draft.picks, agent: { ...entry[1], attr: 'agent' } } });
+    expect(unknownTrait.status, 'a trait that is not part of the position').toBe(400);
+    expect((await read<{ error: string }>(unknownTrait)).error).toMatch(/trait/i);
+
+    const ghost = await sync({
+      ...draft,
+      picks: { ...draft.picks, [entry[0]]: { ...entry[1], playerName: 'Nobody At All' } },
+    });
+    expect(ghost.status).toBe(400);
+    expect((await read<{ error: string }>(ghost)).error).toMatch(/pool/i);
+
+    const wrongEra = await sync({ ...draft, era: 'alltime' });
+    expect(wrongEra.status).toBe(400);
+    expect((await read<{ error: string }>(wrongEra)).error).toMatch(/players/i);
+
+    const tooMany = await sync({
+      ...draft,
+      picks: Object.fromEntries(
+        Array.from({ length: 11 }, (_, index) => [`trait${index}`, { ...entry[1], attr: `trait${index}` }]),
+      ),
+    });
+    expect(tooMany.status, 'more picks than a build has traits').toBe(400);
+
+    const longLatest = await sync({ ...draft, latest: { attr: 'jumpShot', playerName: 'l'.repeat(400) } });
+    expect(longLatest.status).toBe(400);
+    expect((await read<{ error: string }>(longLatest)).error).toMatch(/invalid request/i);
+
+    const finalView = await view(lobby.code, lobby.host.secret);
+    expect(finalView.me.build).toBeNull();
+    expect(finalView.participants.find((participantEntry) => participantEntry.seat === 1)?.summary).toBeNull();
+  });
+
+  it('writes one pick event per new filled slot', async () => {
+    const lobby = await newLobby('Host');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    const draft = await draftFor('guard', 'current', 'high');
+    const entries = Object.entries(draft.picks);
+    const first = entries[0] as [string, Pick];
+    const second = entries[1] as [string, Pick];
+    const sync = (picks: Record<string, Pick>, latest: [string, Pick]) =>
+      buildHandler(
+        authed(lobby.host.secret, `lobby/${lobby.code}/build`, {
+          actionId: newActionId(),
+          draft: {
+            ...draft,
+            picks,
+            spinIndex: Object.keys(picks).length,
+            latest: { attr: latest[0], playerName: latest[1].playerName },
+          },
+        }),
+      );
+
+    expect((await sync({ [first[0]]: first[1] }, first)).status).toBe(200);
+    expect(await eventCount(lobby.code, 'pick')).toBe(1);
+    for (let repeat = 0; repeat < 3; repeat++) {
+      expect((await sync({ [first[0]]: first[1] }, first)).status).toBe(200);
+    }
+    expect(await eventCount(lobby.code, 'pick'), 'a repeated sync does not repeat the event').toBe(1);
+    expect((await sync({ [first[0]]: first[1], [second[0]]: second[1] }, second)).status).toBe(200);
+    expect(await eventCount(lobby.code, 'pick')).toBe(2);
+    const finalView = await view(lobby.code, lobby.host.secret);
+    expect(finalView.participants.find((participantEntry) => participantEntry.seat === 1)?.summary?.filled).toBe(2);
+  });
+
   it('rejects a forged build', async () => {
     const lobby = await newLobby('Host');
     expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);

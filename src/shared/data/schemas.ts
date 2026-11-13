@@ -44,11 +44,11 @@ export const TeamListSchema = v.array(TeamSchema);
 export const HeadshotSchema = v.record(v.string(), v.string());
 
 export const PickSchema = v.object({
-  attr: v.string(),
+  attr: v.pipe(v.string(), v.maxLength(32)),
   val: v.number(),
-  playerName: v.string(),
-  playerShort: v.string(),
-  team: v.string(),
+  playerName: v.pipe(v.string(), v.maxLength(64)),
+  playerShort: v.pipe(v.string(), v.maxLength(32)),
+  team: v.pipe(v.string(), v.maxLength(32)),
   number: v.optional(v.union([v.number(), v.string()])),
   photo: v.optional(v.string()),
   height: v.optional(v.number()),

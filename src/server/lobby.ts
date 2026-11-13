@@ -4,6 +4,7 @@ import type { PlayoffRound, SeasonResult, SeriesRound } from '../shared/engine/t
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
 import { BuildDraftSchema, SettingsSchema } from '../shared/mp/schemas.js';
 import {
+  ATTRS_PER_BUILD,
   AWAY_MS,
   BARRIER_HOLD_SECONDS,
   CAPACITY,
@@ -39,8 +40,6 @@ const CREATE_DEFAULT_SETTINGS: LobbySettings = {
   positions: ['guard', 'big'],
   revealSeconds: DEFAULT_REVEAL_SECONDS,
 };
-
-const ATTRS_PER_BUILD = 10;
 
 interface RawLobby {
   id: string;
@@ -704,7 +703,9 @@ export async function startLobby(input: {
 const WRITE_BUILD_SQL = `
 with l as (select id, phase from lobbies where code = $1),
 me as (
-  select p.id, p.seat, p.name from participants p
+  select p.id, p.seat, p.name,
+    (select count(*) from jsonb_object_keys(coalesce(p.build->'picks', '{}'::jsonb))) as filled_before
+  from participants p
   where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'
 ),
 act as (
@@ -727,14 +728,15 @@ written as (
     and l.phase in ('building', 'season', 'barrier')
     and p.season is null
     and ($6::text <> 'building' or p.status not in ('qualified', 'eliminated', 'playoffs', 'done'))
-  returning p.id, p.seat, p.name
+  returning p.id, p.seat, p.name, me.filled_before,
+    (select count(*) from jsonb_object_keys(coalesce($4::jsonb->'picks', '{}'::jsonb))) as filled_after
 ),
 log as (
   insert into events (lobby_id, participant_id, kind, payload)
   select (select id from l), w.id, $7::text,
     jsonb_build_object('seat', w.seat, 'name', w.name, 'detail', $8::text)
   from written w
-  where $8::text is not null
+  where $8::text is not null and ($7::text <> 'pick' or w.filled_after > w.filled_before)
 )
 select
   (select id from l) as lobby_id,
