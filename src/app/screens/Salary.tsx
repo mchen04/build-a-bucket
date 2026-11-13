@@ -176,7 +176,7 @@ export function Salary(props: Props) {
                 const card = props.grid[columnIndex]?.[tier];
                 if (!card) return <div class="sc-cell" key={column.key} />;
                 const on = picked[columnIndex]?.id === card.id;
-                const grade = props.scouted[card.name];
+                const grade = props.scouted[card.id];
                 return (
                   <button
                     class={`sc-cell${on ? ' on' : ''}${card.legend ? ' legend' : ''}${props.scoutMode ? ' scouting' : ''}`}

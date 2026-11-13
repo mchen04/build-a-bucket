@@ -125,7 +125,7 @@ export function SalaryMode({ catalog, plan, onExit }: Props) {
 
   const revealScout = (card: SalCard) => {
     if (locked || powers.scout) return;
-    const nextScouted = { ...scouted, [card.name]: scoutGrade(card) };
+    const nextScouted = { ...scouted, [card.id]: scoutGrade(card) };
     const nextPowers = { ...powers, scout: true };
     setScouted(nextScouted);
     setPowers(nextPowers);

@@ -91,6 +91,28 @@ describe('salary powers', () => {
     expect(scoutGrade(entry)).toBe(gradeFor(mean));
   });
 
+  it('keys a scouted grade to the card as shown, so a row shuffle drops it', () => {
+    const before = grid();
+    const scoutedCard = before[1]![2]!;
+    const scouted: Record<string, string> = { [scoutedCard.id]: scoutGrade(scoutedCard) };
+    const after = shuffleRow(before, 2, seeded(11));
+    const moved = after[1]![2]!;
+    expect(moved.name).not.toBe(scoutedCard.name);
+    expect(moved.id).not.toBe(scoutedCard.id);
+    expect(scouted[moved.id]).toBeUndefined();
+    expect(scouted[scoutedCard.id]).toBe(scoutGrade(scoutedCard));
+  });
+
+  it('keys a scouted grade to the card as shown, so a column shuffle drops it', () => {
+    const before = grid();
+    const scoutedCard = before[2]![1]!;
+    const scouted: Record<string, string> = { [scoutedCard.id]: scoutGrade(scoutedCard) };
+    const after = shuffleColumn(before, 2, seeded(7));
+    const moved = after[2]![1]!;
+    expect(moved.name).not.toBe(scoutedCard.name);
+    expect(scouted[moved.id]).toBeUndefined();
+  });
+
   it('builds the result from the shuffled cards', () => {
     const before = grid();
     const after = shuffleRow(before, 0, seeded(5));
