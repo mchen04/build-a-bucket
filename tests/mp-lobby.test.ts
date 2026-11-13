@@ -451,6 +451,31 @@ describe('lobby lifecycle', () => {
     }
   });
 
+  it('runs a solo lobby through the barrier to the standings', async () => {
+    const lobby = await newLobby('Solo');
+    expect((await start(lobby.code, lobby.host.secret)).status).toBe(200);
+    expect((await submit(lobby.code, lobby.host.secret, await draftFor('guard', 'current', 'high'))).status).toBe(200);
+    await sleep(HOLD_WAIT);
+
+    const released = await release(lobby.code, lobby.host.secret);
+    expect(released.status).toBe(200);
+    const opened = (await read<{ lobby: LobbyView }>(released)).lobby;
+    expect(opened.phase).toBe('playoffs');
+    expect(opened.seatsTaken).toBe(1);
+    expect(opened.hostSeat).toBe(1);
+    expect(opened.me.season?.qualified).toBe(true);
+    expect(opened.me.rounds.length).toBeGreaterThanOrEqual(1);
+
+    await db().query("update lobbies set playoffs_started_at = now() - interval '30 seconds' where code = $1", [
+      lobby.code,
+    ]);
+    const finished = await view(lobby.code, lobby.host.secret);
+    expect(finished.phase).toBe('finished');
+    expect(finished.standings?.length).toBe(1);
+    expect(finished.standings?.[0]?.record).toMatch(/^\d+-\d+$/);
+    expect(await eventCount(lobby.code, 'playoffs_started')).toBe(1);
+  });
+
   it('polls with since and answers 204 while nothing changed', async () => {
     const lobby = await newLobby('Host');
     const first = await view(lobby.code, lobby.host.secret);
