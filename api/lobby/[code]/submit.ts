@@ -1,6 +1,6 @@
 import { DraftBodySchema } from '../../../src/shared/mp/schemas.js';
 import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, readBody } from '../../../src/server/http.js';
-import { submitBuild } from '../../../src/server/lobby.js';
+import { submitBuild } from '../../../src/server/submit.js';
 
 export async function POST(request: Request): Promise<Response> {
   const route = lobbyRoute(request);
