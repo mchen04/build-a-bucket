@@ -204,11 +204,12 @@ function cardFor(
 ): SalCard {
   const attrs: Record<string, number> = {};
   for (const type of salTypesFor(player, column)) attrs[type] = player.attrs[type] ?? 5;
+  const number = typeof player.number === 'number' ? player.number : player.number ? Number(player.number) : null;
   return {
     id: `${column.key}-${price}-${player.name}`,
     name: player.name,
     team: player.team,
-    number: (player.number as number | undefined) ?? null,
+    number: number !== null && Number.isFinite(number) ? number : null,
     price,
     legend: Boolean(player.legend),
     attrs,

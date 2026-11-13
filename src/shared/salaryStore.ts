@@ -24,7 +24,7 @@ const SalCardSchema = v.object({
   id: v.string(),
   name: v.string(),
   team: v.string(),
-  number: v.nullable(v.number()),
+  number: v.nullable(v.union([v.number(), v.pipe(v.string(), v.transform((value) => Number(value)))])),
   price: v.number(),
   legend: v.boolean(),
   attrs: v.record(v.string(), v.number()),
@@ -61,7 +61,7 @@ const SalarySchema = v.object({
     }),
   ),
   infinite: v.number(),
-  powers: v.optional(v.record(v.string(), SalaryPowersSchema), {}),
+  powers: v.optional(v.fallback(v.record(v.string(), SalaryPowersSchema), {}), {}),
 });
 
 export interface SalaryPlay {
@@ -108,7 +108,7 @@ export function saveSalaryPlay(dateStr: string, play: SalaryPlay, storage: Stora
 
 export function saveSalaryPowers(dateStr: string, powers: SalaryPowers, storage: Storage = localStorage): void {
   const store = readSalary(storage);
-  writeJson(storage, SALARY_KEY, { ...store, powers: { ...store.powers, [dateStr]: powers } });
+  writeJson(storage, SALARY_KEY, { ...store, powers: { [dateStr]: powers } });
 }
 
 export function bumpInfinite(storage: Storage = localStorage): void {
