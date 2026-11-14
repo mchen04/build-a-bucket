@@ -17,10 +17,12 @@ describe('lobby action dispatch', () => {
     }
   });
 
-  it('rejects an unknown action', async () => {
-    const response = await POST(new Request('http://localhost/api/lobby/ABC234/nope', { method: 'POST' }));
-    expect(response.status).toBe(404);
-    expect(await response.json()).toMatchObject({ reason: 'not_found' });
+  it('rejects unknown and inherited action names', async () => {
+    for (const action of ['nope', 'toString', 'constructor', '__proto__', 'hasOwnProperty']) {
+      const response = await POST(new Request(`http://localhost/api/lobby/ABC234/${action}`, { method: 'POST' }));
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ reason: 'not_found' });
+    }
   });
 
   it('keeps the api function count under 12', () => {
