@@ -118,14 +118,15 @@ function savedRun(id: string, keys: string[], position: 'guard' | 'big'): unknow
 }
 
 test('daily challenge plays to its end state, resumes after reload and locks the day', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-10-24T18:00:00Z'));
   await page.goto('/');
   await page.getByTestId('home-daily').click();
   await expect(page.getByTestId('daily-card')).toBeVisible();
   await expectNoVerticalOverflow(page, 'daily home');
   await shot(page, 'daily-card');
 
-  const footballDay = await page.getByTestId('daily-nfl').isVisible().catch(() => false);
-  test.skip(footballDay, 'today is a football day in the original rotation');
+  await expect(page.getByTestId('daily-nfl')).toHaveCount(0);
+  await expect(page.getByTestId('daily-card')).toContainText('BASKETBALL');
   await expect(page.getByTestId('daily-play')).toContainText(/Play Daily|Resume Daily/);
   await page.getByTestId('daily-play').click();
 
@@ -165,6 +166,21 @@ test('daily challenge plays to its end state, resumes after reload and locks the
   await expect(page.getByTestId('daily-awards')).toBeVisible();
   await expect(page.getByTestId('daily-view')).toBeVisible();
   await expect(page.getByTestId('daily-play')).toHaveCount(0);
+  const stored = await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('bab:daily:v1') ?? '{}') as {
+      days?: Record<string, { run?: { season?: { wins: number; seed: number; standings: { wins: number }[] } } }>;
+    };
+    const season = Object.values(store.days ?? {})[0]?.run?.season;
+    if (!season) return null;
+    const sorted = season.standings.every((row, index, all) => index === 0 || (all[index - 1] as { wins: number }).wins >= row.wins);
+    const above = season.standings.slice(0, season.seed - 1);
+    return { wins: season.wins, seed: season.seed, sorted, consistent: above.every((row) => row.wins >= season.wins) };
+  });
+  expect(stored).not.toBeNull();
+  expect(stored?.sorted).toBe(true);
+  expect(stored?.consistent).toBe(true);
+  await expect(page.getByTestId('daily-result')).toContainText(`${stored?.wins}-`);
+  await expect(page.getByTestId('daily-result')).toContainText(`SEED #${stored?.seed}`);
   await expectNoVerticalOverflow(page, 'daily locked');
   await shot(page, 'daily-result-full');
   await page.getByTestId('daily-view').click();
@@ -389,9 +405,13 @@ test('squad builder fills five slots, simulates the season and survives a reload
     await standingsNext.click();
     await expect(page.getByTestId('squad-playoffs')).toBeVisible();
     await expect(page.getByTestId('squad-playoffs')).not.toContainText('CHAMPIONS');
+    const rounds = page.getByTestId('squad-playoff-rounds').locator('.round');
+    await expect(rounds.first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('squad-playoff-banner')).toHaveCount(0);
     await shot(page, 'squad-playoffs');
     await page.getByTestId('squad-playoffs-skip').click();
     await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
+    expect(await rounds.count()).toBeGreaterThan(0);
     await page.getByTestId('squad-recap-next').click();
   } else {
     await standingsNext.click();

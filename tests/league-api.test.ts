@@ -244,8 +244,12 @@ async function setupBuilding(mode: LobbySettings['mode'], players: number): Prom
   return { code: host.code, seats };
 }
 
-async function runLeague(mode: LobbySettings['mode'], players = 8): Promise<{ code: string; seats: Seat[]; view: LobbyView }> {
-  const settings: LobbySettings = { era: 'current', mode };
+async function runLeague(
+  mode: LobbySettings['mode'],
+  players = 8,
+  era: LobbySettings['era'] = 'current',
+): Promise<{ code: string; seats: Seat[]; view: LobbyView }> {
+  const settings: LobbySettings = { era, mode };
   const host = await createLobby('Host', settings);
   const seats: Seat[] = [host.host];
   for (let index = 2; index <= players; index++) seats.push(await join(host.code, `P${index}`));
@@ -309,6 +313,26 @@ describeDb('shared league API', () => {
     expect(recap.league?.recap?.champion).toBeTruthy();
     expect(recap.league?.awards).not.toBeNull();
   }, 180_000);
+
+  it('runs every mode on the all-time boards to recap', async () => {
+    for (const mode of ['normal', 'salary', 'squad'] as const) {
+      const { view: recap } = await runLeague(mode, 2, 'alltime');
+      expect(recap.league?.recap?.champion).toBeTruthy();
+      expect(recap.league?.awards).not.toBeNull();
+    }
+  }, 180_000);
+
+  it('rejects an advance after the recap without changing the result', async () => {
+    const { code, seats, view: recap } = await runLeague('normal', 2);
+    const response = await advance(code, seats[0]!.secret, recap.stage);
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain('not at a checkpoint');
+    const after = await view(code, seats[0]!.secret);
+    expect(after.phase).toBe('recap');
+    expect(after.stage).toBe(recap.stage);
+    expect(after.league?.cursor).toBe(recap.league?.cursor);
+    expect(after.league?.recap?.champion).toBe(recap.league?.recap?.champion);
+  }, 120_000);
 
   it('needs at least two players to start', async () => {
     const settings: LobbySettings = { era: 'current', mode: 'normal' };
@@ -576,6 +600,25 @@ describeDb('shared league API', () => {
     expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
     const drawn = await draw(code, seats[0]!.secret);
     expect(drawn.teams.find((entry) => entry.seat === seats[0]!.seat)?.rerollUsed).toBe(false);
+    await draw(code, seats[1]!.secret);
+  }, 120_000);
+
+  it('consumes the team respin once under concurrent rerolls and keeps it after a reload', async () => {
+    const { code, seats } = await runLeague('normal', 2);
+    expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
+    await ready(code, seats[0]!.secret, 0);
+    await ready(code, seats[1]!.secret, 0);
+    await draw(code, seats[0]!.secret);
+    const [a, b] = await Promise.all([reroll(code, seats[0]!.secret), reroll(code, seats[0]!.secret)]);
+    const mine = (lobby: LobbyView) => lobby.teams.find((entry) => entry.seat === seats[0]!.seat);
+    expect(mine(a)?.rerollUsed).toBe(true);
+    expect(mine(b)?.rerollUsed).toBe(true);
+    expect(mine(a)?.team).toBe(mine(b)?.team);
+    const reloaded = await view(code, seats[0]!.secret);
+    expect(mine(reloaded)?.team).toBe(mine(a)?.team);
+    expect(mine(reloaded)?.rerollUsed).toBe(true);
+    const again = await reroll(code, seats[0]!.secret);
+    expect(mine(again)?.team).toBe(mine(a)?.team);
     await draw(code, seats[1]!.secret);
   }, 120_000);
 

@@ -104,6 +104,16 @@ test('drives a two player shared league from invite code to recap', async ({ bro
   contexts.push(hostContext, guestContext);
   const host = await hostContext.newPage();
   const guest = await guestContext.newPage();
+  await host.addInitScript(() => {
+    const clipboard = navigator.clipboard;
+    if (!clipboard) return;
+    const original = clipboard.writeText?.bind(clipboard);
+    (window as unknown as { __copied: string[] }).__copied = [];
+    clipboard.writeText = async (text: string) => {
+      (window as unknown as { __copied: string[] }).__copied.push(text);
+      if (original) await original(text);
+    };
+  });
   try {
     await host.goto('/');
     await expectNoOverflow(host, 'home with the lobby entry');
@@ -113,6 +123,10 @@ test('drives a two player shared league from invite code to recap', async ({ bro
     const code = ((await host.locator('[data-testid="lobby-code"]').textContent()) ?? '').trim();
     expect(code).toMatch(/^[A-Z2-9]{6}$/);
     createdCodes.push(code);
+    await host.getByRole('button', { name: 'Copy', exact: true }).click();
+    await expect
+      .poll(() => host.evaluate(() => (window as unknown as { __copied?: string[] }).__copied?.at(-1) ?? ''))
+      .toMatch(new RegExp(`/j/${code}$`));
 
     await guest.goto('/');
     await guest.locator('[data-testid="mp-name"]').fill('Ben');
@@ -120,6 +134,9 @@ test('drives a two player shared league from invite code to recap', async ({ bro
     await guest.locator('[data-testid="join-lobby"]').click();
     await expect(guest.locator('[data-testid="lobby-code"]')).toBeVisible();
     await expect(host.locator('[data-testid="roster"] .roster-row[data-seat]')).toHaveCount(2);
+    await expect(host.locator('[data-testid="roster"] .roster-row.head')).toContainText('SEAT');
+    await expect(host.locator('[data-testid="roster"] .roster-row.head')).toContainText('PLAYER');
+    await expect(host.locator('[data-testid="roster"] .roster-row[data-seat="1"] .seat')).toHaveText('1');
     await expectNoOverflow(host, 'lobby with two players');
 
     await host.locator('[data-testid="start-season"]').click();
@@ -192,5 +209,35 @@ test('drives a two player shared league from invite code to recap', async ({ bro
     await expect(host.locator('[data-testid="roster"] .roster-row[data-seat]')).toHaveCount(2);
   } finally {
     for (const context of contexts) await context.close();
+  }
+});
+
+test('opens an invite link directly and keeps the seat after a reload', async ({ browser }) => {
+  test.setTimeout(120_000);
+  const hostContext = await browser.newContext({ ...PROFILE });
+  const guestContext = await browser.newContext({ ...PROFILE });
+  const host = await hostContext.newPage();
+  const guest = await guestContext.newPage();
+  try {
+    await host.goto('/');
+    await host.locator('[data-testid="mp-name"]').fill('Ava');
+    await host.locator('[data-testid="create-lobby"]').click();
+    await expect(host.locator('[data-testid="lobby-code"]')).toBeVisible();
+    const code = ((await host.locator('[data-testid="lobby-code"]').textContent()) ?? '').trim();
+    createdCodes.push(code);
+
+    await guest.goto(`/j/${code}`);
+    await expect(guest.locator('[data-testid="invite-code"]')).toBeVisible();
+    await guest.locator('[data-testid="invite-name"]').fill('Ben');
+    await guest.locator('[data-testid="invite-join"]').click();
+    await expect(guest.locator('[data-testid="lobby-code"]')).toHaveText(code);
+
+    await guest.reload();
+    await expect(guest.locator('[data-testid="lobby-code"]')).toHaveText(code);
+    await expect(guest.locator('[data-testid="roster"] .roster-row[data-seat]')).toHaveCount(2);
+    await expect(host.locator('[data-testid="roster"] .roster-row[data-seat]')).toHaveCount(2);
+  } finally {
+    await hostContext.close();
+    await guestContext.close();
   }
 });
