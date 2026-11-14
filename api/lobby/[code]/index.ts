@@ -1,5 +1,5 @@
 import { errorResponse, jsonResponse, lobbyRoute, methodNotAllowed, noContent } from '../../../src/server/http.js';
-import { buildLobbyDelta, readLobby, unchangedPoll } from '../../../src/server/lobby.js';
+import { buildLobbyDelta, pollLobby, readLobby } from '../../../src/server/lobby.js';
 import { progressToken } from '../../../src/shared/mp/progress.js';
 
 export async function GET(request: Request): Promise<Response> {
@@ -13,11 +13,12 @@ export async function GET(request: Request): Promise<Response> {
   if (!Number.isFinite(since) || since < 0 || !Number.isFinite(events) || events < 0) {
     return errorResponse(400, 'invalid', 'since and events must be positive numbers.');
   }
-  if (waiting) {
-    const decision = await unchangedPoll({ code: route.code, secret: route.secret, since, token });
-    if (decision === 'no_content') return noContent();
-    if (decision === 'not_found') return errorResponse(404, 'not_found', 'No lobby found for that code.');
-    if (decision === 'forbidden') return errorResponse(403, 'forbidden', 'You are not in this lobby.');
+  if (since > 0) {
+    const outcome = await pollLobby({ code: route.code, secret: route.secret, since, events, token }, waiting);
+    if (outcome.kind === 'no_content') return noContent();
+    if (outcome.kind === 'not_found') return errorResponse(404, 'not_found', 'No lobby found for that code.');
+    if (outcome.kind === 'forbidden') return errorResponse(403, 'forbidden', 'You are not in this lobby.');
+    if (outcome.kind === 'clock') return jsonResponse({ lobby: outcome.view });
   }
   const outcome = await readLobby({ code: route.code, secret: route.secret, sinceEvent: events });
   if (!outcome.ok) return errorResponse(outcome.status, outcome.error.reason, outcome.error.error);

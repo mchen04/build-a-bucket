@@ -1,4 +1,12 @@
-import type { LeagueResult, SeriesResult } from '../engine/league.js';
+import type {
+  HeadToHead,
+  HumanSeason,
+  LeagueAward,
+  LeagueResult,
+  PlayInGame,
+  SeriesResult,
+  TeamRecord,
+} from '../engine/league.js';
 import { stageTotals } from '../engine/league.js';
 
 export const STAGE_COUNT = 11;
@@ -59,6 +67,50 @@ export function stageCursorAt(league: LeagueResult, stage: number, startedAt: nu
 
 export function isCheckpoint(cursor: number, total: number): boolean {
   return cursor >= total;
+}
+
+export interface LeagueClock {
+  counts: number[];
+  playin: number;
+  seriesCounts: number[];
+  seriesGames: number[];
+}
+
+export function clockFromLeague(league: LeagueResult): LeagueClock {
+  const counts = stageTotals(league.games);
+  const seriesCounts = [1, 2, 3, 4].map((round) => league.series.filter((entry) => entry.round === round).length);
+  const seriesGames = [1, 2, 3, 4].map((round) =>
+    league.series.filter((entry) => entry.round === round).reduce((sum, entry) => sum + entry.games.length, 0),
+  );
+  return { counts, playin: league.playin.length, seriesCounts, seriesGames };
+}
+
+export function stageGamesTotalFrom(clock: LeagueClock, stage: number): number {
+  if (stage <= 3) return clock.counts[stage] ?? 0;
+  if (stage === 5) return clock.playin;
+  if (stage >= 6 && stage <= 9) return clock.seriesGames[stage - 6] ?? 0;
+  return 0;
+}
+
+export function stageTotalFrom(clock: LeagueClock, stage: number): number {
+  if (stage <= 3) return clock.counts[stage] ?? 0;
+  if (stage === 5) return 6;
+  if (stage >= 6 && stage <= 9) return 7 * (clock.seriesCounts[stage - 6] ?? 0);
+  return 0;
+}
+
+export function stageCursorAtFrom(clock: LeagueClock, stage: number, startedAt: number | null, now: number): number {
+  const total = stageGamesTotalFrom(clock, stage);
+  if (total === 0) return 0;
+  if (startedAt === null) return 0;
+  const elapsed = Math.max(0, now - startedAt);
+  if (stage <= 3) {
+    return Math.min(total, Math.floor(elapsed / REGULAR_BATCH_MS) * REGULAR_BATCH_SIZE);
+  }
+  if (stage >= 6 && stage <= 9) {
+    return Math.min(total, Math.floor(elapsed / PLAYOFF_GAME_MS));
+  }
+  return total;
 }
 
 export interface LeagueGameView {
@@ -187,19 +239,47 @@ export interface LeagueView {
   recap: RecapView | null;
 }
 
-function revealedRegular(league: LeagueResult, stage: number, cursor: number): number {
-  if (stage >= 4) return league.games.length;
-  const totals = stageTotals(league.games);
-  let revealed = 0;
-  for (let index = 0; index < stage; index++) revealed += totals[index] ?? 0;
-  return revealed + Math.min(cursor, totals[stage] ?? 0);
+export interface RevealData {
+  games: LeagueResult['games'];
+  gamesTotal: number;
+  stageCounts: number[];
+  playinCount: number;
+  seriesCounts: number[];
+  seriesGames: number[];
+  standings: { east: TeamRecord[]; west: TeamRecord[] } | null;
+  partial: { visible: number; records: { team: string; conference: 'east' | 'west'; wins: number; losses: number }[] } | null;
+  humans: HumanSeason[];
+  awards: { mvp: LeagueAward; dpoy: LeagueAward } | null;
+  playin: PlayInGame[] | null;
+  series: SeriesResult[] | null;
+  champion: string | null;
+  h2h: Record<string, Record<string, HeadToHead>> | null;
 }
 
-function partialStandings(league: LeagueResult, revealed: number, meTeam: string | null): StandingView[] {
+function revealedRegularFrom(data: RevealData, stage: number, cursor: number): number {
+  if (stage >= 4) return data.gamesTotal;
+  let revealed = 0;
+  for (let index = 0; index < stage; index++) revealed += data.stageCounts[index] ?? 0;
+  return revealed + Math.min(cursor, data.stageCounts[stage] ?? 0);
+}
+
+function partialStandingsFrom(data: RevealData, revealed: number, meTeam: string | null): StandingView[] {
+  const humans = new Map(data.humans.map((entry) => [entry.team, entry.name]));
+  if (data.partial) {
+    return data.partial.records.map((record) => ({
+      team: record.team,
+      conference: record.conference,
+      wins: record.wins,
+      losses: record.losses,
+      seed: null,
+      isMine: record.team === meTeam,
+      humanName: humans.get(record.team) ?? null,
+    }));
+  }
   const records = new Map<string, { wins: number; losses: number; conference: 'east' | 'west' }>();
-  for (const row of league.standings.east) records.set(row.team, { wins: 0, losses: 0, conference: 'east' });
-  for (const row of league.standings.west) records.set(row.team, { wins: 0, losses: 0, conference: 'west' });
-  for (const game of league.games) {
+  for (const row of data.standings?.east ?? []) records.set(row.team, { wins: 0, losses: 0, conference: 'east' });
+  for (const row of data.standings?.west ?? []) records.set(row.team, { wins: 0, losses: 0, conference: 'west' });
+  for (const game of data.games) {
     if (game.gameNo > revealed) break;
     const home = records.get(game.home);
     const away = records.get(game.away);
@@ -214,7 +294,6 @@ function partialStandings(league: LeagueResult, revealed: number, meTeam: string
     records.set(game.home, home);
     records.set(game.away, away);
   }
-  const humans = new Map(league.humans.map((entry) => [entry.team, entry.name]));
   return [...records.entries()]
     .map(([team, record]) => ({
       team,
@@ -228,9 +307,9 @@ function partialStandings(league: LeagueResult, revealed: number, meTeam: string
     .sort((a, b) => b.wins - a.wins || a.losses - b.losses || a.team.localeCompare(b.team));
 }
 
-function fullStandings(league: LeagueResult, meTeam: string | null): StandingView[] {
-  const humans = new Map(league.humans.map((entry) => [entry.team, entry.name]));
-  return [...league.standings.east, ...league.standings.west].map((row) => ({
+function fullStandingsFrom(data: RevealData, meTeam: string | null): StandingView[] {
+  const humans = new Map(data.humans.map((entry) => [entry.team, entry.name]));
+  return [...(data.standings?.east ?? []), ...(data.standings?.west ?? [])].map((row) => ({
     team: row.team,
     conference: row.conference,
     wins: row.wins,
@@ -268,11 +347,11 @@ function seriesView(series: SeriesResult, revealedGames: number): SeriesView {
   };
 }
 
-function playoffViews(league: LeagueResult, stage: number, cursor: number): SeriesView[] {
+function playoffViewsFrom(data: RevealData, stage: number, cursor: number): SeriesView[] {
   const currentRound = stage - 5;
   const out: SeriesView[] = [];
   for (let round = 1; round <= 4; round++) {
-    const roundSeries = league.series.filter((entry) => entry.round === round);
+    const roundSeries = (data.series ?? []).filter((entry) => entry.round === round);
     if (round < currentRound) {
       for (const series of roundSeries) out.push(seriesView(series, series.games.length));
       continue;
@@ -288,14 +367,14 @@ function playoffViews(league: LeagueResult, stage: number, cursor: number): Seri
   return out;
 }
 
-function myView(
-  league: LeagueResult,
+function myViewFrom(
+  data: RevealData,
   stage: number,
   meParticipantId: string | null,
   standings: StandingView[],
 ): MyLeagueView | null {
   if (!meParticipantId) return null;
-  const human = league.humans.find((entry) => entry.participantId === meParticipantId);
+  const human = data.humans.find((entry) => entry.participantId === meParticipantId);
   if (!human) return null;
   const awardsRevealed = stage >= 4;
   const playInRevealed = stage >= 5;
@@ -319,14 +398,38 @@ function myView(
   };
 }
 
-export function revealLeague(league: LeagueResult, stage: number, cursor: number, meParticipantId: string | null): LeagueView {
-  const meTeam = league.humans.find((entry) => entry.participantId === meParticipantId)?.team ?? null;
-  const humanTeams = new Set(league.humans.map((entry) => entry.team));
-  const revealed = revealedRegular(league, stage, cursor);
-  const total = stageTotal(league, stage);
-  const checkpoint = isCheckpoint(cursor, stageGamesTotal(league, stage));
+export function assembleLeagueView(
+  data: RevealData,
+  stage: number,
+  cursor: number,
+  meParticipantId: string | null,
+): LeagueView {
+  const meTeam = data.humans.find((entry) => entry.participantId === meParticipantId)?.team ?? null;
+  const humanTeams = new Set(data.humans.map((entry) => entry.team));
+  const revealed = revealedRegularFrom(data, stage, cursor);
+  const total = stageTotalFrom(
+    {
+      counts: data.stageCounts,
+      playin: data.playinCount,
+      seriesCounts: data.seriesCounts,
+      seriesGames: data.seriesGames,
+    },
+    stage,
+  );
+  const checkpoint = isCheckpoint(
+    cursor,
+    stageGamesTotalFrom(
+      {
+        counts: data.stageCounts,
+        playin: data.playinCount,
+        seriesCounts: data.seriesCounts,
+        seriesGames: data.seriesGames,
+      },
+      stage,
+    ),
+  );
 
-  const visible = league.games.filter((game) => game.gameNo <= revealed);
+  const visible = data.games.filter((game) => game.gameNo <= revealed);
   const mine = visible.filter((game) => game.home === meTeam || game.away === meTeam);
   const friends = visible.filter((game) => humanTeams.has(game.home) && humanTeams.has(game.away));
   const recent = visible.slice(-30);
@@ -349,35 +452,35 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
   }
   games.sort((a, b) => a.gameNo - b.gameNo);
 
-  const standings = stage >= 4 ? fullStandings(league, meTeam) : partialStandings(league, revealed, meTeam);
+  const standings = stage >= 4 ? fullStandingsFrom(data, meTeam) : partialStandingsFrom(data, revealed, meTeam);
   const awards =
-    stage >= 4
+    stage >= 4 && data.awards
       ? {
           mvp: {
-            name: league.awards.mvp.name,
-            team: league.awards.mvp.team,
-            mine: league.awards.mvp.participantId !== null && league.awards.mvp.participantId === meParticipantId,
-            ppg: league.awards.mvp.ppg,
-            rpg: league.awards.mvp.rpg,
-            apg: league.awards.mvp.apg,
-            spg: league.awards.mvp.spg,
-            bpg: league.awards.mvp.bpg,
+            name: data.awards.mvp.name,
+            team: data.awards.mvp.team,
+            mine: data.awards.mvp.participantId !== null && data.awards.mvp.participantId === meParticipantId,
+            ppg: data.awards.mvp.ppg,
+            rpg: data.awards.mvp.rpg,
+            apg: data.awards.mvp.apg,
+            spg: data.awards.mvp.spg,
+            bpg: data.awards.mvp.bpg,
           },
           dpoy: {
-            name: league.awards.dpoy.name,
-            team: league.awards.dpoy.team,
-            mine: league.awards.dpoy.participantId !== null && league.awards.dpoy.participantId === meParticipantId,
-            ppg: league.awards.dpoy.ppg,
-            rpg: league.awards.dpoy.rpg,
-            apg: league.awards.dpoy.apg,
-            spg: league.awards.dpoy.spg,
-            bpg: league.awards.dpoy.bpg,
+            name: data.awards.dpoy.name,
+            team: data.awards.dpoy.team,
+            mine: data.awards.dpoy.participantId !== null && data.awards.dpoy.participantId === meParticipantId,
+            ppg: data.awards.dpoy.ppg,
+            rpg: data.awards.dpoy.rpg,
+            apg: data.awards.dpoy.apg,
+            spg: data.awards.dpoy.spg,
+            bpg: data.awards.dpoy.bpg,
           },
         }
       : null;
   const playin =
-    stage >= 5
-      ? league.playin.map((game) => ({
+    stage >= 5 && data.playin
+      ? data.playin.map((game) => ({
           id: game.id,
           conference: game.conference,
           label: game.label,
@@ -388,13 +491,13 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
           winner: game.winner,
         }))
       : null;
-  const playoffs = stage >= 6 ? playoffViews(league, stage, cursor) : null;
+  const playoffs = stage >= 6 ? playoffViewsFrom(data, stage, cursor) : null;
   const recap =
-    stage >= 10
+    stage >= 10 && data.champion !== null && data.h2h
       ? {
-          champion: league.champion,
-          championName: league.humans.find((entry) => entry.team === league.champion)?.name ?? league.champion,
-          entries: league.humans
+          champion: data.champion,
+          championName: data.humans.find((entry) => entry.team === data.champion)?.name ?? data.champion,
+          entries: data.humans
             .map((entry) => ({
               seat: entry.seat,
               name: entry.name,
@@ -405,12 +508,12 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
               champion: entry.champion,
             }))
             .sort((a, b) => Number(b.champion) - Number(a.champion) || a.seat - b.seat),
-          h2h: Object.entries(league.h2h).flatMap(([a, opponents]) =>
+          h2h: Object.entries(data.h2h).flatMap(([a, opponents]) =>
             Object.entries(opponents)
               .filter(([b]) => a < b)
               .map(([b, record]) => ({
-                a: league.humans.find((entry) => entry.participantId === a)?.name ?? 'A',
-                b: league.humans.find((entry) => entry.participantId === b)?.name ?? 'B',
+                a: data.humans.find((entry) => entry.participantId === a)?.name ?? 'A',
+                b: data.humans.find((entry) => entry.participantId === b)?.name ?? 'B',
                 wins: record.wins,
                 losses: record.losses,
               })),
@@ -430,7 +533,33 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
     awards,
     playin,
     playoffs,
-    my: myView(league, stage, meParticipantId, standings),
+    my: myViewFrom(data, stage, meParticipantId, standings),
     recap,
   };
+}
+
+export function revealLeague(league: LeagueResult, stage: number, cursor: number, meParticipantId: string | null): LeagueView {
+  return assembleLeagueView(
+    {
+      games: league.games,
+      gamesTotal: league.games.length,
+      stageCounts: stageTotals(league.games),
+      playinCount: league.playin.length,
+      seriesCounts: [1, 2, 3, 4].map((round) => league.series.filter((entry) => entry.round === round).length),
+      seriesGames: [1, 2, 3, 4].map((round) =>
+        league.series.filter((entry) => entry.round === round).reduce((sum, entry) => sum + entry.games.length, 0),
+      ),
+      standings: league.standings,
+      partial: null,
+      humans: league.humans,
+      awards: league.awards,
+      playin: league.playin,
+      series: league.series,
+      champion: league.champion,
+      h2h: league.h2h,
+    },
+    stage,
+    cursor,
+    meParticipantId,
+  );
 }

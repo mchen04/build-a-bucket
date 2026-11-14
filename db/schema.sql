@@ -114,3 +114,42 @@ create index if not exists events_lobby_idx on events (lobby_id, id desc);
 create index if not exists lobbies_updated_idx on lobbies (updated_at);
 create index if not exists actions_lobby_idx on actions (lobby_id);
 create index if not exists lobby_teams_lobby_idx on lobby_teams (lobby_id);
+
+create table if not exists league_slices (
+  lobby_id uuid primary key references lobbies (id) on delete cascade,
+  humans jsonb not null,
+  east jsonb not null,
+  west jsonb not null,
+  clock jsonb not null,
+  awards jsonb,
+  playin jsonb,
+  series jsonb,
+  champion text,
+  h2h jsonb
+);
+
+create table if not exists league_slice_games (
+  lobby_id uuid not null references lobbies (id) on delete cascade,
+  game_no int not null,
+  stage int not null,
+  home smallint not null,
+  away smallint not null,
+  home_score int not null,
+  away_score int not null,
+  winner smallint not null,
+  friends boolean not null default false,
+  primary key (lobby_id, game_no)
+);
+
+create table if not exists league_slice_checkpoints (
+  lobby_id uuid not null references lobbies (id) on delete cascade,
+  stage int not null,
+  cursor int not null,
+  visible int not null,
+  records jsonb not null,
+  primary key (lobby_id, stage, cursor)
+);
+
+create index if not exists league_slice_games_home_idx on league_slice_games (lobby_id, home, game_no);
+create index if not exists league_slice_games_away_idx on league_slice_games (lobby_id, away, game_no);
+create index if not exists league_slice_games_friends_idx on league_slice_games (lobby_id, friends, game_no desc);
