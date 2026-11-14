@@ -256,6 +256,7 @@ async function freshnessJourney(base) {
   const { code, host, seats } = await createLobby(base, 'Host', settings);
   await joinSeats(base, code, seats, 8);
   const latencies = [];
+  const groups = { ready: [], season: [], reveal: [] };
   const watch = async (watcher, started, seen) => {
     while (Date.now() - started < 5000) {
       const result = await poll(base, code, watcher);
@@ -266,7 +267,11 @@ async function freshnessJourney(base) {
     }
     return null;
   };
-  for (const actor of seats) {
+  await act(base, code, host, 'start', { settings });
+  await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
+  await act(base, code, host, 'lock');
+  await act(base, code, host, 'advance', { stage: 0 });
+  for (const actor of seats.slice(0, 4)) {
     const started = Date.now();
     const watches = seats
       .filter((entry) => entry !== actor)
@@ -276,30 +281,44 @@ async function freshnessJourney(base) {
         return entry?.ready === true;
       }));
     await act(base, code, actor, 'ready', { stage: 0 });
-    latencies.push(...(await Promise.all(watches)).filter((value) => value !== null));
+    const ready = (await Promise.all(watches)).filter((value) => value !== null);
+    latencies.push(...ready);
+    groups.ready.push(...ready);
   }
-  await act(base, code, host, 'start', { settings });
-  await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
-  await act(base, code, host, 'lock');
-  await act(base, code, host, 'advance', { stage: 0 });
   await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
   const seasonStart = Date.now();
   const seasonWatches = seats.map((watcher) => watch(watcher, seasonStart, (view) => view?.phase === 'season'));
   await poll(base, code, host);
-  latencies.push(...(await Promise.all(seasonWatches)).filter((value) => value !== null));
+  const season = (await Promise.all(seasonWatches)).filter((value) => value !== null);
+  latencies.push(...season);
+  groups.season.push(...season);
   const before = await poll(base, code, seats[0], 0);
   const baseVersion = before.json?.lobby?.version ?? 0;
   await sleep(1400);
   const revealStart = Date.now();
   const revealWatches = seats.map((watcher) => watch(watcher, revealStart, (view) => (view?.version ?? 0) > baseVersion));
-  latencies.push(...(await Promise.all(revealWatches)).filter((value) => value !== null));
+  const reveal = (await Promise.all(revealWatches)).filter((value) => value !== null);
+  latencies.push(...reveal);
+  groups.reveal.push(...reveal);
   const sorted = [...latencies].sort((a, b) => a - b);
+  const stat = (values) => {
+    const list = [...values].sort((a, b) => a - b);
+    return {
+      samples: list.length,
+      p50: list[Math.floor(list.length * 0.5)] ?? null,
+      p95: list[Math.floor(list.length * 0.95)] ?? null,
+      max: list[list.length - 1] ?? null,
+    };
+  };
   return {
     seats: seats.length,
     samples: latencies.length,
     p50: sorted[Math.floor(sorted.length * 0.5)] ?? null,
     p95: sorted[Math.floor(sorted.length * 0.95)] ?? null,
     max: sorted[sorted.length - 1] ?? null,
+    ready: stat(groups.ready),
+    season: stat(groups.season),
+    reveal: stat(groups.reveal),
   };
 }
 
