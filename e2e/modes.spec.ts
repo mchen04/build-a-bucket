@@ -378,6 +378,7 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
 });
 
 test('squad builder fills five slots, simulates the season and survives a reload', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await page.getByTestId('home-squad').click();
   await expect(page.getByTestId('squad-slots')).toBeVisible();
@@ -462,6 +463,7 @@ test('squad builder fills five slots, simulates the season and survives a reload
 
 test('squad playoff walkthrough reveals every round before the recap', async ({ page }) => {
   test.setTimeout(120_000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   const squad = {
     v: 1,
@@ -510,6 +512,12 @@ test('squad playoff walkthrough reveals every round before the recap', async ({ 
   await expect(rounds).toHaveCount(4);
   await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
   stamp(`all-rounds-banner rounds=${await rounds.count()}`);
+  const last = rounds.last();
+  await expect(last).toContainText('NBA Finals');
+  expect(await last.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { opacity: style.opacity, animation: style.animationName };
+  })).toEqual({ opacity: '1', animation: 'none' });
   await shot(page, 'squad-playoffs-all');
   expect((await rounds.locator('.rname').allInnerTexts()).map((label) => label.toLowerCase())).toEqual([
     'first round',
@@ -518,6 +526,7 @@ test('squad playoff walkthrough reveals every round before the recap', async ({ 
     'nba finals',
   ]);
   await expect(page.getByTestId('squad-playoff-banner')).toContainText('CHAMPIONS');
+  await expect(page.getByTestId('squad-playoff-banner')).toContainText(/NBA CHAMPIONS!.*\d+-\d+ Season · \d+-\d+ vs [A-Z]{2,4}/);
   await page.getByTestId('squad-recap-next').click();
   await expect(page.getByTestId('squad-result')).toContainText('SEED');
   stamp('recap');

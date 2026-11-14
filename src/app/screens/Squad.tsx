@@ -288,7 +288,7 @@ export function Squad(props: Props) {
             </div>
             {finishShown ? (
               <div class={`banner ${season.champion ? '' : 'miss'}`} data-testid="squad-playoff-banner">
-                <h1>{season.champion ? 'CHAMPIONS' : season.madePlayoffs ? 'SEASON OVER' : 'ELIMINATED'}</h1>
+                <h1>{season.champion ? 'NBA CHAMPIONS!' : season.madePlayoffs ? 'SEASON OVER' : 'ELIMINATED'}</h1>
                 <p>{squadFinish(season)}</p>
               </div>
             ) : (

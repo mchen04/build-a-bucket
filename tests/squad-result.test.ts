@@ -9,6 +9,7 @@ const playinLoss: SquadRound = { type: 'playin', name: null, opponent: 'PHX', wi
 const firstWin: SquadRound = { type: 'series', name: 'First Round', opponent: 'DEN', wins: 4, losses: 2, won: true, label: null };
 const firstLoss: SquadRound = { type: 'series', name: 'First Round', opponent: 'DEN', wins: 2, losses: 4, won: false, label: null };
 const finalsLoss: SquadRound = { type: 'series', name: 'NBA Finals', opponent: 'BOS', wins: 2, losses: 4, won: false, label: null };
+const finalsWin: SquadRound = { type: 'series', name: 'NBA Finals', opponent: 'BOS', wins: 4, losses: 2, won: true, label: null };
 
 function season(overrides: Partial<SquadSeasonResult> = {}): SquadSeasonResult {
   return {
@@ -29,12 +30,13 @@ function season(overrides: Partial<SquadSeasonResult> = {}): SquadSeasonResult {
 
 describe('squad result', () => {
   it('names the exact finish', () => {
-    expect(squadFinish(season({ champion: true }))).toBe('Champions');
-    expect(squadFinish(season({ rounds: [playinWin, firstWin, finalsLoss] }))).toBe('NBA Finals');
-    expect(squadFinish(season({ rounds: [playinWin, firstLoss] }))).toBe('First Round');
-    expect(squadFinish(season({ rounds: [playinLoss], madePlayoffs: false }))).toBe('Play-In loss');
+    expect(squadFinish(season({ champion: true, rounds: [playinWin, firstWin, finalsWin] }))).toBe('45-37 Season · 4-2 vs BOS');
+    expect(squadFinish(season({ rounds: [playinWin, firstWin, finalsLoss] }))).toBe('Eliminated · NBA Finals · 2-4 vs BOS');
+    expect(squadFinish(season({ rounds: [playinWin, firstLoss] }))).toBe('Eliminated · First Round · 2-4 vs DEN');
+    expect(squadFinish(season({ rounds: [playinLoss], madePlayoffs: false }))).toBe('Eliminated in Play-In');
     expect(squadFinish(season({ rounds: [playinWin] }))).toBe('Play-In');
-    expect(squadFinish(season({ rounds: [], madePlayoffs: false }))).toBe('Missed playoffs');
+    expect(squadFinish(season({ rounds: [playinWin], madePlayoffs: false }))).toBe('Missed the Playoffs');
+    expect(squadFinish(season({ rounds: [], madePlayoffs: false }))).toBe('Missed the Playoffs');
   });
 
   it('never reveals the finish before the playoff journey ends', () => {
