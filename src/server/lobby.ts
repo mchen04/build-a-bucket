@@ -141,9 +141,14 @@ function parseLeague(raw: unknown): LeagueResult | null {
 
 const LEAGUE_CACHE_MAX = 32;
 const leagueCache = new Map<string, Promise<LeagueResult | null>>();
+const LEAGUE_CACHE_DISABLED = process.env.BAB_DISABLE_LEAGUE_CACHE === '1';
 
 async function leagueFor(lobbyId: string, leagueVersion: number): Promise<LeagueResult | null> {
   if (!leagueVersion) return null;
+  if (LEAGUE_CACHE_DISABLED) {
+    const rows = await db().query<{ league: unknown }>('select league from lobbies where id = $1::uuid', [lobbyId]);
+    return parseLeague(rows[0]?.league);
+  }
   const key = `${lobbyId}:${leagueVersion}`;
   const cached = leagueCache.get(key);
   if (cached) {
@@ -350,11 +355,11 @@ select
     'id', p.id, 'name', p.name, 'seat', p.seat, 'status', p.status,
     'joined_at', p.joined_at, 'last_seen', p.last_seen,
     'is_me', p.token_hash = $2,
-    'build', case when p.token_hash = $2 then p.build else null end,
+    'build', case when p.token_hash = $2 and (select phase from l) in ('building', 'preview') then p.build else null end,
     'build_kind', p.build_kind, 'build_summary', p.build_summary,
     'ready_stage', p.ready_stage, 'preview_ready', p.preview_ready,
     'team', t.team, 'reroll_used', coalesce(t.reroll_used, false),
-    'salary_powers', case when p.token_hash = $2 then p.salary_powers else null end
+    'salary_powers', case when p.token_hash = $2 and (select phase from l) in ('building', 'preview') then p.salary_powers else null end
   ) order by p.seat), '[]'::json) from participants p
     left join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
     where p.lobby_id = (select id from l)) as participants,
