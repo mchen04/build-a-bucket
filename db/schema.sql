@@ -23,10 +23,11 @@ alter table lobbies add column if not exists stage int not null default 0;
 alter table lobbies add column if not exists stage_cursor int not null default 0;
 alter table lobbies add column if not exists stage_started_at timestamptz;
 alter table lobbies add column if not exists locked_at timestamptz;
+alter table lobbies add column if not exists league_claimed_at timestamptz;
 alter table lobbies add column if not exists rematch int not null default 0;
 
 alter table lobbies drop constraint if exists lobbies_phase_check;
-update lobbies set phase = 'lobby' where phase = 'building' and league is null;
+update lobbies set phase = 'lobby' where phase = 'building' and league is null and locked_at is null;
 update lobbies set phase = 'recap'
   where phase in ('season', 'barrier', 'playoffs', 'finished') and league is null;
 alter table lobbies add constraint lobbies_phase_check check (
