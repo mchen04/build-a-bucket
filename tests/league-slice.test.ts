@@ -153,6 +153,23 @@ describe('league slice views', () => {
     }
   }
 
+  it('keeps the champion out of every playoffs view', () => {
+    const result = league('slice-champion', 'normal');
+    const slice = buildLeagueSlice(result);
+    const me = result.humans[0]!.participantId;
+    for (let stage = 6; stage <= 9; stage++) {
+      const total = stageGamesTotal(result, stage);
+      for (const cursor of [0, Math.floor(total / 2), total]) {
+        const view = sliceView(slice, stage, cursor, me);
+        expect(view.phase).toBe('playoffs');
+        expect(view.recap).toBeNull();
+      }
+    }
+    const recap = sliceView(slice, 10, 0, me);
+    expect(recap.phase).toBe('recap');
+    expect(recap.recap?.champion).toBeTruthy();
+  });
+
   it('merges a league delta into the previous view', () => {
     const result = league('slice-delta', 'normal');
     expect(result.series.some((entry) => entry.games.length === 7)).toBe(true);

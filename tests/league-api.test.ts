@@ -332,6 +332,53 @@ describeDb('shared league API', () => {
     expect(recap.league?.awards).not.toBeNull();
   }, 120_000);
 
+  it('sends no champion until the recap, in the view or a delta', async () => {
+    const { code, seats } = await setupBuilding('normal', 2);
+    for (let index = 0; index < seats.length; index++) {
+      const seatView = await view(code, seats[index]!.secret);
+      await submitOk(code, seats[index]!.secret, await buildFor('normal', seatView, index));
+    }
+    for (const seat of seats) await ready(code, seat.secret, 0);
+    let current = await view(code, seats[1]!.secret);
+    for (let guard = 0; guard < 12 && current.stage < 8; guard++) {
+      await fastForward(code);
+      current = await view(code, seats[1]!.secret);
+      if (current.stage >= 8) break;
+      for (const seat of seats) await ready(code, seat.secret, current.stage);
+    }
+    expect(current.stage).toBe(8);
+    const beforeFinals = current;
+    await fastForward(code);
+    current = await view(code, seats[1]!.secret);
+    for (const seat of seats) await ready(code, seat.secret, current.stage);
+    current = await view(code, seats[1]!.secret);
+    expect(current.stage).toBe(9);
+    expect(current.phase).toBe('playoffs');
+    expect(current.league?.recap).toBeNull();
+    expect(current.participants.every((entry) => entry.season?.champion !== true)).toBe(true);
+
+    const finalsResponse = await viewHandler(pollWith(seats[1]!.secret, code, beforeFinals.version, progressToken(beforeFinals), beforeFinals.events[0]?.id ?? 0, false));
+    const finalsBody = await read<{ delta?: { phase?: string; league?: { stage: number; recap?: unknown } }; lobby?: LobbyView }>(finalsResponse);
+    expect(finalsBody.delta?.phase ?? finalsBody.lobby?.phase).toBe('playoffs');
+    expect((finalsBody.delta?.league ?? finalsBody.lobby?.league)?.stage).toBe(9);
+    expect((finalsBody.delta?.league ?? finalsBody.lobby?.league)?.recap ?? null).toBeNull();
+
+    const beforeRecap = current;
+    await fastForward(code);
+    current = await view(code, seats[1]!.secret);
+    for (const seat of seats) await ready(code, seat.secret, current.stage);
+    current = await view(code, seats[1]!.secret);
+    expect(current.phase).toBe('recap');
+    expect(current.league?.recap?.champion).toBeTruthy();
+
+    const recapBody = await read<{ delta?: { phase?: string; league?: { stage: number; recap?: { champion?: string | null } | null } }; lobby?: LobbyView }>(
+      await viewHandler(pollWith(seats[1]!.secret, code, beforeRecap.version, progressToken(beforeRecap), beforeRecap.events[0]?.id ?? 0, false)),
+    );
+    expect(recapBody.delta?.phase ?? recapBody.lobby?.phase).toBe('recap');
+    expect((recapBody.delta?.league ?? recapBody.lobby?.league)?.stage).toBe(10);
+    expect((recapBody.delta?.league ?? recapBody.lobby?.league)?.recap?.champion).toBeTruthy();
+  }, 120_000);
+
   it('rejects an advance after the recap without changing the result', async () => {
     const { code, seats, view: recap } = await runLeague('normal', 2);
     const response = await advance(code, seats[0]!.secret, recap.stage);
