@@ -19,6 +19,7 @@ const PG_PORT = Number(flag('pg-port', '55432'));
 const PORT = Number(flag('port', '4393'));
 const RUNS = Number(flag('runs', '3'));
 const SECONDS = Number(flag('seconds', '20'));
+const FRESH_GAP = Number(flag('fresh-gap', '500'));
 const MODES = flag('modes', 'normal,salary,squad').split(',');
 const JOURNEYS = flag('journeys', 'solo,idle,league').split(',');
 const TAG = flag('tag', 'branch');
@@ -297,7 +298,7 @@ async function freshnessJourney(base) {
       const view = result.json?.lobby ?? null;
       const delta = result.json?.delta ?? null;
       if (seen(view, delta)) return Date.now() - started;
-      await sleep(500);
+      await sleep(FRESH_GAP);
     }
     return null;
   };
