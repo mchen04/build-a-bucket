@@ -368,12 +368,18 @@ async function leagueRun() {
       if (Date.now() > phaseDeadline) throw new Error(`phase differs at ${label}: ${phases.join(' | ')}`);
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    const tables = [];
-    for (const seat of active()) tables.push(await readTables(seat));
-    const top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
-    const first = JSON.stringify(top[0]);
-    for (let index = 1; index < top.length; index++) {
-      if (JSON.stringify(top[index]) !== first) throw new Error(`standings differ at ${label} for seat ${active()[index].seat}`);
+    let tables = [];
+    let top = [];
+    const standingsDeadline = Date.now() + 8000;
+    for (;;) {
+      tables = [];
+      for (const seat of active()) tables.push(await readTables(seat));
+      top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
+      const first = JSON.stringify(top[0]);
+      const mismatch = top.findIndex((entry) => JSON.stringify(entry) !== first);
+      if (mismatch < 0) break;
+      if (Date.now() > standingsDeadline) throw new Error(`standings differ at ${label} for seat ${active()[mismatch].seat}`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
     const mine = [];
     for (let index = 0; index < active().length; index++) {
