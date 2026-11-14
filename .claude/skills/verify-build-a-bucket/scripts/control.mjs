@@ -418,7 +418,7 @@ async function leagueRun() {
       if (!banners.every((value) => value === banners[0])) throw new Error(`champion text differs at ${label}`);
       champion = banners[0];
     }
-    return { label, phase, stageName: await stageName(active()[0]), standings: top[0], mine, champion };
+    return { label, phase, stageName: await stageName(active()[0]), standings: top[0], mine, champion, at: Date.now() };
   };
   const stages = [];
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
@@ -577,6 +577,12 @@ async function leagueRun() {
       for (const seat of active()) await snap(seat, 'second-game');
       playAgain = true;
     }
+    const timed = stages.filter((entry) => entry.at);
+    const phaseTimings = timed.map((entry, index) => ({
+      phase: entry.phase,
+      stage: entry.stageName,
+      seconds: index + 1 < timed.length ? Math.round((timed[index + 1].at - entry.at) / 1000) : null,
+    }));
     const summary = {
       code,
       players,
@@ -586,6 +592,7 @@ async function leagueRun() {
       viewport,
       chaos,
       stages,
+      phaseTimings,
       champion,
       playAgain,
       rematchNote,
@@ -593,7 +600,7 @@ async function leagueRun() {
       evidence: ev,
     };
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
-    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, checkpoints: stages.filter((entry) => entry.phase).length, champion, playAgain, rematchNote, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, checkpoints: stages.filter((entry) => entry.phase).length, phaseTimings, champion, playAgain, rematchNote, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
   } finally {
     await browser.close();
   }
