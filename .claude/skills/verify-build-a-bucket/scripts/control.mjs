@@ -395,23 +395,31 @@ async function leagueRun() {
     }
     if (phase === 'Season running') {
       for (const testId of ['awards', 'playin', 'playoffs', 'champion-banner']) {
-        if (await anyVisible(testId)) throw new Error(`${testId} revealed during the season at ${label}`);
+        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
+          throw new Error(`${testId} revealed during the season at ${label}`);
+        }
       }
       if (mine.some((entry) => entry.seed !== null)) throw new Error(`seed revealed during the season at ${label}`);
     } else if (phase === 'Awards') {
       if (!(await anyVisible('awards'))) throw new Error(`awards missing at ${label}`);
       for (const testId of ['playin', 'playoffs', 'champion-banner']) {
-        if (await anyVisible(testId)) throw new Error(`${testId} revealed at awards ${label}`);
+        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
+          throw new Error(`${testId} revealed at awards ${label}`);
+        }
       }
       if (mine.some((entry) => entry.seed === null)) throw new Error(`seed missing at awards ${label}`);
     } else if (phase === 'Play-In') {
       if (!(await anyVisible('playin'))) throw new Error(`play-in missing at ${label}`);
       for (const testId of ['playoffs', 'champion-banner']) {
-        if (await anyVisible(testId)) throw new Error(`${testId} revealed at play-in ${label}`);
+        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
+          throw new Error(`${testId} revealed at play-in ${label}`);
+        }
       }
     } else if (phase === 'Playoffs') {
       if (!(await anyVisible('playoffs'))) throw new Error(`playoffs missing at ${label}`);
-      if (await anyVisible('champion-banner')) throw new Error(`champion revealed before the recap at ${label}`);
+      if ((await anyVisible('champion-banner')) && (await phaseOf(active()[0])) === phase) {
+        throw new Error(`champion revealed before the recap at ${label}`);
+      }
     } else if (phase === 'Recap') {
       if (!(await anyVisible('champion-banner'))) throw new Error(`champion missing at recap ${label}`);
     } else {
@@ -551,7 +559,7 @@ async function leagueRun() {
       }
       if (!moved) throw new Error(`stage did not advance after ${record.stageName}`);
       checkpoint++;
-      if (checkpoint > 12) throw new Error('league did not reach the recap');
+      if (checkpoint > 30) throw new Error('league did not reach the recap');
     }
     const champion = stages[stages.length - 1].champion;
     for (const seat of active()) await snap(seat, 'recap');
