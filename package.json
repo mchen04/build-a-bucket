@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:local-db": "node scripts/local-db.mjs -- vitest run --config vitest.local.config.ts",
     "e2e": "playwright test",
+    "e2e:local-db": "node scripts/local-db.mjs -- playwright test --config playwright.local.config.ts",
     "db:migrate": "node scripts/migrate.ts",
     "prune:lobbies": "node scripts/prune-lobbies.ts"
   },

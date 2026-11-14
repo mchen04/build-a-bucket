@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
+const localDb = await import(path.join(repo, 'scripts/local-db.mjs'));
 const home = process.env.BAB_VERIFY_HOME ?? path.join(os.homedir(), '.cache', 'verify-build-a-bucket');
 const [cmd, ...rest] = process.argv.slice(2);
 
@@ -57,18 +58,46 @@ async function launch() {
   const dir = path.join(home, id);
   fs.mkdirSync(evidenceDir(dir), { recursive: true });
   const mode = o.prod ? 'prod' : 'dev';
+  const local = mode === 'dev' && !o.neon;
+  const localHandle = local
+    ? await localDb.startLocalDb({
+        root: repo,
+        dataDir: path.join(dir, 'pgdata'),
+        pgPort: Number(o['pg-port'] ?? 55500 + Math.floor(Math.random() * 400)),
+      })
+    : null;
+  const env = localHandle ? { ...process.env, ...localDb.localDbEnv(localHandle) } : process.env;
   let child;
   const log = fs.openSync(path.join(dir, 'server.log'), 'a');
   if (mode === 'prod') {
     execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: ['ignore', log, log] });
     child = spawn(path.join(repo, 'node_modules/.bin/vite'), ['preview', '--port', String(port), '--strictPort'], { cwd: repo, detached: true, stdio: ['ignore', log, log] });
   } else {
-    child = spawn(process.execPath, ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], { cwd: repo, detached: true, stdio: ['ignore', log, log] });
+    child = spawn(process.execPath, ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], { cwd: repo, detached: true, stdio: ['ignore', log, log], env });
   }
   child.unref();
   const base = `http://localhost:${port}`;
   const head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-  const state = { id, dir, mode, port, pid: child.pid, base, head, lobbies: [], startedAt: new Date().toISOString() };
+  const state = {
+    id,
+    dir,
+    mode,
+    port,
+    pid: child.pid,
+    base,
+    head,
+    lobbies: [],
+    localDb: localHandle
+      ? {
+          dataDir: localHandle.dataDir,
+          pgPort: localHandle.pgPort,
+          database: localHandle.database,
+          url: localHandle.url,
+          runnerPath: localHandle.runnerPath,
+        }
+      : null,
+    startedAt: new Date().toISOString(),
+  };
   saveState(dir, state);
   fs.mkdirSync(home, { recursive: true });
   fs.writeFileSync(path.join(home, 'current'), dir);
@@ -80,7 +109,10 @@ async function launch() {
     await sleep(1000);
   }
   console.log(JSON.stringify({ run: dir, ...state, probe: last }, null, 2));
-  if (!(mode === 'prod' ? last.app === 200 : last.ready)) process.exitCode = 1;
+  if (!(mode === 'prod' ? last.app === 200 : last.ready)) {
+    if (localHandle) await localDb.stopLocalDb(localHandle);
+    process.exitCode = 1;
+  }
 }
 
 async function doctor() {
@@ -856,10 +888,11 @@ async function cleanup() {
   await sleep(1500);
   for (const pid of killed) if (pidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
   let removed = [];
-  if (state.lobbies.length && state.mode === 'dev') {
+  if (!state.localDb && state.lobbies.length && state.mode === 'dev') {
     const outText = execFileSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'drop-lobbies.ts'), ...state.lobbies], { cwd: repo, encoding: 'utf8' });
     removed = JSON.parse(outText);
   }
+  if (state.localDb) await localDb.stopLocalDb({ ...state.localDb, remove: true });
   fs.rmSync(path.join(home, 'current'), { force: true });
   for (const f of fs.readdirSync(dir)) if (f.startsWith('session-')) fs.rmSync(path.join(dir, f));
   const evidence = path.join(dir, 'evidence');

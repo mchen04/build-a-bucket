@@ -24,4 +24,13 @@ export default tseslint.config(
     },
     rules: { 'no-empty': ['error', { allowEmptyCatch: true }] },
   },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: Object.fromEntries(
+        ['process', 'console', 'fetch', 'AbortSignal', 'performance', 'setTimeout', 'setInterval', 'Buffer', 'URL', 'URLSearchParams'].map((name) => [name, 'readonly']),
+      ),
+    },
+    rules: { 'no-empty': ['error', { allowEmptyCatch: true }] },
+  },
 );

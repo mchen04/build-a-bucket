@@ -337,6 +337,9 @@ describe('league slice views', () => {
           return [{ series }] as unknown as Row[];
         },
         async batch(): Promise<void> {},
+        async transaction<Row>(): Promise<Row[][]> {
+          return [];
+        },
       });
       const clock: LeagueClock = { counts: [0, 0, 0, 0], playin: 0, seriesCounts: [8, 4, 2, 1], seriesGames: [0, 22, 13, 6] };
       const mid = await readLeagueDelta('delta-total', 7, 13, 0, 'DET', clock);

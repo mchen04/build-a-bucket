@@ -314,5 +314,25 @@ export async function createRunner() {
         pool.release(connection);
       }
     },
+    async transaction(queries) {
+      if (!queries.length) return [];
+      const connection = await pool.acquire();
+      try {
+        await connection.query('begin');
+        const results = [];
+        for (const entry of queries) results.push(await connection.query(interpolate(entry.text, entry.params ?? [])));
+        await connection.query('commit');
+        return results;
+      } catch (error) {
+        try {
+          await connection.query('rollback');
+        } catch {
+          connection.broken = connection.broken ?? new Error('rollback failed');
+        }
+        throw error;
+      } finally {
+        pool.release(connection);
+      }
+    },
   };
 }

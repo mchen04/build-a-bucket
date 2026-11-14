@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { shotDir } from './shots';
 import { devices, expect, test, type BrowserContext, type Page } from '@playwright/test';
-import { db } from '../src/server/db';
+import { db, setRunner } from '../src/server/db';
 import type { LeagueResult } from '../src/shared/engine/league';
 import { stageTotal } from '../src/shared/mp/league';
 import { loadLocalEnv } from '../scripts/lib.ts';
@@ -13,8 +13,12 @@ const createdCodes: string[] = [];
 loadLocalEnv();
 test.skip(!process.env.DATABASE_URL, 'the lobby spec needs the database');
 
-test.beforeAll(() => {
+test.beforeAll(async () => {
   mkdirSync(SHOTS, { recursive: true });
+  if (process.env.BAB_DB_RUNNER) {
+    const module = (await import(process.env.BAB_DB_RUNNER)) as { createRunner: () => Promise<import('../src/server/db').QueryRunner> };
+    setRunner(await module.createRunner());
+  }
 });
 
 test.afterAll(async () => {

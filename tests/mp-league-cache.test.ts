@@ -16,6 +16,9 @@ describe('league cache', () => {
         return [{ league: null }] as unknown as Row[];
       },
       async batch(): Promise<void> {},
+      async transaction<Row>(): Promise<Row[][]> {
+        return [];
+      },
     };
     setRunner(runner);
     const lobbyId = randomUUID();

@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { neon } from '@neondatabase/serverless';
 import { describe, expect, it } from 'vitest';
 import { loadLocalEnv, statementsFrom } from '../scripts/lib.ts';
+import { db } from '../src/server/db';
 
 loadLocalEnv();
 const describeDb = process.env.DATABASE_URL ? describe : describe.skip;
@@ -22,7 +22,6 @@ const NEW_CODES = [
 
 describeDb('migration rehearsal', () => {
   it('normalises legacy rows once and leaves live new-code lobbies untouched on a rerun', async () => {
-    const client = neon(process.env.DATABASE_URL as string);
     const legacy = statementsFrom(await readFile(path.join(process.cwd(), 'db', 'legacy-schema.sql'), 'utf8'));
     const current = statementsFrom(await readFile(path.join(process.cwd(), 'db', 'schema.sql'), 'utf8'));
     const schema = `rehearsal_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -146,7 +145,7 @@ describeDb('migration rehearsal', () => {
     );
     add('drop', `drop schema ${schema} cascade`);
 
-    const results = (await client.transaction((txn) => queries.map((entry) => txn.query(entry.text, entry.params)))) as unknown[][];
+    const results = (await db().transaction(queries)) as unknown[][];
     const result = <T>(key: string): T => results[marks.get(key) as number] as T;
 
     expect(result<{ code: string; phase: string }[]>('legacyPhases')).toEqual([
