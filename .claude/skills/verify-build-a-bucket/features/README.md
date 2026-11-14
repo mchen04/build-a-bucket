@@ -26,8 +26,17 @@ This directory is the maintained source for verifying what a phone user can do i
 ## Features
 
 - [Single-player Play](./play.md): build ten traits, team spin, season with Moments, playoffs, final report, resume after reload.
-- [Multiplayer lobby](./lobby.md): create, join by code, unique team draw and reroll, shared 82-game season, checkpoints, play-in, playoffs, recap, rematch, reconnect.
+- [Multiplayer lobby](./lobby.md): create, join by invite link, unique team draw and reroll, Normal/Salary/Squad builds, shared 82-game season, checkpoints, play-in, playoffs, recap, rematch, reconnect. `control.mjs league` drives 2 to 8 real sessions through the whole path.
 - [Daily Challenge](./daily.md): shared date-seeded spins, resume, one run per day.
 - [Salary Cap](./salary.md): daily budget grid with lock, infinite run.
 - [Squad Builder](./squad.md): five builds, one shared season.
 - [Whole-stack performance](./perf.md): cold load versus the original, lobby API under a full lobby.
+- [Parity with the original](./parity.md): the original's code beside ours on the same seeds, field by field, plus the offline fixtures.
+
+There is no Career mode in this rebuild. A feature that is not in this list has no recipe and is not proven.
+
+## Production checks
+
+After a deploy, compare the deployed asset hash with the local production build, run `npm run db:migrate` against the
+deployed database and confirm the five tables, then smoke the deployed stack with `cold-load --url`,
+`lobby-load --base` and `league --base`. `SKILL.md` has the exact commands and what each one proves.

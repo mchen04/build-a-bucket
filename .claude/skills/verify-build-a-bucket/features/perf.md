@@ -32,3 +32,18 @@ Preconditions:
 - Draft syncs bump the lobby version, so peers' polls return full views while anyone is building.
 - `cold-load` reuses one browser process across runs, so DNS and the sockets to cdn.jsdelivr.net are already warm after the first run; a preconnect hint shows no measurable gain under it.
 - The harness keeps HTTP caching off, so a repeat-visit win is the Cache API copy of the pinned catalog rather than the network cache.
+
+## Production checks
+
+These are the deploy-time checks that are not a performance comparison:
+
+- **Asset hash.** `curl -s https://<deployment>/ | grep -o 'assets/[^"]*\.js'` must name the same content-hashed
+  bundle the local production build wrote under `dist/assets/`. A different name means the deployment is serving a
+  different build; the page title alone proves nothing.
+- **Schema.** `npm run db:migrate` reads `.env.local` (or `BAB_ENV_FILE`), applies `db/schema.sql`, and prints
+  `db/schema.sql applied` plus `tables present: actions, events, lobby_teams, lobbies, participants`. Point it at the
+  deployed database; a missing table is an API failure waiting to happen.
+- **Live smoke.** `cold-load --url https://<deployment> --runs 3` proves the deployed bundle, the pinned catalog and
+  the first spin. `lobby-load --base https://<deployment> --players 8 --seconds 20` proves the deployed API and Neon
+  under a full lobby. `league --players 2 --mode normal --base https://<deployment>` is the driven user-path smoke.
+- Deployed lobbies are not removed by `cleanup`; run `npm run prune:lobbies` on that database.

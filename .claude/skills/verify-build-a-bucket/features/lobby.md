@@ -65,8 +65,8 @@ Chaos options, applied at the first checkpoint:
 - `--away 2` closes seat 2's browser context; the host must still advance and the remaining seats must agree.
 - `--host-leave` taps Leave lobby on the host; another seat must receive Advance and carry the league.
 
-The season reveal is real time. A two-seat league takes about 7 to 9 minutes because each quarter reveals roughly 300
-league games; run it in the background. The command has no internal setters or database jumps.
+The season reveal is real time. A measured two-seat league took about 12 minutes because each quarter reveals roughly
+300 league games; run it in the background. The command has no internal setters or database jumps.
 
 ## Gotchas
 
