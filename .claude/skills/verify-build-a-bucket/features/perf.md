@@ -7,6 +7,7 @@ How fast the rebuild loads on a phone compared with the original, and how the lo
 - `perf-cold` cold-load FCP, LCP, TTI-ish, `firstSpinMs`, bytes, requests, heap and long tasks under the original's baseline conditions, for the first visit and (with `--visits 2`) the repeat visit in the same context.
 - `perf-lobby` p50/p95 per lobby endpoint with 8 players polling and syncing drafts, plus over-capacity joins, poll shape (full view / delta / 204) and bytes per poll.
 - `perf-db` the same workload against dev, preview and production to separate database and function time.
+- `perf-meter` per-journey database requests, database request and response bytes, database time p50/p95/max, API requests and API response bytes, and the static browser payload, all against a local Postgres replay so repeated load never reaches Neon.
 
 ## How to get to it (user POV)
 
@@ -24,6 +25,17 @@ Preconditions:
 - **Lobby, dev.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs launch`, then `node .claude/skills/verify-build-a-bucket/scripts/control.mjs lobby-load --players 8 --extra 4 --seconds 20`.
 - **Lobby, deployed.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs lobby-load --base https://<deployment> --players 8 --seconds 20`. Its lobbies stay in that database until `npm run prune:lobbies`.
 - **Reading it.** A lower median outside the other side's min-max range is a gain; overlapping ranges are "no measured gain". Polls answer 204 when nothing changed, a delta when only progress moved, and a full view on joins, starts, submits and phase changes; bytes per poll is the number to watch while players build.
+
+## DB transfer meter
+
+`node .claude/skills/verify-build-a-bucket/scripts/control.mjs perf --runs 3 --seconds 20 [--modes normal,salary,squad] [--journeys solo,idle,league] [--tag name] [--out DIR]`
+
+- **Local replay, never Neon.** The meter starts a throwaway Postgres cluster under `<out>/pgdata` on port 55432 (`initdb -A trust`, `fsync=off`), applies `db/schema.sql`, and starts `scripts/dev-server.ts` with `BAB_DB_RUNNER` pointing at `scripts/meter/local-pg.mjs`. That module is a `QueryRunner` that speaks the Postgres wire protocol directly, so the server's real SQL runs unchanged and every query is measured at the socket. `DATABASE_URL` is set to the local cluster as a guard; nothing in the run resolves a Neon host. The runner is only installed when `BAB_DB_RUNNER` is set, so production never loads it.
+- **What the numbers mean.** `dbRequestBytes` and `dbResponseBytes` are Postgres wire bytes (message framing included, TCP/IP headers excluded) summed over the journey; `dbP50/dbP95/dbMax` are per-query round trips on localhost. `apiBytes` is the JSON the browser receives from `/api/**`; `static` is the home page plus its hashed assets fetched with `accept-encoding: identity`. Parameters are inlined as literals before the query is sent, so request bytes are the text actually sent, not the driver's binary bind.
+- **Journeys.** `solo` opens the app and asserts zero database requests (Play and Daily run in the browser). `idle-lobby` seats eight players and polls each second for `--seconds`. `league-<mode>` runs an eight-player shared league through draw, lock, auto-completed builds, preview, every checkpoint, awards, play-in, playoffs and the recap, then Play Again into the second season; it also reloads seat 4 mid-season (`reconnect`) and records the rematch window. The reveal is compressed by backdating `stage_started_at` and setting `stage_cursor` in the local database between polls; per-poll request and response shape is unchanged, so bytes and latency stay comparable while a full journey takes about a minute instead of twelve.
+- **Repeats.** Each journey runs `--runs` times; the summary reports the median and min-max range per journey. Keep a change only when its median beats the baseline outside the baseline range.
+- **Old lobby baseline.** `--legacy-settings` sends the pre-shared-league settings shape (`positions`, `revealSeconds`) so the same idle journey runs against `main`; the league journeys do not exist there.
+- **Evidence.** `<out>/meter-<tag>-<timestamp>.json` holds the aggregate and every run; `<out>/db-meter.jsonl` is the raw per-query log; `<out>/server.log` is the dev server. The cluster is stopped at the end unless `--keep` is passed.
 
 ## Gotchas
 

@@ -50,9 +50,9 @@ the same runtime catalog as the classic run (pinned data, kept in the Cache API 
 
 ## Parity harness
 
-`node_modules/.bin/vite-node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 50` executes the
-original's own code as an oracle and compares it with our engine on the same seeds and inputs (Vite resolves the
-harness's TypeScript import; plain `node` does not). The harness downloads the original's
+`node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 50` executes the
+original's own code as an oracle and compares it with our engine on the same seeds and inputs (the harness
+registers its own module hooks before importing our TypeScript engine). The harness downloads the original's
 public source at `92cb2a155bb2261cd68038ac366b994ad5dbb873` into a cache outside the repo
 (`~/.cache/bab-parity`, `BAB_PARITY_CACHE` to move it) and runs it unmodified in a child process through
 `.claude/skills/verify-build-a-bucket/scripts/parity/hooks.mjs`; component-inline logic (spin targets, the salary

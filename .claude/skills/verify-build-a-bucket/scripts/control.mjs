@@ -845,6 +845,18 @@ async function cleanup() {
   console.log(JSON.stringify({ stopped: killed, portFree: portOwner(state.port).length === 0, lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
 }
 
-const table = { launch, doctor, ui, league: leagueRun, 'lobby-load': lobbyLoad, 'cold-load': coldLoad, cleanup };
-if (!table[cmd]) { console.error('usage: control.mjs launch [--port N] [--prod] | doctor | ui --feature F [--device iphone|pixel] [--viewport 390x844] [--session S] [--path /] --step ... | league [--players 2..8] [--mode normal|salary|squad] [--era current|alltime] [--device iphone|pixel] [--viewport WxH] [--reload SEAT] [--away SEAT] [--host-leave] [--base URL] | lobby-load [--players 8] [--extra 4] [--seconds 20] [--poll 1000] [--base URL] [--drafts off] | cold-load [--url URL] [--runs 5] [--visits 2] | cleanup'); process.exit(2); }
+async function perf() {
+  const run = o.base ? null : currentRun();
+  const out = o.out ?? (run ? evidenceDir(run.dir, 'perf') : path.join(repo, 'evidence', 'perf'));
+  const args = [path.join(repo, '.claude/skills/verify-build-a-bucket/scripts/meter/run.mjs'), '--out', out];
+  for (const key of ['runs', 'seconds', 'modes', 'journeys', 'tag', 'repo', 'schema', 'pg-port', 'port']) {
+    if (o[key] !== undefined) args.push(`--${key}`, String(o[key]));
+  }
+  const child = spawn(process.execPath, args, { cwd: repo, stdio: 'inherit' });
+  const code = await new Promise((resolve) => child.once('exit', resolve));
+  if (code !== 0) process.exitCode = code;
+}
+
+const table = { launch, doctor, ui, league: leagueRun, 'lobby-load': lobbyLoad, 'cold-load': coldLoad, perf, cleanup };
+if (!table[cmd]) { console.error('usage: control.mjs launch [--port N] [--prod] | doctor | ui --feature F [--device iphone|pixel] [--viewport 390x844] [--session S] [--path /] --step ... | league [--players 2..8] [--mode normal|salary|squad] [--era current|alltime] [--device iphone|pixel] [--viewport WxH] [--reload SEAT] [--away SEAT] [--host-leave] [--base URL] | lobby-load [--players 8] [--extra 4] [--seconds 20] [--poll 1000] [--base URL] [--drafts off] | cold-load [--url URL] [--runs 5] [--visits 2] | perf [--runs 3] [--seconds 20] [--modes normal,salary,squad] [--journeys solo,idle,league] [--tag name] [--out DIR] | cleanup'); process.exit(2); }
 await table[cmd]();

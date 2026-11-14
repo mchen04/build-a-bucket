@@ -26,6 +26,7 @@ const OUT = path.resolve(flag('out', path.join(REPO, 'evidence', 'perf')));
 const SCHEMA = path.resolve(flag('schema', path.join(REPO, 'db/schema.sql')));
 const REPO_DIR = path.resolve(flag('repo', REPO));
 const KEEP = has('keep');
+const LEGACY_SETTINGS = has('legacy-settings');
 
 const DATA = path.join(OUT, 'pgdata');
 const LOG = path.join(OUT, 'db-meter.jsonl');
@@ -165,7 +166,8 @@ async function pollAll(base, code, seats, rounds, gap) {
 
 async function createLobby(base, name, settings) {
   const host = seat();
-  const created = await api(base, 'POST', '/api/lobby', host.secret, { name, actionId: randomUUID(), settings });
+  const body = LEGACY_SETTINGS ? { era: 'current', mode: 'normal', positions: ['guard', 'big'], revealSeconds: 4 } : settings;
+  const created = await api(base, 'POST', '/api/lobby', host.secret, { name, actionId: randomUUID(), settings: body });
   if (created.status >= 300) throw new Error(`create ${created.status} ${JSON.stringify(created.json)}`);
   absorb(host, created);
   return { code: created.json.lobby.code, host, seats: [host] };
@@ -252,7 +254,7 @@ async function leagueJourney(base, mode, options) {
     await act(base, code, host, 'lock');
     await act(base, code, host, 'advance', { stage: 0 });
     await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
-    const second = await pollAll(base, code, seats, 1, 0);
+    const second = [await poll(base, code, seats[0], 0)];
     const view = second[0].json?.lobby;
     rematch = { ms: Date.now() - started, phase: view?.phase ?? null, stage: view?.stage ?? null, polls: second.length };
     if (view?.phase !== 'season' || Number(view?.stage) !== 0) throw new Error(`rematch did not start a second season: ${view?.phase}/${view?.stage}`);
@@ -363,6 +365,7 @@ function aggregate(runs) {
   const out = {};
   for (const [name, list] of byName) {
     const pick = (fn) => list.map(fn);
+    const polls = (entry) => entry.detail?.polls ?? entry.api.requests ?? 1;
     out[name] = {
       runs: list.length,
       dbRequests: { median: median(pick((entry) => entry.db.requests)), range: [Math.min(...pick((entry) => entry.db.requests)), Math.max(...pick((entry) => entry.db.requests))] },
@@ -371,6 +374,7 @@ function aggregate(runs) {
       dbP50: { median: median(pick((entry) => entry.db.p50)), range: [Math.min(...pick((entry) => entry.db.p50)), Math.max(...pick((entry) => entry.db.p50))] },
       dbP95: { median: median(pick((entry) => entry.db.p95)), range: [Math.min(...pick((entry) => entry.db.p95)), Math.max(...pick((entry) => entry.db.p95))] },
       dbMax: { median: median(pick((entry) => entry.db.max)), range: [Math.min(...pick((entry) => entry.db.max)), Math.max(...pick((entry) => entry.db.max))] },
+      dbBytesPerPoll: { median: median(pick((entry) => Math.round(entry.db.responseBytes / polls(entry)))), range: [Math.min(...pick((entry) => Math.round(entry.db.responseBytes / polls(entry)))), Math.max(...pick((entry) => Math.round(entry.db.responseBytes / polls(entry))))] },
       apiRequests: { median: median(pick((entry) => entry.api.requests)), range: [Math.min(...pick((entry) => entry.api.requests)), Math.max(...pick((entry) => entry.api.requests))] },
       apiBytes: { median: median(pick((entry) => entry.api.bytes)), range: [Math.min(...pick((entry) => entry.api.bytes)), Math.max(...pick((entry) => entry.api.bytes))] },
       apiP50: { median: median(pick((entry) => entry.api.p50)), range: [Math.min(...pick((entry) => entry.api.p50)), Math.max(...pick((entry) => entry.api.p50))] },

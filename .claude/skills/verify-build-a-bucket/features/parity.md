@@ -22,13 +22,14 @@ Preconditions:
 
 - Repository dependencies installed; network for the first fetch of the original at the pinned SHA.
 
-- **Full sweep.** `node_modules/.bin/vite-node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 20`.
-  Vite resolves `ours.ts` and its extensionless imports; plain `node` does not. Each area prints
+- **Full sweep.** `node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 20`.
+  The harness registers its own module hooks before importing `ours.ts`, so plain `node` resolves the
+  TypeScript sources. Each area prints
   `name: N fields, 0 mismatches`; the command exits non-zero if any area differs or an oracle fails.
-- **One area.** `node_modules/.bin/vite-node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 5 --area season,salary`.
+- **One area.** `node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 5 --area season,salary`.
 - **Offline replay.** `npx vitest run tests/parity-oracle.test.ts` compares our engine with the recorded fixtures and
   needs no original source.
-- **Re-record fixtures.** `node_modules/.bin/vite-node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 50 --write-fixtures`.
+- **Re-record fixtures.** `node .claude/skills/verify-build-a-bucket/scripts/parity/run.mjs --seeds 50 --write-fixtures`.
   This rewrites `tests/fixtures/oracle/` and updates the pinned SHA where the harness reads it; keep the fixture diff
   in the same commit as the rule change it proves.
 - **Cache.** `--cache <dir>` (or `BAB_PARITY_CACHE`) moves the fetched original source; the default is
