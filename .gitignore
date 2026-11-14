@@ -5,6 +5,7 @@ dist
 *.local
 playwright-report
 test-results
+evidence/
 screenshots
 *.log
 perf

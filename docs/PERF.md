@@ -58,20 +58,43 @@ The measured steady response is 4.9 KB per poll; the request is about 4.5 KB, so
 
 Assumptions: 8 seats, 20 minutes per 8-seat lobby (160 seat-minutes), 17.5% waiting polls (the round 3 8-seat UI mix) and 82.5% reveal polls, 50.4 polls per seat-minute (80% visible at 1 s, 20% hidden at 5 s).
 
-| Per 8-seat, 20-minute lobby | Before round 4 (warm) | Round 4 warm | Round 4 cold |
-|---|---|---|---|
-| Transfer | 64.2 MB | 40.8 MB | 40.6 MB |
-| At 115 lobbies/month (calibrated) | 7.38 GB | 4.69 GB | 4.67 GB |
-| Lobbies that fit 4 GB (5 GB with 20% headroom) | 62 | 98 | 98 |
-| Lobbies that fit 5 GB | 77 | 123 | 123 |
+| Per 8-seat, 20-minute lobby | Before round 4 (warm) | Round 4 warm | Round 4 cold | Round 5 cold (HTTP stage 0) | 8-seat real-time |
+|---|---|---|---|---|---|
+| Transfer | 64.2 MB | 40.8 MB | 40.6 MB | 42.5 MB | 95.8 MB |
+| At 115 lobbies/month (calibrated) | 7.38 GB | 4.69 GB | 4.67 GB | 4.89 GB | 11.01 GB |
+| Lobbies that fit 4 GB (5 GB with 20% headroom) | 62 | 98 | 98 | 94 | 41 |
+| Lobbies that fit 5 GB | 77 | 123 | 123 | 117 | 52 |
 
-The 20-second cold mix is 4.67 GB at 115 lobbies: under the 5 GB quota with about 7% headroom, but above the 4 GB headroom target. The 8-second mix (230.6 KB reveal, 151.2 KB waiting) projects 3.99 GB and meets 4 GB; the difference is the 204 share (30% in the short run, 12% in the 20-second run). The remaining gap is the probe: 2.53 KB of the 5.17 KB reveal poll. A delta response that sends only the new games, or a smaller probe, is the next lever; the slice read itself is already 2.0 KB.
+The round 5 cold mix is 4.89 GB at 115 lobbies: under the 5 GB quota with about 2% headroom, but above the 4 GB headroom target. The HTTP harness completes the intended 160 polls per 20 seconds; the fetch harness's slow polls undercounted the poll count, so the round 4 cold 4.67 GB is not directly comparable. The per-poll cold reveal is 5.08 KB (304.9 KB/seat-minute over 160 polls); the request is about 4.5 KB, so the cold reveal poll is about 9.6 KB, under the 10 KB target. The remaining gap is the probe: 2.53 KB of the 5.17 KB reveal poll. A delta response that sends only the new games, or a smaller probe, is the next lever; the slice read itself is already 2.0 KB.
+
+## Eight-seat real-time run
+
+The 8-seat UI run at dfc37cb completed a full season, Play-In, playoffs, recap and Play Again. Phase durations: first quarter 121 s, second 126 s, third 124 s, fourth 2 s, awards 2 s, Play-In 70 s, first round 31 s, semifinals 19 s, conference finals 12 s, Finals 1 s. The season window was 10.6 minutes; the DB response was 598.5 KB/seat-minute and the request 195.6 KB/seat-minute, 794.1 KB total. The full-season mix is about twice the stage-0 wait journey because the later stages carry larger game lists. At 115 lobbies the response projection is 11.01 GB and the total 14.61 GB: the 5 GB quota is not met (52 lobbies fit 5 GB, 41 fit 4 GB). The run recorded one 409 on seat 1, a duplicate action; the season, recap and Play Again completed.
+
+## Bundled changes
+
+- Slice storage: cold reveal 274.6 KB → 4.9 KB (round 4).
+- Compact waiting probe: checkpoint 195.8 → 65.3 KB/seat-minute (round 4 fetch); the HTTP harness 80.9 with 160 polls.
+- Targeted events: maintenance event read 5.4 KB → 0.2-0.4 KB.
+- Season-start claim: setup request 2.4 → 1.2 MB; the season p95 is 1.52 s at both trees.
+- Always-probe + clock path: the no-probe variant (full read on every reveal poll) is 528.9 KB/seat-minute; the no-clock variant (probe + full read) is 660.8; the head is 304.9. The clock path alone cuts 355.9 KB/seat-minute (54%) vs no-clock; the combined always-probe + clock path cuts 224.0 KB/seat-minute (42%) vs no-probe. The no-clock is higher than no-probe because the probe is paid on every full poll; the 204 fast path does not offset it. One run each; the head is three runs.
+
+## Playwright
+
+The three failures were stale tests, not app regressions. The home screen now has Quick Play toggles and a separate Play button; the tests use the new test ids. The roster renders open seats as rows; the test counts only rows with a seat. The saved Daily salary result is the rich revisitable locked result ("TODAY IS LOCKED IN", the outcome and the stats); the test expected the old "PREVIEW" line. The lobby spec also needed the auto-lock, auto-preview, rematch-ready and fast-forward version bump. The full suite is 15 passed, 2 skipped (the daily challenge skip on both projects), 0 failed. The 2-player lobby spec overlaps the league driver's full-season flow but is the only Playwright coverage of the home join-by-code and the 2-player roster; it is kept, and the 8-player matrix will cover the overlap.
 
 Calibration: main's 4.1 GB at 4.4 KB per poll is 932,000 polls; at 403 polls per lobby-minute that is 38.5 lobby-hours, or about 115 twenty-minute 8-seat lobbies a month.
 
 ## Freshness
 
-The reveal reached every seat at p95 **10-214 ms** (three runs), far inside 2 s. The ready group now records samples (28 per run): p95 **2.1-3.0 s**; the season start p95 **1.4-3.0 s**. The DB p95 is 4 ms; the API p95 is 2.5 s, so the delay is the local replay's season-start simulation and the seven concurrent watchers, not the database. The 2 s limit is met by the reveal and missed by ready/season in this local replay. The season-start claim removes the repeated slice writes; the remaining cost is one league simulation plus the slice write.
+The round 4 ready p95 of 2.1-3.0 s was the Node `fetch` pool, not the app. The server handlers were under 50 ms (the `api-phase` logs) and the DB p95 was 3-5 ms; the seven watchers shared the fetch pool. Driving the harness through a 64-socket HTTP agent and caching the dev server's API module load gives:
+
+| Run, three runs | Ready p95 | Season p95 | Reveal p95 | API p95 | DB p95 |
+|---|---|---|---|---|---|
+| 5eca20f | 520-525 ms | 1517-1542 ms | 8-16 ms | 20 ms | 5-6 ms |
+| head dfc37cb | 510-519 ms | 1517-1522 ms | 9-16 ms | 15 ms | 3-4 ms |
+
+The head is not worse; both are under 2 s. The ready p95 is the 500 ms watcher interval plus the server; the season p95 is the one league simulation and slice write. The old fetch harness measured 2.5-3.0 s at both trees; the difference is the harness, not the app. The DB transfer is unchanged because the HTTP driver sends the same requests.
 
 ## Earlier comparisons (kept)
 
