@@ -36,12 +36,16 @@ reconnect in any phase and keeps its seat, team, build and powers.
   statement, so concurrent draws serialize.
 - A respin is allowed once per participant per game. The update is guarded by `not reroll_used` and excludes the
   current team. A retried request with the same action id returns the stored row and never spends a second respin.
-  A rematch deletes the team rows, so the next game starts with a fresh respin.
-- Assignments lock when the host starts building (`locked_at`) or when the last present participant draws. The
-  host can lock early; participants who have not drawn receive a team from the server first. The lock statement
-  draws every missing team and moves the phase in one `for update` statement, so a player can never enter
-  `building` without a team.
-- A reconnect with the same secret resumes the same seat, team, respin state, build and salary powers.
+  A rematch deletes the team rows, the league slices and the `league` column, so the next game starts with a
+  fresh draw, build and respin.
+- Assignments lock when the host starts building (`locked_at`) or 15 seconds after the last present participant
+  draws, whichever comes first. The window gives the last drawer the same reroll chance as every earlier drawer.
+  The host can lock early; participants who have not drawn receive a team from the server first. The lock
+  statement draws every missing team and moves the phase in one `for update` statement, so a player can never
+  enter `building` without a team.
+- A reconnect with the same secret resumes the same seat, team and respin state. A participant who left after the
+  draw rejoins with a cleared build, readiness and salary powers, so the previous game's build cannot be played
+  again and cannot count as ready for a rematch.
 
 ## Schedule
 
@@ -105,8 +109,10 @@ slower poll can never move the reveal backwards.
 
 Every stage ends at a checkpoint. At a checkpoint, present participants ready; the stage advances when every
 present participant is ready, or when the host advances alone. Away (unseen for 60 s) and left participants
-never block. The host role moves to the earliest joined present participant when the host is away for 45 s or
-leaves.
+never block. If the host is present but has not readied 90 seconds after the checkpoint opened, any present
+participant may advance once everyone except the host is ready, and the server advances on the next poll. A
+player who is still reading inside those 90 seconds is never skipped. The host role moves to the earliest joined
+present participant when the host is away for 45 s or leaves.
 
 `POST /ready` and `POST /advance` carry an action id and the expected stage. A retry of the same action id, or a
 request carrying an old stage, returns the current view without moving the checkpoint twice. Every phase

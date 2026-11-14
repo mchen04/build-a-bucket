@@ -113,6 +113,15 @@ export function stageCursorAtFrom(clock: LeagueClock, stage: number, startedAt: 
   return total;
 }
 
+export function checkpointAtFrom(clock: LeagueClock, stage: number, startedAt: number | null): number | null {
+  if (startedAt === null) return null;
+  const total = stageGamesTotalFrom(clock, stage);
+  if (total === 0) return startedAt;
+  if (stage <= 3) return startedAt + Math.ceil(total / REGULAR_BATCH_SIZE) * REGULAR_BATCH_MS;
+  if (stage >= 6 && stage <= 9) return startedAt + total * PLAYOFF_GAME_MS;
+  return startedAt;
+}
+
 export interface LeagueGameView {
   gameNo: number;
   stage: number;

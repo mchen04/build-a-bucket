@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import * as v from 'valibot';
 import { mergeDelta, progressToken } from '../src/shared/mp/progress';
 import { EVENT_LIMIT, type EventView, type LobbyDelta, type LobbyView, type ParticipantView } from '../src/shared/mp/types';
+import { buildLobbyDelta } from '../src/server/lobby';
+import { LobbyDeltaSchema } from '../src/shared/mp/schemas';
 
 function event(id: number, overrides: Partial<EventView> = {}): EventView {
   return { id, kind: 'pick', seat: 1, name: 'P1', detail: 'took a shot', at: '2026-01-01T00:00:00.000Z', ...overrides };
@@ -135,5 +138,47 @@ describe('delta merge', () => {
     const merged = mergeDelta(base, delta);
     expect(merged.events).toHaveLength(EVENT_LIMIT);
     expect(merged.events[0]?.id).toBe(100);
+  });
+
+  it('applies a participant season carried by a league delta', () => {
+    const base = view({
+      participants: [
+        participant(1, { season: { wins: 1, losses: 0, seed: null, finish: null, champion: false } }),
+        participant(2, { season: { wins: 0, losses: 1, seed: null, finish: null, champion: false } }),
+      ],
+    });
+    const delta: LobbyDelta = {
+      version: 10,
+      serverTime: '2026-01-01T00:00:08.000Z',
+      participants: [{ seat: 1, season: { wins: 2, losses: 1, seed: null, finish: null, champion: false } }],
+      events: [],
+    };
+    const merged = mergeDelta(base, delta);
+    expect(merged.participants[0]?.season).toEqual({ wins: 2, losses: 1, seed: null, finish: null, champion: false });
+    expect(merged.participants[0]?.status).toBe('building');
+    expect(merged.participants[0]?.summary?.filled).toBe(0);
+    expect(merged.participants[1]?.season?.wins).toBe(0);
+  });
+
+  it('includes the participant season in the full delta', () => {
+    const base = view({
+      participants: [
+        participant(1, { season: { wins: 3, losses: 2, seed: null, finish: null, champion: false } }),
+        participant(2),
+      ],
+    });
+    const delta = buildLobbyDelta(base, 0);
+    expect(delta.participants?.[0]?.season?.wins).toBe(3);
+    expect(delta.participants?.[0]?.season?.losses).toBe(2);
+  });
+
+  it('accepts a delta that only carries a participant season', () => {
+    const parsed = v.safeParse(LobbyDeltaSchema, {
+      version: 11,
+      serverTime: '2026-01-01T00:00:09.000Z',
+      participants: [{ seat: 1, season: { wins: 2, losses: 1, seed: null, finish: null, champion: false } }],
+      events: [],
+    });
+    expect(parsed.success).toBe(true);
   });
 });

@@ -26,7 +26,15 @@ export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
   const participants: ParticipantView[] = view.participants.map((entry) => {
     const next = progress.get(entry.seat);
     if (!next) return entry;
-    return { ...entry, status: next.status, away: next.away, summary: next.summary, team: next.team, ready: next.ready };
+    return {
+      ...entry,
+      status: next.status ?? entry.status,
+      away: next.away ?? entry.away,
+      summary: 'summary' in next ? next.summary ?? null : entry.summary,
+      team: 'team' in next ? next.team ?? null : entry.team,
+      ready: next.ready ?? entry.ready,
+      season: 'season' in next ? next.season ?? null : entry.season,
+    };
   });
   return {
     ...view,

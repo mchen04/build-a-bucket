@@ -138,11 +138,12 @@ const EventViewSchema = v.object({
 
 const ParticipantProgressSchema = v.object({
   seat: v.number(),
-  status: ParticipantStatusSchema,
-  away: v.boolean(),
-  summary: v.nullable(BuildSummarySchema),
-  team: v.nullable(v.string()),
-  ready: v.boolean(),
+  status: v.optional(ParticipantStatusSchema),
+  away: v.optional(v.boolean()),
+  summary: v.optional(v.nullable(BuildSummarySchema)),
+  team: v.optional(v.nullable(v.string())),
+  ready: v.optional(v.boolean()),
+  season: v.optional(v.nullable(ParticipantSeasonSchema)),
 });
 
 const TeamAssignmentSchema = v.object({

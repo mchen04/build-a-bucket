@@ -21,6 +21,8 @@ export type LeagueMode = 'normal' | 'salary' | 'squad';
 export const CAPACITY = 8;
 export const AWAY_MS = 60_000;
 export const HOST_IDLE_MS = 45_000;
+export const CHECKPOINT_IDLE_MS = 90_000;
+export const REROLL_WINDOW_MS = 15_000;
 export const ATTRS_PER_BUILD = 10;
 export const EVENT_LIMIT = 30;
 export const SALARY_CARDS = 5;
@@ -172,11 +174,12 @@ export interface LobbyView {
 
 export interface ParticipantProgress {
   seat: number;
-  status: ParticipantStatus;
-  away: boolean;
-  summary: BuildSummary | null;
-  team: string | null;
-  ready: boolean;
+  status?: ParticipantStatus;
+  away?: boolean;
+  summary?: BuildSummary | null;
+  team?: string | null;
+  ready?: boolean;
+  season?: ParticipantSeasonView | null;
 }
 
 export interface LobbyDelta {

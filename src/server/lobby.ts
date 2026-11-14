@@ -11,6 +11,7 @@ import type { SalCard } from '../shared/engine/salary.js';
 import { scoutGrade, shuffleColumn, shuffleRow, type ShuffleTarget } from '../shared/engine/salaryPowers.js';
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
 import {
+  checkpointAtFrom,
   clockFromLeague,
   isCheckpoint,
   revealLeague,
@@ -23,8 +24,10 @@ import { BuildSummarySchema, LobbyBuildSchema, SettingsSchema } from '../shared/
 import {
   AWAY_MS,
   CAPACITY,
+  CHECKPOINT_IDLE_MS,
   EVENT_LIMIT,
   HOST_IDLE_MS,
+  REROLL_WINDOW_MS,
   type ApiErrorBody,
   type BuildSummary,
   type EventView,
@@ -35,6 +38,7 @@ import {
   type LobbyView,
   type LeagueMode,
   type ParticipantStatus,
+  type ParticipantSeasonView,
   type ParticipantView,
   type ReadyView,
   type SalaryCardPick,
@@ -158,7 +162,7 @@ const LEAGUE_CACHE_MAX = 32;
 const leagueCache = new Map<string, Promise<LeagueResult | null>>();
 const LEAGUE_CACHE_DISABLED = process.env.BAB_DISABLE_LEAGUE_CACHE === '1';
 
-async function leagueFor(lobbyId: string, leagueVersion: number): Promise<LeagueResult | null> {
+export async function leagueFor(lobbyId: string, leagueVersion: number): Promise<LeagueResult | null> {
   if (!leagueVersion) return null;
   if (LEAGUE_CACHE_DISABLED) {
     const rows = await db().query<{ league: unknown }>('select league from lobbies where id = $1::uuid', [lobbyId]);
@@ -174,7 +178,10 @@ async function leagueFor(lobbyId: string, leagueVersion: number): Promise<League
   const load = (async () => {
     const rows = await db().query<{ league: unknown }>('select league from lobbies where id = $1::uuid', [lobbyId]);
     return parseLeague(rows[0]?.league);
-  })();
+  })().catch((error) => {
+    leagueCache.delete(key);
+    throw error;
+  });
   leagueCache.set(key, load);
   const league = await load;
   if (!league) leagueCache.delete(key);
@@ -350,6 +357,7 @@ export function buildLobbyDelta(view: LobbyView, sinceEvent: number): LobbyDelta
       summary: entry.summary,
       team: entry.team,
       ready: entry.ready,
+      season: entry.season,
     })),
     events: view.events.filter((event) => event.id > sinceEvent),
   };
@@ -604,6 +612,8 @@ function factsFromProbe(row: ProbeData, now: number): MaintenanceFacts {
     activePreviewReady: active.length > 0 && active.every((entry) => entry[9]),
     activeHaveTeam: active.length > 0 && active.every((entry) => entry[10]),
     activeReadyStage: active.length > 0 && active.every((entry) => Number(entry[8]) >= stage),
+    activeReadyCount: active.filter((entry) => Number(entry[8]) >= stage).length,
+    hostReadyStage: host ? Number(host[8]) : null,
     presentPreviewReady: present.length > 0 && present.every((entry) => entry[9]),
   };
 }
@@ -747,6 +757,8 @@ function compactFacts(row: CompactProbeData): MaintenanceFacts {
     activePreviewReady: active.length > 0 && active.every((entry) => entry[3]),
     activeHaveTeam: active.length > 0 && active.every((entry) => entry[5]),
     activeReadyStage: active.length > 0 && active.every((entry) => Number(entry[2]) >= stage),
+    activeReadyCount: active.filter((entry) => Number(entry[2]) >= stage).length,
+    hostReadyStage: host ? Number(host[2]) : null,
     presentPreviewReady: present.length > 0 && present.every((entry) => entry[3]),
   };
 }
@@ -897,11 +909,25 @@ async function buildLeagueDelta(probe: CompactProbeOk, sinceCursor: number, sinc
   if (!league) return null;
   const events =
     probe.ev > sinceEvent ? ((await db().query<{ events: EventView[] }>(DELTA_EVENTS_SQL, [probe.code, sinceEvent]))[0]?.events ?? []) : [];
+  const participants: { seat: number; season: ParticipantSeasonView }[] = [];
+  if (league.rows) {
+    for (const entry of probe.participants) {
+      if (!entry[5]) continue;
+      const index = LEAGUE_TEAMS.indexOf(entry[5]);
+      const row = league.rows.find((candidate) => candidate[0] === index);
+      if (!row) continue;
+      participants.push({
+        seat: entry[0],
+        season: { wins: row[1], losses: row[2], seed: null, finish: null, champion: false },
+      });
+    }
+  }
   return {
     version,
     serverTime: new Date(now).toISOString(),
     events,
     league,
+    participants,
   };
 }
 
@@ -968,6 +994,8 @@ locked as (
   where id = (select id from l) and phase = 'draw'
     and (select count(*) from present) >= 2
     and not exists (select 1 from present where team is null)
+    and now() - (select max(created_at) from lobby_teams where lobby_id = (select id from l))
+      >= make_interval(secs => $4::int)
   returning id
 ),
 log as (
@@ -990,13 +1018,20 @@ returning id
 `;
 
 const REMATCH_DRAW_SQL = `
-update lobbies set phase = 'draw', version = version + 1, updated_at = now()
-where id = $1::uuid and phase = 'rematch'
-  and (select count(*) from participants p where p.lobby_id = $1::uuid and p.status <> 'left') >= 2
-  and not exists (
-    select 1 from participants p where p.lobby_id = $1::uuid and p.status <> 'left' and not p.preview_ready
-  )
-returning id
+with updated as (
+  update lobbies set phase = 'draw', version = version + 1, updated_at = now()
+  where id = $1::uuid and phase = 'rematch'
+    and (select count(*) from participants p where p.lobby_id = $1::uuid and p.status <> 'left') >= 2
+    and not exists (
+      select 1 from participants p where p.lobby_id = $1::uuid and p.status <> 'left' and not p.preview_ready
+    )
+  returning id
+), reset as (
+  update participants set preview_ready = false
+  where lobby_id = (select id from updated)
+  returning 1
+)
+select (select id from updated) as id
 `;
 
 async function autoCompleteMissing(
@@ -1051,7 +1086,12 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
   }
   if (raw.phase === 'draw') {
     if (active.length < 2 || active.some((entry) => !entry.team)) return;
-    await db().query(AUTO_LOCK_SQL, [raw.code, Math.floor(AWAY_MS / 1000), LEAGUE_TEAMS]);
+    await db().query(AUTO_LOCK_SQL, [
+      raw.code,
+      Math.floor(AWAY_MS / 1000),
+      LEAGUE_TEAMS,
+      Math.floor(REROLL_WINDOW_MS / 1000),
+    ]);
     return;
   }
   if (raw.phase === 'building') {
@@ -1077,7 +1117,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
   if (raw.phase === 'rematch') {
     if (present.length < 2 || !present.every((entry) => entry.preview_ready)) return;
     const updated = await db().query<{ id: string }>(REMATCH_DRAW_SQL, [raw.id]);
-    if (updated[0]) {
+    if (updated[0]?.id) {
       await db().query(
         `insert into events (lobby_id, kind, payload)
          values ($1::uuid, 'draw', jsonb_build_object('detail', 'opened the team draw'))`,
@@ -1102,7 +1142,15 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
   if (!isCheckpoint(cursor, total)) return;
   if (active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage)) {
     await advanceStage(raw.id, stage);
+    return;
   }
+  const checkpointAt = checkpointAtFrom(clock, stage, startedAt);
+  if (checkpointAt === null || now < checkpointAt + CHECKPOINT_IDLE_MS) return;
+  const activeHost = active.find((entry) => entry.id === raw.host_participant);
+  if (!activeHost || Number(activeHost.ready_stage) >= stage) return;
+  const others = active.filter((entry) => entry.id !== activeHost.id);
+  if (others.length === 0 || others.some((entry) => Number(entry.ready_stage) < stage)) return;
+  await advanceStage(raw.id, stage);
 }
 
 interface MaintenanceFacts {
@@ -1119,6 +1167,8 @@ interface MaintenanceFacts {
   activePreviewReady: boolean;
   activeHaveTeam: boolean;
   activeReadyStage: boolean;
+  activeReadyCount: number;
+  hostReadyStage: number | null;
   presentPreviewReady: boolean;
 }
 
@@ -1144,6 +1194,8 @@ function factsFromRow(row: ReadRow): MaintenanceFacts | null {
     activePreviewReady: active.length > 0 && active.every((entry) => entry.preview_ready),
     activeHaveTeam: active.length > 0 && active.every((entry) => entry.team),
     activeReadyStage: active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage),
+    activeReadyCount: active.filter((entry) => Number(entry.ready_stage) >= stage).length,
+    hostReadyStage: host ? Number(host.ready_stage) : null,
     presentPreviewReady: present.length > 0 && present.every((entry) => entry.preview_ready),
   };
 }
@@ -1163,7 +1215,15 @@ function needsMaintenance(facts: MaintenanceFacts | null, now: number, clock: Le
   const total = stageGamesTotalFrom(clock, facts.stage);
   const cursor = Math.max(facts.stageCursor, stageCursorAtFrom(clock, facts.stage, startedAt, now));
   if (!isCheckpoint(cursor, total)) return false;
-  return facts.activeReadyStage;
+  if (facts.activeReadyStage) return true;
+  const checkpointAt = checkpointAtFrom(clock, facts.stage, startedAt);
+  if (checkpointAt === null || now < checkpointAt + CHECKPOINT_IDLE_MS) return false;
+  return (
+    facts.active >= 2 &&
+    facts.hostReadyStage !== null &&
+    facts.hostReadyStage < facts.stage &&
+    facts.activeReadyCount === facts.active - 1
+  );
 }
 
 async function advanceStage(lobbyId: string, stage: number): Promise<void> {
@@ -1209,7 +1269,7 @@ export async function readLobby(input: { code: string; secret: string; sinceEven
     if (!row?.lobby) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
     }
-    if (!row.participants.some((entry) => entry.is_me)) {
+    if (!row.participants.some((entry) => entry.is_me && entry.status !== 'left')) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
     let loaded = await loadLeague(row);
@@ -1329,7 +1389,14 @@ free_seat as (
 ),
 rejoined as (
   update participants p set name = $3, last_seen = now(),
-    status = case when p.status = 'left' then 'joined' else p.status end
+    status = case when p.status = 'left' then 'joined' else p.status end,
+    build = case when p.status = 'left' and (select phase from l) <> 'lobby' then null else p.build end,
+    build_kind = case when p.status = 'left' and (select phase from l) <> 'lobby' then null else p.build_kind end,
+    build_summary = case when p.status = 'left' and (select phase from l) <> 'lobby' then null else p.build_summary end,
+    squad = case when p.status = 'left' and (select phase from l) <> 'lobby' then null else p.squad end,
+    salary_powers = case when p.status = 'left' and (select phase from l) <> 'lobby' then null else p.salary_powers end,
+    ready_stage = case when p.status = 'left' and (select phase from l) <> 'lobby' then -1 else p.ready_stage end,
+    preview_ready = case when p.status = 'left' and (select phase from l) <> 'lobby' then false else p.preview_ready end
   where p.id = (select id from mine) returning p.id, p.seat
 ),
 seated as (
@@ -1874,7 +1941,21 @@ advanced as (
   from l, me
   where lob.id = l.id and l.stage = $3 and l.phase in ('season', 'awards', 'playin', 'playoffs')
     and me.id is not null
-    and (l.host_participant = me.id or (select n from ready) = (select n from present))
+    and (
+      l.host_participant = me.id
+      or (select n from ready) = (select n from present)
+      or (
+        $6::timestamptz is not null and now() >= $6::timestamptz
+        and (select n from present) >= 2
+        and (select n from ready) = (select n from present) - 1
+        and exists (
+          select 1 from participants h
+          where h.id = l.host_participant and h.status <> 'left'
+            and h.last_seen > now() - make_interval(secs => $5::int)
+            and h.ready_stage < $3
+        )
+      )
+    )
   returning lob.id
 ),
 log as (
@@ -1907,11 +1988,15 @@ me as (select p.id from participants p where p.lobby_id = (select id from l) and
 ok as (select 1 from l, me where l.host_participant = me.id and l.phase = 'recap'),
 reset_p as (
   update participants p set build = null, build_kind = null, squad = null, build_summary = null,
-    status = 'joined', ready_stage = -1, preview_ready = false, salary_powers = null, last_seen = now()
-  where p.lobby_id = (select id from l) and p.status <> 'left' and exists (select 1 from ok)
+    status = case when p.status = 'left' then 'left' else 'joined' end,
+    ready_stage = -1, preview_ready = false, salary_powers = null, last_seen = now()
+  where p.lobby_id = (select id from l) and exists (select 1 from ok)
   returning p.id
 ),
 del_t as (delete from lobby_teams where lobby_id = (select id from l) and exists (select 1 from ok)),
+del_slice as (delete from league_slices where lobby_id = (select id from l) and exists (select 1 from ok)),
+del_games as (delete from league_slice_games where lobby_id = (select id from l) and exists (select 1 from ok)),
+del_checkpoints as (delete from league_slice_checkpoints where lobby_id = (select id from l) and exists (select 1 from ok)),
 reset_l as (
   update lobbies set phase = 'rematch', league = null, league_version = 0, stage = 0, stage_cursor = 0,
     stage_started_at = null, locked_at = null, rematch = rematch + 1,
@@ -2038,7 +2123,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
         return readLobby({ code: input.code, secret: input.secret });
       }
       const updated = await sql.query<{ id: string }>(REMATCH_DRAW_SQL, [hostRow.lobby_id]);
-      if (!updated[0]) {
+      if (!updated[0]?.id) {
         const retained = await sql.query<{ n: number }>(
           "select count(*)::int as n from participants where lobby_id = $1::uuid and status <> 'left'",
           [hostRow.lobby_id],
@@ -2087,6 +2172,8 @@ export async function advanceLobby(input: { code: string; secret: string; action
     if (!isCheckpoint(cursor, stageGamesTotalFrom(clock, stage))) {
       return { ok: false, status: 409, error: { error: 'This checkpoint is still revealing.', reason: 'conflict' } };
     }
+    const checkpointAt = checkpointAtFrom(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null);
+    const deadline = checkpointAt === null ? null : new Date(checkpointAt + CHECKPOINT_IDLE_MS).toISOString();
     const next = Math.min(10, stage + 1);
     const rows = await sql.query<{
       lobby_id: string | null;
@@ -2096,7 +2183,14 @@ export async function advanceLobby(input: { code: string; secret: string; action
       present: number;
       ready: number;
       advanced: number;
-    }>(ADVANCE_SQL, [input.code, tokenHash, stage, NEXT_PHASE[next] ?? 'recap', Math.floor(AWAY_MS / 1000)]);
+    }>(ADVANCE_SQL, [
+      input.code,
+      tokenHash,
+      stage,
+      NEXT_PHASE[next] ?? 'recap',
+      Math.floor(AWAY_MS / 1000),
+      deadline,
+    ]);
     const row = rows[0];
     if (!row?.lobby_id) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -2410,16 +2504,25 @@ export async function computeLeagueFor(lobbyId: string): Promise<void> {
   const lobby = lobbyRows[0];
   if (!lobby || lobby.league || lobby.phase !== 'preview') return;
   const claim = await sql.query<{ id: string }>(
-    `update lobbies set league_version = -1
-     where id = $1::uuid and league is null and phase = 'preview' and league_version = 0
+    `update lobbies set league_version = -1, league_claimed_at = now()
+     where id = $1::uuid and league is null and phase = 'preview'
+       and (
+         league_version = 0
+         or (
+           league_version = -1
+           and (league_claimed_at is null or league_claimed_at < now() - interval '2 minutes')
+         )
+       )
      returning id`,
     [lobbyId],
   );
   if (!claim[0]) return;
   const reset = () =>
-    sql.query(`update lobbies set league_version = 0 where id = $1::uuid and league is null and league_version = -1`, [
-      lobbyId,
-    ]);
+    sql.query(
+      `update lobbies set league_version = 0, league_claimed_at = null
+       where id = $1::uuid and league is null and league_version = -1`,
+      [lobbyId],
+    );
   try {
     const settings = parseSettings(lobby.settings);
     const data = await catalog();
@@ -2459,7 +2562,8 @@ export async function computeLeagueFor(lobbyId: string): Promise<void> {
     }
     const updated = await sql.query<{ id: string }>(
       `update lobbies set phase = 'season', stage = 0, stage_cursor = 0, stage_started_at = now(),
-         league = $2::jsonb, league_version = version + 1, locked_at = coalesce(locked_at, now()),
+         league = $2::jsonb, league_version = version + 1, league_claimed_at = null,
+         locked_at = coalesce(locked_at, now()),
          version = version + 1, updated_at = now()
        where id = $1::uuid and league is null and phase = 'preview' and league_version = -1
        returning id`,
