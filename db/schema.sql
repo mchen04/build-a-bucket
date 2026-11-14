@@ -17,6 +17,8 @@ alter table lobbies add column if not exists create_action uuid;
 alter table lobbies add column if not exists mode text not null default 'normal';
 alter table lobbies add column if not exists era text not null default 'current';
 alter table lobbies add column if not exists league jsonb;
+alter table lobbies add column if not exists league_version bigint not null default 0;
+update lobbies set league_version = version where league is not null and league_version = 0;
 alter table lobbies add column if not exists stage int not null default 0;
 alter table lobbies add column if not exists stage_cursor int not null default 0;
 alter table lobbies add column if not exists stage_started_at timestamptz;

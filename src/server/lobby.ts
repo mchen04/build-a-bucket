@@ -65,7 +65,7 @@ interface RawLobby {
   version: number | string;
   mode: string;
   era: string;
-  league: unknown;
+  league_version: number | string;
   stage: number | string;
   stage_cursor: number | string;
   stage_started_at: string | null;
@@ -74,7 +74,7 @@ interface RawLobby {
   season_secret: string;
 }
 
-type LobbyRow = Omit<RawLobby, 'league'>;
+type LobbyRow = RawLobby;
 
 interface RawParticipant {
   id: string;
@@ -139,6 +139,29 @@ function parseLeague(raw: unknown): LeagueResult | null {
   return candidate as LeagueResult;
 }
 
+const LEAGUE_CACHE_MAX = 32;
+const leagueCache = new Map<string, LeagueResult>();
+
+async function leagueFor(lobbyId: string, leagueVersion: number): Promise<LeagueResult | null> {
+  if (!leagueVersion) return null;
+  const key = `${lobbyId}:${leagueVersion}`;
+  const cached = leagueCache.get(key);
+  if (cached) {
+    leagueCache.delete(key);
+    leagueCache.set(key, cached);
+    return cached;
+  }
+  const rows = await db().query<{ league: unknown }>('select league from lobbies where id = $1::uuid', [lobbyId]);
+  const league = parseLeague(rows[0]?.league);
+  if (!league) return null;
+  leagueCache.set(key, league);
+  if (leagueCache.size > LEAGUE_CACHE_MAX) {
+    const oldest = leagueCache.keys().next().value;
+    if (oldest) leagueCache.delete(oldest);
+  }
+  return league;
+}
+
 function parsePowers(raw: unknown): SalaryPowersState {
   if (!raw || typeof raw !== 'object') return { shuffle: false, scout: false, grid: null, scouted: {} };
   const candidate = raw as Partial<SalaryPowersState>;
@@ -185,13 +208,12 @@ function salaryGridView(grid: SalCard[][] | null): SalaryCardPick[][] | null {
   );
 }
 
-function buildView(row: ReadRow, now: number, board: SalaryBoard | null): LobbyView | null {
+function buildView(row: ReadRow, now: number, board: SalaryBoard | null, league: LeagueResult | null): LobbyView | null {
   const raw = row.lobby;
   if (!raw) return null;
   const meRow = row.participants.find((entry) => entry.is_me);
   if (!meRow) return null;
   const settings = parseSettings(raw.settings);
-  const league = parseLeague(raw.league);
   const stage = Number(raw.stage);
   const cursor = Number(raw.stage_cursor);
   const leagueView = league ? revealLeague(league, stage, cursor, meRow.id) : null;
@@ -317,7 +339,7 @@ select
   (select json_build_object(
     'id', l.id, 'code', l.code, 'phase', l.phase, 'host_participant', l.host_participant,
     'settings', l.settings, 'version', l.version, 'mode', l.mode, 'era', l.era,
-    'league', l.league, 'stage', l.stage, 'stage_cursor', l.stage_cursor,
+    'league_version', l.league_version, 'stage', l.stage, 'stage_cursor', l.stage_cursor,
     'stage_started_at', l.stage_started_at, 'locked_at', l.locked_at, 'rematch', l.rematch,
     'season_secret', l.season_secret
   ) from l) as lobby,
@@ -341,7 +363,7 @@ select
 `;
 
 const LOBBY_ROW_SQL = `
-select id, code, phase, host_participant, settings, version, mode, era, stage, stage_cursor,
+select id, code, phase, host_participant, settings, version, mode, era, league_version, stage, stage_cursor,
   stage_started_at, locked_at, rematch, season_secret
 from lobbies where code = $1
 `;
@@ -487,7 +509,7 @@ async function autoCompleteMissing(
   }
 }
 
-async function maintain(row: ReadRow): Promise<void> {
+async function maintain(row: ReadRow, league: LeagueResult | null): Promise<void> {
   const raw = row.lobby;
   if (!raw) return;
   const now = Date.now();
@@ -535,7 +557,6 @@ async function maintain(row: ReadRow): Promise<void> {
     return;
   }
   if (raw.phase !== 'season' && raw.phase !== 'awards' && raw.phase !== 'playin' && raw.phase !== 'playoffs') return;
-  const league = parseLeague(raw.league);
   if (!league) return;
   const stage = Number(raw.stage);
   const startedAt = raw.stage_started_at ? Date.parse(raw.stage_started_at) : null;
@@ -554,7 +575,7 @@ async function maintain(row: ReadRow): Promise<void> {
   }
 }
 
-function needsMaintenance(row: ReadRow, now: number): boolean {
+function needsMaintenance(row: ReadRow, now: number, league: LeagueResult | null): boolean {
   const raw = row.lobby;
   if (!raw) return false;
   const host = row.participants.find((entry) => entry.id === raw.host_participant);
@@ -566,7 +587,6 @@ function needsMaintenance(row: ReadRow, now: number): boolean {
   if (raw.phase === 'preview') return active.length > 0 && active.every((entry) => entry.preview_ready);
   if (raw.phase === 'rematch') return present.length >= 2 && present.every((entry) => entry.preview_ready);
   if (raw.phase !== 'season' && raw.phase !== 'awards' && raw.phase !== 'playin' && raw.phase !== 'playoffs') return false;
-  const league = parseLeague(raw.league);
   if (!league) return false;
   const stage = Number(raw.stage);
   const startedAt = raw.stage_started_at ? Date.parse(raw.stage_started_at) : null;
@@ -604,9 +624,10 @@ export async function readLobby(input: { code: string; secret: string }): Promis
     if (!row.participants.some((entry) => entry.is_me)) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
-    if (needsMaintenance(row, Date.now())) {
+    let league = await leagueFor(row.lobby.id, Number(row.lobby.league_version));
+    if (needsMaintenance(row, Date.now(), league)) {
       const before = row.lobby;
-      await maintain(row);
+      await maintain(row, league);
       const fresh = await sql.query<LobbyRow>(LOBBY_ROW_SQL, [input.code]);
       if (fresh[0]) {
         if (fresh[0].phase !== before.phase) {
@@ -620,13 +641,14 @@ export async function readLobby(input: { code: string; secret: string }): Promis
       if (!row?.lobby) {
         return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
       }
+      league = await leagueFor(row.lobby.id, Number(row.lobby.league_version));
     }
     const settings = parseSettings(row.lobby.settings);
     const board =
-      settings.mode === 'salary' && row.lobby.phase === 'building' && !row.lobby.league
+      settings.mode === 'salary' && row.lobby.phase === 'building' && !league
         ? salaryBoardFor(row.lobby.season_secret, await catalog())
         : null;
-    const view = buildView(row, Date.now(), board);
+    const view = buildView(row, Date.now(), board, league);
     if (!view) {
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
@@ -1303,7 +1325,7 @@ reset_p as (
 ),
 del_t as (delete from lobby_teams where lobby_id = (select id from l) and exists (select 1 from ok)),
 reset_l as (
-  update lobbies set phase = 'rematch', league = null, stage = 0, stage_cursor = 0,
+  update lobbies set phase = 'rematch', league = null, league_version = 0, stage = 0, stage_cursor = 0,
     stage_started_at = null, locked_at = null, rematch = rematch + 1,
     season_secret = gen_random_uuid()::text, version = version + 1, updated_at = now()
   where id = (select id from l) and phase = 'recap' and exists (select 1 from ok)
@@ -1825,7 +1847,8 @@ export async function computeLeagueFor(lobbyId: string): Promise<void> {
   const league = simulateLeague({ seed: lobby.season_secret, era: settings.era, mode: settings.mode, humans });
   await sql.query(
     `update lobbies set phase = 'season', stage = 0, stage_cursor = 0, stage_started_at = now(),
-       league = $2::jsonb, locked_at = coalesce(locked_at, now()), version = version + 1, updated_at = now()
+       league = $2::jsonb, league_version = version + 1, locked_at = coalesce(locked_at, now()),
+       version = version + 1, updated_at = now()
      where id = $1::uuid and league is null and phase = 'preview'`,
     [lobbyId, JSON.stringify(league)],
   );
