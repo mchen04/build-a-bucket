@@ -421,7 +421,7 @@ async function leagueRun() {
     for (const seat of active()) if (await visible(seat, testId)) return seat;
     return null;
   };
-  const verifyStage = async (label) => {
+  const verifyStageInner = async (label) => {
     for (const seat of active()) await waitStage(seat);
     let phases = [];
     let phase = '';
@@ -459,35 +459,48 @@ async function leagueRun() {
       if (row.seed !== parsed.seed) throw new Error(`seed disagrees with standings at ${label} for seat ${seat.seat}`);
       mine.push({ seat: seat.seat, name: seat.name, ...parsed });
     }
+    const states = [];
+    for (const seat of active()) states.push({ seat, phase: await phaseOf(seat), banner: await visible(seat, 'champion-banner') });
     if (phase === 'Season running') {
-      for (const testId of ['awards', 'playin', 'playoffs', 'champion-banner']) {
-        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
-          throw new Error(`${testId} revealed during the season at ${label}`);
+      for (const state of states) {
+        if (state.phase !== phase) continue;
+        for (const testId of ['awards', 'playin', 'playoffs', 'champion-banner']) {
+          if (await visible(state.seat, testId)) throw new Error(`${testId} revealed during the season at ${label} for seat ${state.seat.seat}`);
         }
       }
       if (mine.some((entry) => entry.seed !== null)) throw new Error(`seed revealed during the season at ${label}`);
     } else if (phase === 'Awards') {
       if (!(await anyVisible('awards'))) throw new Error(`awards missing at ${label}`);
-      for (const testId of ['playin', 'playoffs', 'champion-banner']) {
-        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
-          throw new Error(`${testId} revealed at awards ${label}`);
+      for (const state of states) {
+        if (state.phase !== phase) continue;
+        for (const testId of ['playin', 'playoffs', 'champion-banner']) {
+          if (await visible(state.seat, testId)) throw new Error(`${testId} revealed at awards ${label} for seat ${state.seat.seat}`);
         }
       }
       if (mine.some((entry) => entry.seed === null)) throw new Error(`seed missing at awards ${label}`);
     } else if (phase === 'Play-In') {
       if (!(await anyVisible('playin'))) throw new Error(`play-in missing at ${label}`);
-      for (const testId of ['playoffs', 'champion-banner']) {
-        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
-          throw new Error(`${testId} revealed at play-in ${label}`);
+      for (const state of states) {
+        if (state.phase !== phase) continue;
+        for (const testId of ['playoffs', 'champion-banner']) {
+          if (await visible(state.seat, testId)) throw new Error(`${testId} revealed at play-in ${label} for seat ${state.seat.seat}`);
         }
       }
     } else if (phase === 'Playoffs') {
       if (!(await anyVisible('playoffs'))) throw new Error(`playoffs missing at ${label}`);
-      if ((await anyVisible('champion-banner')) && (await phaseOf(active()[0])) === phase) {
-        throw new Error(`champion revealed before the recap at ${label}`);
+      for (const state of states) {
+        if (state.phase === phase && state.banner) throw new Error(`champion revealed before the recap at ${label} for seat ${state.seat.seat}`);
       }
     } else if (phase === 'Recap') {
-      if (!(await anyVisible('champion-banner'))) throw new Error(`champion missing at recap ${label}`);
+      const recapDeadline = Date.now() + 20000;
+      for (;;) {
+        const pending = [];
+        for (const seat of active()) if ((await phaseOf(seat)) !== 'Recap') pending.push(seat.seat);
+        if (!pending.length) break;
+        if (Date.now() > recapDeadline) throw new Error(`seats not at recap ${label}: ${pending.join(', ')}`);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      for (const seat of active()) if (!(await visible(seat, 'champion-banner'))) throw new Error(`champion missing at recap ${label} for seat ${seat.seat}`);
     } else {
       throw new Error(`unexpected phase ${phase} at ${label}`);
     }
@@ -499,6 +512,21 @@ async function leagueRun() {
       champion = banners[0];
     }
     return { label, phase, stageName: await stageName(active()[0]), standings: top[0], mine, champion, at: Date.now() };
+  };
+  const verifyStage = async (label) => {
+    try {
+      return await verifyStageInner(label);
+    } catch (error) {
+      const states = [];
+      for (const seat of active()) {
+        const phase = await phaseOf(seat).catch(() => 'unknown');
+        const banner = await visible(seat, 'champion-banner').catch(() => false);
+        states.push({ seat: seat.seat, name: seat.name, phase, banner });
+        await snap(seat, `failure-${label}`).catch(() => {});
+      }
+      fs.writeFileSync(path.join(ev, `failure-${label}.json`), JSON.stringify({ label, error: String(error), states }, null, 2));
+      throw error;
+    }
   };
   const stages = [];
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
