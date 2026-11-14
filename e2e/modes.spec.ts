@@ -117,6 +117,35 @@ function savedRun(id: string, keys: string[], position: 'guard' | 'big'): unknow
   };
 }
 
+function strongRun(id: string, keys: string[], position: 'guard' | 'big'): unknown {
+  const picks: Record<string, unknown> = {};
+  keys.forEach((attr, index) => {
+    picks[attr] = {
+      attr,
+      val: 10,
+      playerName: `Strong ${id} ${index}`,
+      playerShort: `T${index}`,
+      team: ['BOS', 'LAL', 'DEN', 'MIA', 'CHI'][index % 5],
+    };
+  });
+  return {
+    v: 1,
+    seed: `b-e2e-strong-${id}`,
+    position,
+    era: 'current',
+    picks,
+    spinIndex: keys.length,
+    teamRespinUsed: false,
+    playerRespinUsed: false,
+    current: null,
+    team: null,
+    season: null,
+    draft: null,
+    moment: null,
+    screen: 'builder',
+  };
+}
+
 test('daily challenge plays to its end state, resumes after reload and locks the day', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-10-24T18:00:00Z'));
   await page.goto('/');
@@ -408,10 +437,11 @@ test('squad builder fills five slots, simulates the season and survives a reload
     const rounds = page.getByTestId('squad-playoff-rounds').locator('.round');
     await expect(rounds.first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('squad-playoff-banner')).toHaveCount(0);
-    await shot(page, 'squad-playoffs');
+    await shot(page, 'squad-playoffs-first-round');
     await page.getByTestId('squad-playoffs-skip').click();
     await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
     expect(await rounds.count()).toBeGreaterThan(0);
+    await shot(page, 'squad-playoffs');
     await page.getByTestId('squad-recap-next').click();
   } else {
     await standingsNext.click();
@@ -428,4 +458,68 @@ test('squad builder fills five slots, simulates the season and survives a reload
   await expect(page.getByTestId('squad-result')).toContainText('SEED');
   await expect(page.getByTestId('squad-again')).toBeVisible();
   await expect(page.getByTestId('squad-new')).toBeVisible();
+});
+
+test('squad playoff walkthrough reveals every round before the recap', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/');
+  const squad = {
+    v: 1,
+    seed: 'scan-0',
+    team: 'BOS',
+    season: 0,
+    slots: [
+      { id: 'PG', pos: 'guard', run: strongRun('PG', GUARD_KEYS, 'guard') },
+      { id: 'SG', pos: 'guard', run: strongRun('SG', GUARD_KEYS, 'guard') },
+      { id: 'SF', pos: 'guard', run: strongRun('SF', GUARD_KEYS, 'guard') },
+      { id: 'PF', pos: 'big', run: strongRun('PF', BIG_KEYS, 'big') },
+      { id: 'C', pos: 'big', run: strongRun('C', BIG_KEYS, 'big') },
+    ],
+    result: null,
+  };
+  await page.evaluate((value) => localStorage.setItem('bab:squad:v1', JSON.stringify(value)), squad);
+  await page.reload();
+  await page.getByTestId('home-squad').click();
+  await expect(page.getByTestId('squad-slots').locator('.sq-slot.filled')).toHaveCount(5);
+  await page.getByTestId('squad-review').click();
+  await page.getByTestId('squad-simulate').click();
+  await expect(page.getByTestId('squad-season')).toBeVisible();
+  await page.getByTestId('squad-season-skip').click();
+  await expect(page.getByTestId('squad-standings')).toBeVisible();
+  const next = page.getByTestId('squad-standings-next');
+  await expect(next).toContainText('Playoffs');
+  await next.click();
+  await expect(page.getByTestId('squad-playoffs')).toBeVisible();
+
+  const stamp = (label: string) => console.log(`[squad-walkthrough] ${label} ${new Date().toISOString()}`);
+  const rounds = page.getByTestId('squad-playoff-rounds').locator('.round');
+  const sample = async (index: number, label: string) => {
+    if (index > 1) {
+      await expect.poll(() => rounds.count(), { timeout: 10_000 }).toBeGreaterThanOrEqual(index);
+    } else {
+      await expect(rounds.first()).toBeVisible({ timeout: 10_000 });
+    }
+    await expect(page.getByTestId('squad-playoffs')).not.toContainText('CHAMPIONS');
+    stamp(`${label} rounds=${await rounds.count()}`);
+    await shot(page, `squad-playoffs-${index}`);
+  };
+  await sample(1, 'first-round');
+  await sample(2, 'second-sample');
+  await sample(3, 'third-sample');
+  await page.getByTestId('squad-playoffs-skip').click();
+  await expect(rounds).toHaveCount(4);
+  await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
+  stamp(`all-rounds-banner rounds=${await rounds.count()}`);
+  await shot(page, 'squad-playoffs-all');
+  expect((await rounds.locator('.rname').allInnerTexts()).map((label) => label.toLowerCase())).toEqual([
+    'first round',
+    'conference semifinals',
+    'conference finals',
+    'nba finals',
+  ]);
+  await expect(page.getByTestId('squad-playoff-banner')).toContainText('CHAMPIONS');
+  await page.getByTestId('squad-recap-next').click();
+  await expect(page.getByTestId('squad-result')).toContainText('SEED');
+  stamp('recap');
+  await shot(page, 'squad-recap');
 });
