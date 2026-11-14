@@ -427,19 +427,20 @@ test('squad builder fills five slots, simulates the season and survives a reload
   await page.getByTestId('squad-season-skip').click();
   await expect(page.getByTestId('squad-standings')).toBeVisible();
   await expect(page.getByTestId('squad-standings')).not.toContainText('CHAMPIONS');
-  await expect(page.getByTestId('squad-standings')).not.toContainText('Missed playoffs');
+  await expect(page.getByTestId('squad-standings')).not.toContainText('Missed the Playoffs');
   await expectNoVerticalOverflow(page, 'squad standings');
   await shot(page, 'squad-standings');
   const standingsNext = page.getByTestId('squad-standings-next');
   if ((await standingsNext.textContent())?.includes('Playoffs')) {
+    await page.clock.install();
     await standingsNext.click();
     await expect(page.getByTestId('squad-playoffs')).toBeVisible();
-    await expect(page.getByTestId('squad-playoffs')).not.toContainText('CHAMPIONS');
     const rounds = page.getByTestId('squad-playoff-rounds').locator('.round');
-    await expect(rounds.first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('squad-playoff-banner')).toHaveCount(0);
+    await page.clock.runFor(520);
+    await expect(rounds).toHaveCount(1);
     await shot(page, 'squad-playoffs-first-round');
-    await page.getByTestId('squad-playoffs-skip').click();
+    await page.clock.runFor(5 * 520);
     await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
     expect(await rounds.count()).toBeGreaterThan(0);
     await shot(page, 'squad-playoffs');
@@ -490,27 +491,25 @@ test('squad playoff walkthrough reveals every round before the recap', async ({ 
   await expect(page.getByTestId('squad-standings')).toBeVisible();
   const next = page.getByTestId('squad-standings-next');
   await expect(next).toContainText('Playoffs');
+  await page.clock.install();
   await next.click();
   await expect(page.getByTestId('squad-playoffs')).toBeVisible();
 
   const stamp = (label: string) => console.log(`[squad-walkthrough] ${label} ${new Date().toISOString()}`);
   const rounds = page.getByTestId('squad-playoff-rounds').locator('.round');
-  const sample = async (index: number, label: string) => {
-    if (index > 1) {
-      await expect.poll(() => rounds.count(), { timeout: 10_000 }).toBeGreaterThanOrEqual(index);
-    } else {
-      await expect(rounds.first()).toBeVisible({ timeout: 10_000 });
-    }
-    await expect(page.getByTestId('squad-playoffs')).not.toContainText('CHAMPIONS');
-    stamp(`${label} rounds=${await rounds.count()}`);
+  const banner = page.getByTestId('squad-playoff-banner');
+  await expect(rounds).toHaveCount(0);
+  await expect(banner).toHaveCount(0);
+  for (let index = 1; index <= 3; index++) {
+    await page.clock.runFor(520);
+    await expect(rounds).toHaveCount(index);
+    await expect(banner).toHaveCount(0);
+    stamp(`rounds=${index}`);
     await shot(page, `squad-playoffs-${index}`);
-  };
-  await sample(1, 'first-round');
-  await sample(2, 'second-sample');
-  await sample(3, 'third-sample');
-  await page.getByTestId('squad-playoffs-skip').click();
-  await expect(rounds).toHaveCount(4);
-  await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
+  }
+  await page.clock.runFor(520);
+  expect(await rounds.count(), 'fixture seed scan-0 must reach and win all four rounds; re-run the seed scan if this stops holding').toBe(4);
+  await expect(banner).toBeVisible();
   stamp(`all-rounds-banner rounds=${await rounds.count()}`);
   const last = rounds.last();
   await expect(last).toContainText('NBA Finals');
@@ -525,8 +524,8 @@ test('squad playoff walkthrough reveals every round before the recap', async ({ 
     'conference finals',
     'nba finals',
   ]);
-  await expect(page.getByTestId('squad-playoff-banner')).toContainText('CHAMPIONS');
-  await expect(page.getByTestId('squad-playoff-banner')).toContainText(/NBA CHAMPIONS!.*\d+-\d+ Season · \d+-\d+ vs [A-Z]{2,4}/);
+  await expect(banner).toContainText('NBA CHAMPIONS!');
+  await expect(banner).toContainText(/NBA CHAMPIONS!.*\d+-\d+ Season · \d+-\d+ vs [A-Z]{2,4}/);
   await page.getByTestId('squad-recap-next').click();
   await expect(page.getByTestId('squad-result')).toContainText('SEED');
   stamp('recap');

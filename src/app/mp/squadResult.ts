@@ -5,12 +5,19 @@ export function squadFinish(season: SquadSeasonResult): string {
   const last = season.rounds[season.rounds.length - 1];
   if (last?.type === 'playin' && !last.won) return 'Eliminated in Play-In';
   if (!season.madePlayoffs) return 'Missed the Playoffs';
+  if (season.champion) return 'NBA Champions!';
+  if (!last) return 'Season Ended';
+  if (last.type === 'playin') return 'Play-In';
+  return `Eliminated · ${last.name ?? 'Playoffs'}`;
+}
+
+export function squadFinishDetail(season: SquadSeasonResult): string {
+  const last = season.rounds[season.rounds.length - 1];
   if (season.champion) {
     return last ? `${season.wins}-${season.losses} Season · ${last.wins}-${last.losses} vs ${last.opponent}` : `${season.wins}-${season.losses} Season`;
   }
-  if (!last) return 'Season Ended';
-  if (last.type === 'playin') return 'Play-In';
-  return `Eliminated · ${last.name ?? 'Playoffs'} · ${last.wins}-${last.losses} vs ${last.opponent}`;
+  if (last?.type === 'series') return `${squadFinish(season)} · ${last.wins}-${last.losses} vs ${last.opponent}`;
+  return squadFinish(season);
 }
 
 export function squadFinishVisible(stage: SquadStage, revealed: number, rounds: SquadRound[]): boolean {

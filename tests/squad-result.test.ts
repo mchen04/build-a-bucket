@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SquadRound, SquadSeasonResult } from '../src/shared/engine/squad';
 import { squadLines } from '../src/shared/engine/squad';
 import type { SquadStage } from '../src/shared/squadStore';
-import { squadFinish, squadFinishVisible, squadRoundLabel, squadRoundResult } from '../src/app/mp/squadResult';
+import { squadFinish, squadFinishDetail, squadFinishVisible, squadRoundLabel, squadRoundResult } from '../src/app/mp/squadResult';
 
 const playinWin: SquadRound = { type: 'playin', name: null, opponent: 'PHX', wins: 1, losses: 0, won: true, label: '9 vs 10' };
 const playinLoss: SquadRound = { type: 'playin', name: null, opponent: 'PHX', wins: 0, losses: 1, won: false, label: '9 vs 10' };
@@ -30,13 +30,21 @@ function season(overrides: Partial<SquadSeasonResult> = {}): SquadSeasonResult {
 
 describe('squad result', () => {
   it('names the exact finish', () => {
-    expect(squadFinish(season({ champion: true, rounds: [playinWin, firstWin, finalsWin] }))).toBe('45-37 Season · 4-2 vs BOS');
-    expect(squadFinish(season({ rounds: [playinWin, firstWin, finalsLoss] }))).toBe('Eliminated · NBA Finals · 2-4 vs BOS');
-    expect(squadFinish(season({ rounds: [playinWin, firstLoss] }))).toBe('Eliminated · First Round · 2-4 vs DEN');
+    expect(squadFinish(season({ champion: true, rounds: [playinWin, firstWin, finalsWin] }))).toBe('NBA Champions!');
+    expect(squadFinish(season({ rounds: [playinWin, firstWin, finalsLoss] }))).toBe('Eliminated · NBA Finals');
+    expect(squadFinish(season({ rounds: [playinWin, firstLoss] }))).toBe('Eliminated · First Round');
     expect(squadFinish(season({ rounds: [playinLoss], madePlayoffs: false }))).toBe('Eliminated in Play-In');
     expect(squadFinish(season({ rounds: [playinWin] }))).toBe('Play-In');
     expect(squadFinish(season({ rounds: [playinWin], madePlayoffs: false }))).toBe('Missed the Playoffs');
     expect(squadFinish(season({ rounds: [], madePlayoffs: false }))).toBe('Missed the Playoffs');
+  });
+
+  it('adds the record and series to the banner detail', () => {
+    expect(squadFinishDetail(season({ champion: true, rounds: [playinWin, firstWin, finalsWin] }))).toBe('45-37 Season · 4-2 vs BOS');
+    expect(squadFinishDetail(season({ rounds: [playinWin, firstWin, finalsLoss] }))).toBe('Eliminated · NBA Finals · 2-4 vs BOS');
+    expect(squadFinishDetail(season({ rounds: [playinWin, firstLoss] }))).toBe('Eliminated · First Round · 2-4 vs DEN');
+    expect(squadFinishDetail(season({ rounds: [playinLoss], madePlayoffs: false }))).toBe('Eliminated in Play-In');
+    expect(squadFinishDetail(season({ rounds: [], madePlayoffs: false }))).toBe('Missed the Playoffs');
   });
 
   it('never reveals the finish before the playoff journey ends', () => {
