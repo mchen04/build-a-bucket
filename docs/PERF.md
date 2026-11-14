@@ -120,7 +120,7 @@ By phase: regular-0 3,424.3 KB, regular-1 1,748.9, regular-2 1,821.7, regular-3 
 
 ### Neon calibration
 
-The dev branch (`ep-young-dust-bbry4hnh-pooler.c-15.us-east-1.aws.neon.tech`, `neondb`) received the additive schema (48 statements) and one short 8-seat journey: create, join, start, draw, lock, advance and 12 rounds of eight delta polls. The journey moved 4.03 MB of `fullResults` JSON, about 2.8 MB of true HTTP body. The client-side `_types`/`_parsers` object is not part of the response; the true body is `{fields, rows, command, rowCount}`.
+The Neon dev branch received the additive schema (48 statements) and one short 8-seat journey: create, join, start, draw, lock, advance and 12 rounds of eight delta polls. The journey moved 4.03 MB of `fullResults` JSON, about 2.8 MB of true HTTP body. The client-side `_types`/`_parsers` object is not part of the response; the true body is `{fields, rows, command, rowCount}`.
 
 | Query | Neon body | Local wire | Ratio |
 |---|---|---|---|
@@ -147,6 +147,62 @@ Assumptions: 8 seats, 20 minutes per 8-seat lobby (160 seat-minutes), 115 lobbie
 | Lobbies that fit 5 GB (response) | 53 | 178 | 109 |
 
 The local response projection is 3.23 GB at 115 lobbies, under the 4 GB target and the 5 GB quota. The calibrated projection is 5.26 GB, 5% over the 5 GB quota: the remaining gap is the playoff meta (8.1 MB of 14.7 MB) and the compact probe (3.2 MB). A series delta that sends only the newly revealed series games is the next lever.
+
+## Round 6: consistent projection and the playoff series
+
+The round 5 projection mixed two ratios: the 115-lobby volume came from main's local wire bytes with an implied Neon ratio of 1.0, while the branch's ratio was 1.63. Round 6 measures both on the Neon dev branch and projects the branch at the volume main's calibrated bytes imply.
+
+### Main's calibrated volume
+
+Main (28c0d2f) ran in a detached worktree outside the repo against the Neon dev branch: create, join eight seats, start, release the playoffs and ten rounds of eight polls. Its `READ_SQL` moved 4,322 B of Neon response per poll (93 calls, 401,963 B). The round 4 local measurement is 5.08 KB per reveal poll, so main's ratio is 0.85. At 50.4 polls per seat-minute, main's Neon response is 212.7 KB/seat-minute. The 4.1 GB production transfer therefore implies 19,276 seat-minutes, or 120.5 eight-seat 20-minute lobbies. The round 5 115 was close; the consistent volume is 120.5.
+
+### Branch playoff ratio
+
+The branch's stage-6 `SERIES_READ` moved 5,057 B of Neon body for a 5,917 B local series (ratio 0.85; the series sizes differ, and the overhead-adjusted ratio is about 1.0). The filtered series in the final run is 3,641 B per call. The playoff ratio is 1.0, not the assumed 1.1.
+
+### Peer propagation at 1.5 s
+
+The freshness journey with a 1.5 s watcher gap (three runs, 35 samples each) gives a ready p95 of 1,515 ms [1,513-1,522] and a p50 of 1,510 ms. The 2 s limit holds.
+
+### Kept changes
+
+1. **Revealed series only.** The stage-6..9 `SERIES_READ` keeps only the games the cursor has revealed, per series, in series order. The view is identical because `playoffViewsFrom` slices the same games. The replay fell from 24,757 KB [24,051-25,246] to 21,962 KB [21,922-22,484], an 11.3% cut beyond the run-to-run range.
+2. **Compact regular standings.** The stage-0..3 delta no longer reads the meta row. It sends `[teamIndex, wins, losses, seed]` rows from the checkpoint and the client maps them with `LEAGUE_TEAMS` and `EAST_SET`, keeping the previous `humanName` and computing `my` from the me team. The replay fell from 21,962 KB to 19,425 KB [19,339-20,405], another 11.5%. `tests/league-slice.test.ts` merges the compact rows into the previous view for every regular stage, four cursor pairs and all eight seats and compares it to the full view.
+
+### Rejected
+
+- **Compact probe cut.** The probe is 3,298.7 KB of the final run (31.8%), but the target is met without it; the fixed Neon overhead per query (~120 B) limits the gain.
+- **2 s reveal cadence.** Not needed; 1.5 s keeps the ready p95 at 1.5 s.
+
+### Final 8-seat real-time run (971ca19)
+
+The season window was 640.8 s (85.44 seat-minutes); the response was 10,383.7 KB and the request 7,609.9 KB, **121.5 KB/seat-minute response and 89.1 request**, down 30.7% from 175.3 and 79.1% from the round 5 baseline 581.0. The season, recap and Play Again completed; one 409 on seat 1 was a duplicate action.
+
+| Query | Calls | Response KB | Per call |
+|---|---|---|---|
+| probe | 4,464 | 3,298.7 | 757 |
+| series | 675 | 2,400.4 | 3,641 |
+| read | 330 | 2,214.2 | 6,871 |
+| meta (full read) | 183 | 1,332.7 | 7,457 |
+| games | 2,801 | 1,255.9 | 459 |
+| checkpoint | 2,687 | 1,132.7 | 432 |
+| clock | 3,434 | 566.7 | 169 |
+| clock-write | 724 | 73.7 | 104 |
+
+### Projection
+
+The branch's phase-weighted Neon ratio is 1.32 (probe 1.98, series 1.0, read 0.95, full meta 1.1, games 1.08, checkpoint 1.21, clock 1.63). At 120.5 lobbies (19,276 seat-minutes) the branch's response is 3.09 GB and the request 1.72 GB, 4.81 GB total. The round 5 branch at the same volume was 5.61 GB response. 152 lobbies fit 4 GB and 190 fit 5 GB.
+
+| Per 8-seat, 20-minute lobby | Round 5 | Round 6 |
+|---|---|---|
+| Response, local | 28.0 MB | 19.4 MB |
+| Response, Neon | 46.5 MB | 25.7 MB |
+| At 120.5 lobbies, response | 5.61 GB | 3.09 GB |
+| At 120.5 lobbies, total | 9.37 GB | 4.81 GB |
+| Lobbies that fit 4 GB (response) | 84 | 152 |
+| Lobbies that fit 5 GB (response) | 105 | 190 |
+
+The Neon-calibrated response at the calibrated volume is 3.09 GB, under the 4 GB target and the 5 GB quota.
 
 ## Bundled changes
 
@@ -189,9 +245,12 @@ Round 2: waiting polls fell 60-90% per seat-minute. Round 3: the build payload i
 node .claude/skills/verify-build-a-bucket/scripts/control.mjs perf --runs 3 --seconds 20 --journeys wait,freshness --modes normal --tag warm
 BAB_DISABLE_LEAGUE_CACHE=1 node .claude/skills/verify-build-a-bucket/scripts/control.mjs perf --runs 3 --seconds 20 --journeys wait,freshness --modes normal --tag cold
 node .claude/skills/verify-build-a-bucket/scripts/control.mjs perf --out evidence/perf --runs 3 --journeys season --modes normal --tag season
+node .claude/skills/verify-build-a-bucket/scripts/control.mjs perf --out evidence/perf --runs 3 --journeys freshness --fresh-gap 1500 --modes normal --tag fresh15
 npx vitest run tests/league-slice.test.ts tests/league-reveal.test.ts
 ```
 
 The `season` journey drives all eleven stages through the API, advancing the stage clock in controlled increments so the cursor moves three games per tick in the regular season and one per tick in the playoffs, with one full and occasional no-change poll per seat per tick. It finishes in about 12 s. The 8-seat UI run needs the local meter env on a `launch` and then `control.mjs league --players 8 --mode normal` (12.7 minutes of wall clock).
+
+The Neon calibration runs the same metered runner against the dev branch. Main's calibration checks 28c0d2f out in a detached worktree outside the repo, symlinks the repo's `node_modules`, and removes the worktree after the measurement; the dev branch already has the additive schema, so no DDL is needed for main.
 
 Evidence: `meter-<tag>-<timestamp>.json`, `ui-db-meter*.jsonl`, `db-meter.jsonl`, `server.log`. The cluster is stopped at the end.
