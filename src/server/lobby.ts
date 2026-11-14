@@ -358,7 +358,9 @@ select
   (select coalesce(json_agg(json_build_object(
     'id', e.id, 'kind', e.kind, 'payload', e.payload, 'participant_id', e.participant_id, 'at', e.created_at
   ) order by e.id desc), '[]'::json) from (
-    select * from events where lobby_id = (select id from l) order by id desc limit ${EVENT_LIMIT}
+    select * from events where lobby_id = (select id from l)
+      and (id > $3 or id = (select max(id) from events where lobby_id = (select id from l)))
+    order by id desc limit ${EVENT_LIMIT}
   ) e) as events
 `;
 
@@ -612,11 +614,11 @@ async function advanceStage(lobbyId: string, stage: number): Promise<void> {
   );
 }
 
-export async function readLobby(input: { code: string; secret: string }): Promise<Outcome> {
+export async function readLobby(input: { code: string; secret: string; sinceEvent?: number }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
   try {
-    const rows = await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]);
+    const rows = await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash, input.sinceEvent ?? 0]);
     let row = rows[0];
     if (!row?.lobby) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -631,7 +633,7 @@ export async function readLobby(input: { code: string; secret: string }): Promis
       const fresh = await sql.query<LobbyRow>(LOBBY_ROW_SQL, [input.code]);
       if (fresh[0]) {
         if (fresh[0].phase !== before.phase) {
-          row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]))[0] ?? row;
+          row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash, input.sinceEvent ?? 0]))[0] ?? row;
         } else {
           row = { ...row, lobby: { ...before, ...fresh[0] } };
           const events = await sql.query<{ events: RawEvent[] }>(EVENTS_SQL, [input.code]);

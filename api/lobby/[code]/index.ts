@@ -12,7 +12,7 @@ export async function GET(request: Request): Promise<Response> {
   if (!Number.isFinite(since) || since < 0 || !Number.isFinite(events) || events < 0) {
     return errorResponse(400, 'invalid', 'since and events must be positive numbers.');
   }
-  const outcome = await readLobby({ code: route.code, secret: route.secret });
+  const outcome = await readLobby({ code: route.code, secret: route.secret, sinceEvent: events });
   if (!outcome.ok) return errorResponse(outcome.status, outcome.error.reason, outcome.error.error);
   const view = outcome.view;
   if (since > 0 && view.version <= since) {
