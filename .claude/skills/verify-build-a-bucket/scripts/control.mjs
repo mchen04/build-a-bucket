@@ -602,26 +602,36 @@ async function leagueRun() {
       await rematchHost.page.getByTestId('rematch').click();
       await rematchHost.page.getByTestId('rematch-ready').waitFor();
       if (awaySeat !== null) {
+        const away = seats[awaySeat - 1];
         const deadline = Date.now() + 75000;
         while (Date.now() < deadline) {
           const remove = rematchHost.page.getByRole('button', { name: 'Remove', exact: true }).first();
           if (await remove.isVisible().catch(() => false)) {
             await remove.click().catch(() => {});
+            await rematchHost.page.getByText(`${away.name} is away`).waitFor({ state: 'detached', timeout: 15000 }).catch(() => {});
+            await rematchHost.page.getByTestId('rematch-ready').waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
             rematchNote = 'away seat removed after the away window';
             break;
           }
           await rematchHost.page.waitForTimeout(2000);
         }
       }
-      for (const seat of active()) {
-        const ready = seat.page.getByTestId('rematch-ready');
-        if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
+      if (players === 2 && awaySeat !== null) {
+        await rematchHost.page.getByTestId('rematch-needs-players').waitFor({ timeout: 15000 });
+        const invite = await rematchHost.page.getByTestId('rematch-invite-link').innerText();
+        if (!invite.includes(code)) throw new Error('rematch invite link is missing the lobby code');
+        rematchNote = 'only one player remains; invite shown';
+      } else {
+        for (const seat of active()) {
+          const ready = seat.page.getByTestId('rematch-ready');
+          if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
+        }
+        const start = rematchHost.page.getByTestId('rematch-start');
+        if (await start.isEnabled().catch(() => false)) await start.click().catch(() => {});
+        await rematchHost.page.getByTestId('draw-team').waitFor({ timeout: 30000 });
+        for (const seat of active()) await snap(seat, 'second-game');
+        playAgain = true;
       }
-      const start = rematchHost.page.getByTestId('rematch-start');
-      if (await start.isEnabled().catch(() => false)) await start.click().catch(() => {});
-      await rematchHost.page.getByTestId('draw-team').waitFor({ timeout: 30000 });
-      for (const seat of active()) await snap(seat, 'second-game');
-      playAgain = true;
     }
     const timed = stages.filter((entry) => entry.at);
     const phaseTimings = timed.map((entry, index) => ({

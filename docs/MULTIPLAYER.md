@@ -146,7 +146,8 @@ for a playoff round. It never exposes how long a series actually ran.
 - Play Again keeps the lobby, code and participants, clears builds, teams, powers and readiness, and moves to
   `rematch`. The next game starts only after every retained participant readies. The host cannot bypass this
   gate; a participant who leaves stops counting, and the host may remove an away player (which counts as
-  leaving). An unready participant is never silently marked ready.
+  leaving). An unready participant is never silently marked ready. If fewer than 2 remain, the rematch gate
+  shows "A league needs at least 2 players" and the invite link; the host can share it or close the lobby.
 - Every rematch gets a new `season_secret`, so the schedule, results, Salary board and build seeds are new.
 
 ## Modes

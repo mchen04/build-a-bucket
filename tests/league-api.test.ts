@@ -514,6 +514,38 @@ describeDb('shared league API', () => {
     expect(lobby.seatsTaken).toBe(1);
   }, 120_000);
 
+  it('lets the host remove an away participant and open the rematch draw', async () => {
+    const { code, seats } = await runLeague('normal', 3);
+    expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
+    await db().query(
+      "update participants set last_seen = now() - interval '2 minutes' where lobby_id = (select id from lobbies where code = $1) and seat = $2",
+      [code, seats[2]!.seat],
+    );
+    const removed = await remove(code, seats[0]!.secret, seats[2]!.seat);
+    expect(removed.status).toBe(200);
+    const afterRemove = (await read<{ lobby: LobbyView }>(removed)).lobby;
+    expect(afterRemove.participants.find((entry) => entry.seat === seats[2]!.seat)?.status).toBe('left');
+    await ready(code, seats[0]!.secret, 0);
+    await ready(code, seats[1]!.secret, 0);
+    expect((await advance(code, seats[0]!.secret, 0)).status).toBe(200);
+    expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
+  }, 120_000);
+
+  it('reports the minimum-player outcome when an away removal leaves one player', async () => {
+    const { code, seats } = await runLeague('normal', 2);
+    expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
+    await db().query(
+      "update participants set last_seen = now() - interval '2 minutes' where lobby_id = (select id from lobbies where code = $1) and seat = $2",
+      [code, seats[1]!.seat],
+    );
+    expect((await remove(code, seats[0]!.secret, seats[1]!.seat)).status).toBe(200);
+    const lobby = await view(code, seats[0]!.secret);
+    expect(lobby.participants.filter((entry) => entry.status !== 'left')).toHaveLength(1);
+    const outcome = await advance(code, seats[0]!.secret, 0);
+    expect(outcome.status).toBe(409);
+    expect((await read<{ error: string }>(outcome)).error).toContain('at least 2 players');
+  }, 120_000);
+
   it('gives every rematch a new seed and resets the team respin', async () => {
     const { code, seats } = await runLeague('normal', 2);
     const first = await db().query<{ season_secret: string; league: unknown }>(

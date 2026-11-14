@@ -466,6 +466,17 @@ export function Lobby(props: Props) {
             <div class="tiny muted">
               {retainedReady}/{retained.length} ready · every retained player must ready
             </div>
+            {retained.length < 2 ? (
+              <div style={{ marginTop: '4px' }}>
+                <div class="tiny" data-testid="rematch-needs-players">
+                  A league needs at least 2 players.
+                </div>
+                <div class="tiny muted">Share the invite link to fill the lobby.</div>
+                <div class="tiny invite-link" data-testid="rematch-invite-link">
+                  {inviteUrl(window.location.origin, view.code)}
+                </div>
+              </div>
+            ) : null}
             {me.isHost && awayRetained.length ? (
               <div style={{ marginTop: '4px' }}>
                 {awayRetained.map((entry) => (
