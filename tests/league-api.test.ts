@@ -314,13 +314,23 @@ describeDb('shared league API', () => {
     expect(recap.league?.awards).not.toBeNull();
   }, 180_000);
 
-  it('runs every mode on the all-time boards to recap', async () => {
-    for (const mode of ['normal', 'salary', 'squad'] as const) {
-      const { view: recap } = await runLeague(mode, 2, 'alltime');
-      expect(recap.league?.recap?.champion).toBeTruthy();
-      expect(recap.league?.awards).not.toBeNull();
-    }
-  }, 180_000);
+  it('runs the normal all-time board to recap', async () => {
+    const { view: recap } = await runLeague('normal', 2, 'alltime');
+    expect(recap.league?.recap?.champion).toBeTruthy();
+    expect(recap.league?.awards).not.toBeNull();
+  }, 120_000);
+
+  it('runs the salary all-time board to recap', async () => {
+    const { view: recap } = await runLeague('salary', 2, 'alltime');
+    expect(recap.league?.recap?.champion).toBeTruthy();
+    expect(recap.league?.awards).not.toBeNull();
+  }, 120_000);
+
+  it('runs the squad all-time board to recap', async () => {
+    const { view: recap } = await runLeague('squad', 2, 'alltime');
+    expect(recap.league?.recap?.champion).toBeTruthy();
+    expect(recap.league?.awards).not.toBeNull();
+  }, 120_000);
 
   it('rejects an advance after the recap without changing the result', async () => {
     const { code, seats, view: recap } = await runLeague('normal', 2);

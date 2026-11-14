@@ -105,14 +105,15 @@ test('drives a two player shared league from invite code to recap', async ({ bro
   const host = await hostContext.newPage();
   const guest = await guestContext.newPage();
   await host.addInitScript(() => {
-    const clipboard = navigator.clipboard;
-    if (!clipboard) return;
-    const original = clipboard.writeText?.bind(clipboard);
     (window as unknown as { __copied: string[] }).__copied = [];
-    clipboard.writeText = async (text: string) => {
-      (window as unknown as { __copied: string[] }).__copied.push(text);
-      if (original) await original(text);
-    };
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as unknown as { __copied: string[] }).__copied.push(text);
+        },
+      },
+    });
   });
   try {
     await host.goto('/');

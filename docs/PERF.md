@@ -4,23 +4,23 @@ This is one current account. Everything below is **local wire-protocol instrumen
 
 ## Method
 
-`control.mjs perf` starts a throwaway Postgres cluster and a dev server whose `QueryRunner` is `scripts/meter/local-pg.mjs`, so every query is measured at the socket. The season journey drives all eleven stages through the API with a controlled clock, one full and occasional no-change poll per seat per tick, and completes in about 12 s. Each run makes 5,058 API calls. Three runs per tree; the figure per tree is the sum over the `season-*` phases of each run's phase median, then the median across the three runs.
+`control.mjs perf` starts a throwaway Postgres cluster and a dev server whose `QueryRunner` is `scripts/meter/local-pg.mjs`, so every query is measured at the socket. The season journey drives all ten stage phases through the API with a controlled clock, one full and occasional no-change poll per seat per tick, and completes in about 12 s. Each run makes 5,058 API calls. Three runs per tree; the figure per tree is the sum over the `season-*` phases of each run's phase median, then the median across the three runs. Totals that combine two fields add them per run first, then take the median, so no row mixes phases or runs.
 
 The figures are bytes on the local Postgres socket and the local HTTP connection. They are proportional to what production transfers, but they are not Neon's billed transfer, and no quota fit is claimed from them.
 
 ## Final base → rm
 
-`base` is the pre-change tree measured in this round; `rm` is the shipped tree. Recomputed from `evidence/perf/meter-{base,rm}-{1,2,3}-*.json` by `evidence-r4/perf/recompute.mjs`:
+`base` is the pre-change tree measured in this round; `rm` is the shipped tree. Recomputed from `evidence/perf/meter-{base,rm}-{1,2,3}-*.json` by `.claude/skills/verify-build-a-bucket/scripts/meter/recompute.mjs <dir>`:
 
 | Per 5,058-call season run | base | rm | Change |
 |---|---|---|---|
 | DB response bytes | 50,577,343 | 19,890,910 | −60.7% |
 | DB request bytes | 17,336,253 | 13,361,129 | −22.9% |
-| DB request + response bytes | 67,913,596 | 33,252,039 | −51.0% |
+| DB request + response bytes | 68,019,022 | 33,227,344 | −51.1% |
 | DB requests | 31,666 | 23,824 | −24.8% |
 | API/browser response bytes | 96,573,714 | 22,138,661 | −77.1% |
 
-Per-run values are in the recompute output; no run overlaps another's range in the direction of the change.
+Per-run values are in the recompute output (`requestPlusResponse` is the per-run sum); no run overlaps another's range in the direction of the change.
 
 ## Kept changes
 
@@ -65,7 +65,7 @@ One short journey against the Neon dev branch moved a `fullResults` body of 4.03
 
 ## One hypothetical monthly workload
 
-**Hypothetical, not measured.** If 100 eight-seat, 20-minute lobbies (160 seat-minutes each) ran in a month on this code path, the final local figures imply 19.4 MB of DB response and 14.3 MB of DB request per lobby, so about 1.94 GB of response and 3.37 GB of request+response for the month. No user volume is assumed here; this is arithmetic on the measured per-seat-minute numbers.
+**Hypothetical, not measured.** If 100 eight-seat, 20-minute lobbies (160 seat-minutes each) ran in a month on this code path, the 8-seat timed journey at `971ca19` implies 121.5 KB of DB response and 89.1 KB of DB request per seat-minute, so 19.4 MB of response and 14.3 MB of request per lobby, and about 1.94 GB of response and 3.37 GB of request+response for the month. No user volume is assumed here; this is arithmetic on that journey's measured per-seat-minute numbers, not on the season replay above.
 
 ## Limitation
 

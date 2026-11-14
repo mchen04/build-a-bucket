@@ -46,6 +46,7 @@ Run all commands from the repository root. Each run gets its own folder under `$
 | `repeat:<n>\|click:<target>` | click only if visible, n times (optional screens) |
 | `overflow` | fail if the page scrolls vertically or horizontally |
 | `scroll:<target>` | scroll the target to the top of the viewport |
+| `cover:<target>` | fail if any fully visible row inside the target is covered by something other than its own sticky header; logs `rows`, `visible`, `coveredByHeader`, `coveredByOther` |
 | `reload`, `goto:<path>`, `wait:<ms>` | navigation |
 | `shot:<name>` | `<name>.png` and `<name>.aria.txt` |
 | `storage:<name>` | dump localStorage to `<name>.json` (the persistence side effect) |
