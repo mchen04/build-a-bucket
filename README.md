@@ -37,14 +37,20 @@ another file instead (`BAB_ENV_FILE=/dev/null` runs with no local env at all).
 ```
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint
-npm test            # vitest: engine, spin, season, persistence, data loading, lobby API
+npm test            # vitest: engine, spin, season, persistence, data loading (lobby API skipped without a DB)
+npm run test:local-db # starts a throwaway local Postgres, applies the schema, runs the DB tests, stops it
 npm run build       # typecheck + production build
 npm run e2e         # Playwright: iPhone 14 (WebKit) and Pixel 7 (Chromium), headless
+npm run e2e:local-db # the same against a throwaway local Postgres, including the lobby spec on both projects
 ```
 
 `npm run e2e` starts the dev server itself. The lobby tests (vitest `tests/league-api.test.ts` and
-`e2e/lobby.spec.ts`) need `DATABASE_URL` and skip themselves without it; the lobby spec is excluded from the CI
-run. One vitest case loads the real data files from jsDelivr; `BAB_SKIP_NETWORK=1` skips it offline.
+`e2e/lobby.spec.ts`) skip themselves without `DATABASE_URL`; run them with `npm run test:local-db` /
+`npm run e2e:local-db`, which start a throwaway Postgres 16 cluster, apply `db/schema.sql`, run and stop it. The
+cluster uses `/opt/homebrew/bin` by default; override `BAB_PG_BIN`. `control.mjs launch` uses the same kind of
+local cluster by default, and `control.mjs launch --neon` is the only opt-in to the Neon dev branch. Tests must
+never point at the production project's database. One vitest case loads the real data files from jsDelivr;
+`BAB_SKIP_NETWORK=1` skips it offline.
 Playwright screenshots go to `test-results/shots/<spec>/`, or under `BAB_SHOTS` when set.
 
 `.claude/skills/verify-build-a-bucket/` is the verification skill: `scripts/control.mjs` launches the stack,

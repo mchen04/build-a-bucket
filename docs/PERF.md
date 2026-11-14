@@ -1,12 +1,24 @@
 # Database transfer and latency
 
-Neon bills public network transfer. Production spent 4.1 GB of the 5 GB monthly allowance running `main`'s old lobby. This measures the shared league on a local Postgres replay, per seat-minute, warm and with the in-memory league cache disabled (the serverless worst case). Round 4 removes the full-league read from every poll: a poll now reads a compact slice keyed by lobby, stage and cursor, and the old `league` column is only a fallback.
+Neon bills public network transfer. The project used 5.57 GB of its 5 GB monthly allowance for Nov 1–Dec 1: the dev branch used 5.48 GB and production `main` 94 MB. Almost all of the dev usage was our own testing, not users; the 4.1 GB figure in the earlier Neon email was also mostly testing. This measures the shared league on a local Postgres replay, per seat-minute, warm and with the in-memory league cache disabled (the serverless worst case). Round 4 removes the full-league read from every poll: a poll now reads a compact slice keyed by lobby, stage and cursor, and the old `league` column is only a fallback.
 
 ## How it is measured
 
 `control.mjs perf` starts a throwaway Postgres cluster and a dev server whose `QueryRunner` is `scripts/meter/local-pg.mjs`, so every query is measured at the socket and repeated load never reaches Neon. Journeys are driver-level, except the real-time run, which is the real client in a browser.
 
 Per-seat-minute is response bytes divided by seats times minutes in the steady polling window (setup excluded). `BAB_DISABLE_LEAGUE_CACHE=1` turns off the in-memory league cache so every poll would read the old league JSON; the slice path does not use that cache, so warm and cold are the same for new lobbies. The local dev server is one long-lived process, so the warm case is an upper bound on production's hit rate.
+
+## Production calibration (Nov 1–Dec 1)
+
+The Neon project used 5.57 GB this period: dev 5.48 GB and production main 94 MB. The dev branch is our test
+traffic, not customer load. Production main's 94 MB is about 1.25 8-seat 20-minute lobbies at the 75.0 MB
+Neon-calibrated per-lobby transfer below (about 2.3 if only the 45.7 MB response is counted). The earlier 4.1 GB
+email and the 120.5-lobby projection derived from it are withdrawn: that usage was mostly testing.
+
+Every DB-backed test and the 8-player driver must use a throwaway local Postgres. `npm run test:local-db` and
+`npm run e2e:local-db` start, seed, run and stop one cluster; `control.mjs launch` defaults to a local cluster and
+`control.mjs launch --neon` is the only opt-in to the dev branch. Never point tests at the production project's
+database.
 
 ## Round 4 storage
 
@@ -131,30 +143,31 @@ The Neon dev branch received the additive schema (48 statements) and one short 8
 | meta (regular) | 1,870 B | 870 B | 2.15 |
 | compact probe | ~1,500 B | 757 B | 1.98 |
 
-The weighted ratio for the final run's query mix is **1.63**. The earlier calibration against main's 4.1 GB assumed 1.0 for both.
+The weighted ratio for the final run's query mix is **1.63**. The earlier calibration against the 4.1 GB email assumed 1.0 for both; the measured production volume does not use that email figure.
 
 ### Projection
 
-Assumptions: 8 seats, 20 minutes per 8-seat lobby (160 seat-minutes), 115 lobbies a month (18,400 seat-minutes). Warm and cold are the same for new lobbies: the slice and delta paths do not use the in-memory league cache, and the cold replay (`BAB_DISABLE_LEAGUE_CACHE=1`) matches warm.
+Assumptions: 8 seats, 20 minutes per 8-seat lobby (160 seat-minutes). The Neon-calibrated per-lobby transfer is 45.7 MB response + 29.3 MB request = 75.0 MB. Production main measured 94 MB for Nov 1–Dec 1, about 1.25 lobbies/month; the 115-lobby volume came from the 4.1 GB email and is withdrawn. Warm and cold are the same for new lobbies: the slice and delta paths do not use the in-memory league cache.
 
 | Per 8-seat, 20-minute lobby | Round 5 baseline | Final (local) | Final (Neon ×1.63) |
 |---|---|---|---|
 | Response | 92.9 MB | 28.0 MB | 45.7 MB |
 | Request | 29.8 MB | 18.0 MB | 29.3 MB |
-| At 115 lobbies, response | 10.68 GB | 3.23 GB | 5.26 GB |
-| At 115 lobbies, total | 14.10 GB | 5.30 GB | 8.64 GB |
-| Lobbies that fit 4 GB (response) | 43 | 142 | 87 |
-| Lobbies that fit 5 GB (response) | 53 | 178 | 109 |
+| Total | 122.7 MB | 46.0 MB | 75.0 MB |
+| Lobbies that fit 4 GB (total) | 33 | 89 | 54 |
+| Lobbies that fit 5 GB (total) | 41 | 111 | 68 |
+| Lobbies that fit 4 GB (response only) | 44 | 146 | 89 |
+| Lobbies that fit 5 GB (response only) | 55 | 182 | 112 |
 
-The local response projection is 3.23 GB at 115 lobbies, under the 4 GB target and the 5 GB quota. The calibrated projection is 5.26 GB, 5% over the 5 GB quota: the remaining gap is the playoff meta (8.1 MB of 14.7 MB) and the compact probe (3.2 MB). A series delta that sends only the newly revealed series games is the next lever.
+At the measured production volume (94 MB/month), the Neon-calibrated total is 94 MB, about 1.25 lobbies/month; 4 GB fits 54 lobbies/month and 5 GB fits 68. The old 115-lobby projection was driven by the 4.1 GB email and is withdrawn.
 
 ## Round 6: consistent projection and the playoff series
 
-The round 5 projection mixed two ratios: the 115-lobby volume came from main's local wire bytes with an implied Neon ratio of 1.0, while the branch's ratio was 1.63. Round 6 measures both on the Neon dev branch and projects the branch at the volume main's calibrated bytes imply.
+The round 5 projection mixed two ratios: the 115-lobby volume came from main's local wire bytes with an implied Neon ratio of 1.0, while the branch's ratio was 1.63. Round 6 measures both on the Neon dev branch; the volume is now the measured production traffic, not the 4.1 GB email.
 
-### Main's calibrated volume
+### Production volume
 
-Main (28c0d2f) ran in a detached worktree outside the repo against the Neon dev branch: create, join eight seats, start, release the playoffs and ten rounds of eight polls. Its `READ_SQL` moved 4,322 B of Neon response per poll (93 calls, 401,963 B). The round 4 local measurement is 5.08 KB per reveal poll, so main's ratio is 0.85. At 50.4 polls per seat-minute, main's Neon response is 212.7 KB/seat-minute. The 4.1 GB production transfer therefore implies 19,276 seat-minutes, or 120.5 eight-seat 20-minute lobbies. The round 5 115 was close; the consistent volume is 120.5.
+The project used 5.57 GB for Nov 1–Dec 1: dev 5.48 GB and production main 94 MB. The dev branch is our tests. Main's 94 MB is about 1.25 8-seat 20-minute lobbies at 75.0 MB each, not the 120.5 lobbies derived from the 4.1 GB email; that email's usage was mostly testing. The branch's Neon/local ratio is 1.63, which is the per-lobby calibration; the old 4.1 GB volume calibration is withdrawn.
 
 ### Branch playoff ratio
 

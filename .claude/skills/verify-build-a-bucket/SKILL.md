@@ -15,16 +15,16 @@ Run all commands from the repository root. Each run gets its own folder under `$
 
 ## Launch
 
-- Dev stack (app + API + Neon dev branch from the gitignored `.env.local`): `control.mjs launch [--port 4391]`.
+- Dev stack (app + API + throwaway local Postgres): `control.mjs launch [--port 4391]`. The cluster is created under the run directory and removed by `cleanup`; Postgres 16 is required (`BAB_PG_BIN`, default `/opt/homebrew/bin`). Pass `--neon` to use the Neon dev branch from the gitignored `.env.local`; never use that for tests or the production project.
 - Production build of the static app (no API, for cold-load timing): `control.mjs launch --prod [--port 4392]`.
-- Ready means `GET /` serves `<title>Build a Bucket</title>` and, in dev mode, `GET /api/lobby/ZZZZZZ` returns 404 `not_found`. That second probe reaches Neon, so the database is live too. The command waits up to 90 s and exits non-zero if not ready.
+- Ready means `GET /` serves `<title>Build a Bucket</title>` and, in dev mode, `GET /api/lobby/ZZZZZZ` returns 404 `not_found`. That second probe reaches the run's database (local by default), so the database is live too. The command waits up to 90 s and exits non-zero if not ready.
 - Never use port 4173: Playwright's `webServer` reuses whatever listens there, so a verification server would capture `npm run e2e`.
 - The first catalog load fetches pinned data from jsDelivr; a cold start without network fails the builder, not the launch.
 - Deployed stack: skip launch and pass `--base https://<deployment>` to `lobby-load` or `--url` to `cold-load`.
 
 ## Doctor
 
-`control.mjs doctor` is read-only: the run's process alive, the port owned by that process tree, HEAD unchanged since launch, app identity, API reaching Neon. `ok: false` means relaunch, not drive. Run it first whenever anything looks off.
+`control.mjs doctor` is read-only: the run's process alive, the port owned by that process tree, HEAD unchanged since launch, app identity, API reaching the run's database. `ok: false` means relaunch, not drive. Run it first whenever anything looks off.
 
 ## Drive
 
@@ -98,7 +98,9 @@ Run these after a deploy, in addition to the local journey:
 
 ## Cleanup
 
-`control.mjs cleanup` stops only the process tree this run launched, deletes the lobbies this run created (dev database only, by recorded code), removes saved sessions, and keeps `<run>/evidence/`. It prints the evidence path and file count, which must be non-zero. Lobbies made on a deployed stack are left for `npm run prune:lobbies` on that database.
+`control.mjs cleanup` stops only the process tree this run launched, deletes the lobbies this run created for a `--neon` run (by recorded code), discards the local cluster, removes saved sessions, and keeps `<run>/evidence/`. It prints the evidence path and file count, which must be non-zero. Lobbies made on a deployed stack are left for `npm run prune:lobbies` on that database.
+
+DB-backed vitest and Playwright use `npm run test:local-db` and `npm run e2e:local-db`, which start a throwaway local Postgres, apply `db/schema.sql`, run and stop it. `control.mjs launch` defaults to the same local setup. The Neon dev branch is opt-in only (`control.mjs launch --neon`); never run the checks against the production project.
 
 ## Features
 
