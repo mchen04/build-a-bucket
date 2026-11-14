@@ -31,6 +31,13 @@ function dynamicChild(dir: string, segment: string): string | null {
   return null;
 }
 
+function dynamicFile(dir: string): string | null {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.startsWith('[') && entry.name.endsWith('].ts')) return path.join(dir, entry.name);
+  }
+  return null;
+}
+
 function resolveApiFile(pathname: string): string | null {
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length < 2 || segments[0] !== 'api') return null;
@@ -45,9 +52,11 @@ function resolveApiFile(pathname: string): string | null {
       const indexFile = path.join(dir, segment, 'index.ts');
       if (existsSync(indexFile)) return indexFile;
       const dynamic = dynamicChild(dir, segment);
-      if (!dynamic) return null;
-      const dynamicIndex = path.join(dynamic, 'index.ts');
-      return existsSync(dynamicIndex) ? dynamicIndex : null;
+      if (dynamic) {
+        const dynamicIndex = path.join(dynamic, 'index.ts');
+        if (existsSync(dynamicIndex)) return dynamicIndex;
+      }
+      return dynamicFile(dir);
     }
     const next = dynamicChild(dir, segment);
     if (!next) return null;
@@ -78,6 +87,7 @@ async function send(res: ServerResponse, response: Response): Promise<void> {
 }
 
 function apiMiddleware(vite: ViteDevServer) {
+  const modules = new Map<string, Promise<Record<string, unknown>>>();
   return (req: IncomingMessage, res: ServerResponse, next: () => void): void => {
     if (!req.url || !req.url.startsWith('/api/')) return next();
     void (async () => {
@@ -88,7 +98,13 @@ function apiMiddleware(vite: ViteDevServer) {
           await send(res, new Response(JSON.stringify({ error: 'Unknown endpoint', reason: 'not_found' }), { status: 404 }));
           return;
         }
-        const module = (await vite.ssrLoadModule(file)) as Record<string, unknown>;
+        let loading = modules.get(file);
+        if (!loading) {
+          loading = vite.ssrLoadModule(file) as Promise<Record<string, unknown>>;
+          modules.set(file, loading);
+          loading.catch(() => modules.delete(file));
+        }
+        const module = await loading;
         const handler = module[request.method.toUpperCase()];
         if (typeof handler !== 'function') {
           await send(res, new Response(JSON.stringify({ error: 'Method not allowed', reason: 'invalid' }), { status: 405 }));
@@ -121,6 +137,16 @@ const vite = await createViteServer({
   server: { port, host, strictPort },
   appType: 'spa',
 });
+
+if (process.env.BAB_DB_RUNNER) {
+  const dbModule = (await vite.ssrLoadModule(path.join(root, 'src/server/db.ts'))) as {
+    setRunner: (runner: unknown) => void;
+  };
+  const runnerModule = (await vite.ssrLoadModule(path.resolve(process.env.BAB_DB_RUNNER))) as {
+    createRunner: () => Promise<unknown>;
+  };
+  dbModule.setRunner(await runnerModule.createRunner());
+}
 
 await vite.listen();
 vite.printUrls();

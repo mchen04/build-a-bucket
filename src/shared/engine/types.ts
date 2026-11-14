@@ -45,6 +45,7 @@ export interface Build {
 export interface StandingRow {
   short: string;
   wins: number;
+  losses?: number;
   isUs?: boolean;
 }
 

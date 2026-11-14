@@ -100,7 +100,7 @@ function perFor(line: PerLine): number {
   return uPer(line) * (15 / leagueUPer);
 }
 
-function teamStrength(short: string, table: TeamTable): number {
+export function teamStrength(short: string, table: TeamTable): number {
   const row = table[short] ?? { off: 68, def: 65 };
   const v = (row.off + row.def) / 200;
   return clamp(0.2 + ((v - 0.59) / 0.24) * 0.57, 0.13, 0.77);
@@ -142,9 +142,9 @@ function buildStandings(
       const p = clamp(0.2 + ((v - 0.59) / 0.24) * 0.57 + uniform(rng, -0.06, 0.06), 0.13, 0.77);
       let teamWins = 0;
       for (let i = 0; i < 82; i++) if (rng() < p) teamWins++;
-      return { short, wins: teamWins };
+      return { short, wins: teamWins, losses: 82 - teamWins };
     });
-  rows.push({ short: team, wins, isUs: true });
+  rows.push({ short: team, wins, losses: 82 - wins, isUs: true });
   rows.sort((a, b) => b.wins - a.wins || (a.isUs ? -1 : 1));
   return { seed: rows.findIndex((row) => row.isUs) + 1, standings: rows };
 }
@@ -472,7 +472,7 @@ function teamPower(team: string, era: Era, mods: TeamMods = NO_MODS): number {
   return (row.off + mods.off * 3.3 + row.def + mods.def * 3.3) / 200;
 }
 
-function winProbFor(ovr: number, team: string, era: Era, mods: TeamMods = NO_MODS): number {
+export function winProbFor(ovr: number, team: string, era: Era, mods: TeamMods = NO_MODS): number {
   const allTime = era === 'alltime';
   const classic = !allTime;
   const base = clamp(0.2 + ((teamPower(team, era, mods) - 0.59) / 0.24) * 0.57, 0.13, 0.77);
@@ -712,13 +712,17 @@ export function finalizeDraft(draft: SeasonDraft, options: { playerName: string;
 
   const awardScore = (points: number, assists: number, boards: number) => points + assists * 1.5 + boards * 0.75;
   const playerScore = awardScore(ppg, apg, rpg);
-  const benchmarks = (allTime ? MVP_BENCHMARKS_ALLTIME : MVP_BENCHMARKS_CURRENT).map(([pMin, pSpan, aMin, aSpan, rMin, rSpan]) =>
-    awardScore(
-      (pMin as number) + rng() * (pSpan as number),
-      (aMin as number) + rng() * (aSpan as number),
-      (rMin as number) + rng() * (rSpan as number),
-    ),
-  );
+  const drawBenchmarks = (list: readonly (readonly number[])[]) =>
+    list.map(([pMin, pSpan, aMin, aSpan, rMin, rSpan]) =>
+      awardScore(
+        (pMin as number) + rng() * (pSpan as number),
+        (aMin as number) + rng() * (aSpan as number),
+        (rMin as number) + rng() * (rSpan as number),
+      ),
+    );
+  const benchmarksCurrent = drawBenchmarks(MVP_BENCHMARKS_CURRENT);
+  const benchmarksAllTime = drawBenchmarks(MVP_BENCHMARKS_ALLTIME);
+  const benchmarks = allTime ? benchmarksAllTime : benchmarksCurrent;
   const mvp = madePlayoffs && playerScore > Math.max(...benchmarks);
   const dpoyScore = rolled.spg * 10 + rolled.bpg * 8 + (seed <= 4 ? 4 : seed <= 8 ? 2 : 0);
   const dpoyThreshold = 26 + rng() * 10;

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'preact/hooks';
 import type { SalCard, SalColumn } from '../../shared/engine/salary';
 import { SAL_COLUMNS } from '../../shared/engine/salary';
 import type { ShuffleTarget } from '../../shared/engine/salaryPowers';
-import { TopBar } from '../components';
+import { gradeTone } from '../../shared/engine/rules';
+import { StatGrid, TopBar } from '../components';
 
 export interface SalaryOutcome {
   dateStr: string;
@@ -145,7 +146,7 @@ export function Salary(props: Props) {
             ${spent}M
           </span>
           <span class="sc-cap">/ ${props.cap}M</span>
-          <span class="tiny muted" style={{ marginLeft: 'auto' }}>
+          <span class="tiny muted sc-meta">
             {props.mode === 'daily' ? props.dateStr : `SEED ${props.dateStr}`}
           </span>
         </div>
@@ -187,7 +188,7 @@ export function Salary(props: Props) {
                 const grade = props.scouted[card.id];
                 return (
                   <button
-                    class={`sc-cell${on ? ' on' : ''}${card.legend ? ' legend' : ''}${props.scoutMode ? ' scouting' : ''}`}
+                    class={`sc-cell${on ? ' on' : ''}${props.scoutMode ? ' scouting' : ''}`}
                     key={`${column.key}-${tier}`}
                     data-testid={`salary-${column.key}-${tier}`}
                     data-attrs={JSON.stringify(card.attrs)}
@@ -197,7 +198,7 @@ export function Salary(props: Props) {
                     <span class="sc-name">{lastName(card.name)}</span>
                     <span class="sc-team">{card.legend ? `${card.team} · GOAT` : card.team}</span>
                     {grade ? (
-                      <span class="sc-grade" data-testid={`salary-grade-${column.key}-${tier}`}>
+                      <span class={`sc-grade ${gradeTone(grade)}`} data-testid={`salary-grade-${column.key}-${tier}`}>
                         {grade}
                       </span>
                     ) : null}
@@ -213,16 +214,29 @@ export function Salary(props: Props) {
             <div class="title" style={{ marginTop: '2px' }}>
               {play.headline}
             </div>
-            <div class="muted" style={{ fontSize: '11px', marginTop: '4px' }}>
-              OVR {play.ovr} · {play.wins}-{play.losses} · {play.champion ? 'CHAMPIONS' : play.madePlayoffs ? 'PLAYOFFS' : 'MISSED PLAYOFFS'} · ${play.spent}M
+            <StatGrid
+              items={[
+                { label: 'OVR', value: play.ovr },
+                { label: 'Record', value: `${play.wins}-${play.losses}` },
+                { label: 'Seed', value: `#${play.seed}` },
+                { label: 'Cap', value: `$${play.spent}M` },
+              ]}
+            />
+            <div class="result-line">
+              {play.champion ? 'Champions' : play.madePlayoffs ? 'Playoffs' : 'Missed playoffs'}
             </div>
-            <div class="tiny muted" style={{ marginTop: '2px' }}>
-              PREVIEW {play.preview.ppg} PPG · {play.preview.rpg} RPG · {play.preview.apg} APG
-            </div>
+            <StatGrid
+              className="three"
+              items={[
+                { label: 'PPG', value: play.preview.ppg },
+                { label: 'RPG', value: play.preview.rpg },
+                { label: 'APG', value: play.preview.apg },
+              ]}
+            />
           </div>
         ) : (
           <div class="notice" data-testid="salary-hint">
-            Pick one card per column. The cap is ${props.cap}M and the season is seeded from {props.mode === 'daily' ? props.dateStr : 'the run seed'}.
+            One card per column.
           </div>
         )}
       </div>

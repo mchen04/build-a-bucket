@@ -1,0 +1,368 @@
+{
+  "sha": "92cb2a155bb2261cd68038ac366b994ad5dbb873",
+  "args": {
+    "seeds": [
+      "parity-0",
+      "parity-1",
+      "parity-2",
+      "parity-3",
+      "parity-4",
+      "parity-5",
+      "parity-6",
+      "parity-7"
+    ],
+    "team": "BOS"
+  },
+  "types": {
+    "guard": [
+      "jumpShot",
+      "finishing",
+      "passing",
+      "handles",
+      "perimeterDefense",
+      "speed",
+      "bounce",
+      "size",
+      "basketballIQ",
+      "clutch"
+    ],
+    "big": [
+      "jumpShot",
+      "finishing",
+      "rebounding",
+      "playmaking",
+      "interiorDefense",
+      "speed",
+      "bounce",
+      "size",
+      "basketballIQ",
+      "clutch"
+    ]
+  },
+  "oracle": {
+    "team": "BOS",
+    "rows": [
+      {
+        "seed": "parity-0",
+        "strength": [
+          90.1,
+          87.1
+        ],
+        "wins": 70,
+        "losses": 12,
+        "confSeed": 1,
+        "playoffs": true,
+        "champion": true,
+        "finals": {
+          "opponent": "DEN",
+          "series": "4-2"
+        },
+        "rounds": [
+          [
+            "series",
+            "CHA",
+            4,
+            2
+          ],
+          [
+            "series",
+            "CLE",
+            4,
+            0
+          ],
+          [
+            "series",
+            "NYK",
+            4,
+            0
+          ],
+          [
+            "series",
+            "DEN",
+            4,
+            2
+          ]
+        ]
+      },
+      {
+        "seed": "parity-1",
+        "strength": [
+          90.1,
+          87.1
+        ],
+        "wins": 67,
+        "losses": 15,
+        "confSeed": 1,
+        "playoffs": true,
+        "champion": false,
+        "finals": {
+          "opponent": "SAS",
+          "series": "3-4"
+        },
+        "rounds": [
+          [
+            "series",
+            "CHA",
+            4,
+            1
+          ],
+          [
+            "series",
+            "MIA",
+            4,
+            0
+          ],
+          [
+            "series",
+            "DET",
+            4,
+            1
+          ],
+          [
+            "series",
+            "SAS",
+            3,
+            4
+          ]
+        ]
+      },
+      {
+        "seed": "parity-2",
+        "strength": [
+          90.1,
+          87.1
+        ],
+        "wins": 69,
+        "losses": 13,
+        "confSeed": 1,
+        "playoffs": true,
+        "champion": true,
+        "finals": {
+          "opponent": "DEN",
+          "series": "4-0"
+        },
+        "rounds": [
+          [
+            "series",
+            "CHA",
+            4,
+            0
+          ],
+          [
+            "series",
+            "ATL",
+            4,
+            0
+          ],
+          [
+            "series",
+            "NYK",
+            4,
+            0
+          ],
+          [
+            "series",
+            "DEN",
+            4,
+            0
+          ]
+        ]
+      },
+      {
+        "seed": "parity-3",
+        "strength": [
+          90.1,
+          87.1
+        ],
+        "wins": 74,
+        "losses": 8,
+        "confSeed": 1,
+        "playoffs": true,
+        "champion": true,
+        "finals": {
+          "opponent": "SAS",
+          "series": "4-2"
+        },
+        "rounds": [
+          [
+            "series",
+            "MIA",
+            4,
+            0
+          ],
+          [
+            "series",
+            "CLE",
+            4,
+            1
+          ],
+          [
+            "series",
+            "NYK",
+            4,
+            0
+          ],
+          [
+            "series",
+            "SAS",
+            4,
+            2
+          ]
+        ]
+      },
+      {
+        "seed": "parity-4",
+        "strength": [
+          90.1,
+          87.1
+        ],
+        "wins": 69,
+        "losses": 13,
+        "confSeed": 1,
+        "playoffs": true,
+        "champion": false,
+        "finals": null,
+        "rounds": [
+          [
+            "series",
+            "TOR",
+            4,
+            0
+          ],
+          [
+            "series",
+            "DET",
+            2,
+            4
+          ]
+        ]
+      },
+      {
+        "seed": "parity-5",
+        "strength": [
+          90.1,
+          87.1
+        ],
+        "wins": 72,
+        "losses": 10,
+        "confSeed": 1,
+        "playoffs": true,
+        "champion": true,
+        "finals": {
+          "opponent": "SAS",
+          "series": "4-1"
+        },
+        "rounds": [
+          [
+            "series",
+            "CHA",
+            4,
+            0
+          ],
+          [
+            "series",
+            "PHI",
+            4,
+            1
+          ],
+          [
+            "series",
+            "NYK",
+            4,
+            3
+          ],
+          [
+            "series",
+            "SAS",
+            4,
+            1
+          ]
+        ]
+      },
+      {
+        "seed": "parity-6",
+        "strength": [
+          90.1,
+          87.1
+        ],
+        "wins": 75,
+        "losses": 7,
+        "confSeed": 1,
+        "playoffs": true,
+        "champion": false,
+        "finals": {
+          "opponent": "OKC",
+          "series": "3-4"
+        },
+        "rounds": [
+          [
+            "series",
+            "ATL",
+            4,
+            3
+          ],
+          [
+            "series",
+            "PHI",
+            4,
+            0
+          ],
+          [
+            "series",
+            "ORL",
+            4,
+            1
+          ],
+          [
+            "series",
+            "OKC",
+            3,
+            4
+          ]
+        ]
+      },
+      {
+        "seed": "parity-7",
+        "strength": [
+          90.1,
+          87.1
+        ],
+        "wins": 65,
+        "losses": 17,
+        "confSeed": 1,
+        "playoffs": true,
+        "champion": true,
+        "finals": {
+          "opponent": "DEN",
+          "series": "4-0"
+        },
+        "rounds": [
+          [
+            "series",
+            "CHA",
+            4,
+            1
+          ],
+          [
+            "series",
+            "CLE",
+            4,
+            2
+          ],
+          [
+            "series",
+            "DET",
+            4,
+            0
+          ],
+          [
+            "series",
+            "DEN",
+            4,
+            0
+          ]
+        ]
+      }
+    ]
+  }
+}

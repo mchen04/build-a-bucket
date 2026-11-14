@@ -1,0 +1,566 @@
+{
+  "sha": "92cb2a155bb2261cd68038ac366b994ad5dbb873",
+  "args": {
+    "seeds": [
+      "12345",
+      "12352",
+      "12359",
+      "12366",
+      "12373",
+      "12380",
+      "12387",
+      "12394"
+    ],
+    "team": "BOS",
+    "mode": "classic"
+  },
+  "types": {
+    "guard": [
+      "jumpShot",
+      "finishing",
+      "passing",
+      "handles",
+      "perimeterDefense",
+      "speed",
+      "bounce",
+      "size",
+      "basketballIQ",
+      "clutch"
+    ],
+    "big": [
+      "jumpShot",
+      "finishing",
+      "rebounding",
+      "playmaking",
+      "interiorDefense",
+      "speed",
+      "bounce",
+      "size",
+      "basketballIQ",
+      "clutch"
+    ]
+  },
+  "oracle": {
+    "team": "BOS",
+    "teamWP": [
+      [
+        "ATL",
+        0.55625
+      ],
+      [
+        "BOS",
+        0.6393750000000001
+      ],
+      [
+        "BKN",
+        0.24750000000000005
+      ],
+      [
+        "CHA",
+        0.5325
+      ],
+      [
+        "CHI",
+        0.37812500000000016
+      ],
+      [
+        "CLE",
+        0.6393750000000001
+      ],
+      [
+        "DAL",
+        0.3900000000000002
+      ],
+      [
+        "DEN",
+        0.6631250000000002
+      ],
+      [
+        "DET",
+        0.734375
+      ],
+      [
+        "GSW",
+        0.44937499999999997
+      ],
+      [
+        "HOU",
+        0.6393750000000001
+      ],
+      [
+        "IND",
+        0.23562500000000003
+      ],
+      [
+        "LAC",
+        0.50875
+      ],
+      [
+        "LAL",
+        0.60375
+      ],
+      [
+        "MEM",
+        0.3068750000000001
+      ],
+      [
+        "MIA",
+        0.5206250000000001
+      ],
+      [
+        "MIL",
+        0.34250000000000014
+      ],
+      [
+        "MIN",
+        0.6393750000000001
+      ],
+      [
+        "NOP",
+        0.3187500000000001
+      ],
+      [
+        "NYK",
+        0.734375
+      ],
+      [
+        "OKC",
+        0.77
+      ],
+      [
+        "ORL",
+        0.544375
+      ],
+      [
+        "PHI",
+        0.544375
+      ],
+      [
+        "PHX",
+        0.544375
+      ],
+      [
+        "POR",
+        0.50875
+      ],
+      [
+        "SAC",
+        0.2712500000000001
+      ],
+      [
+        "SAS",
+        0.7581249999999999
+      ],
+      [
+        "TOR",
+        0.55625
+      ],
+      [
+        "UTA",
+        0.2712500000000001
+      ],
+      [
+        "WAS",
+        0.28312500000000007
+      ]
+    ],
+    "rows": [
+      {
+        "seed": 12345,
+        "ovr": 89,
+        "wins": 63,
+        "losses": 19,
+        "confSeed": 2,
+        "champion": true,
+        "madePlayoffs": true,
+        "line": [
+          26.5,
+          6,
+          7.8,
+          2,
+          1.2,
+          46,
+          40,
+          93,
+          2.3,
+          26.4
+        ],
+        "rounds": [
+          [
+            "series",
+            "TOR",
+            true,
+            4,
+            3
+          ],
+          [
+            "series",
+            "CHA",
+            true,
+            4,
+            0
+          ],
+          [
+            "series",
+            "CLE",
+            true,
+            4,
+            3
+          ],
+          [
+            "series",
+            "SAS",
+            true,
+            4,
+            0
+          ]
+        ],
+        "mvp": false,
+        "dpoy": false
+      },
+      {
+        "seed": 12352,
+        "ovr": 89,
+        "wins": 60,
+        "losses": 22,
+        "confSeed": 2,
+        "champion": true,
+        "madePlayoffs": true,
+        "line": [
+          26.5,
+          5.9,
+          8.1,
+          1.9,
+          1.2,
+          48,
+          43,
+          92,
+          2.5,
+          27
+        ],
+        "rounds": [
+          [
+            "series",
+            "CHA",
+            true,
+            4,
+            1
+          ],
+          [
+            "series",
+            "PHI",
+            true,
+            4,
+            0
+          ],
+          [
+            "series",
+            "DET",
+            true,
+            4,
+            1
+          ],
+          [
+            "series",
+            "SAS",
+            true,
+            4,
+            0
+          ]
+        ],
+        "mvp": false,
+        "dpoy": true
+      },
+      {
+        "seed": 12359,
+        "ovr": 89,
+        "wins": 63,
+        "losses": 19,
+        "confSeed": 1,
+        "champion": false,
+        "madePlayoffs": true,
+        "line": [
+          25.6,
+          6.1,
+          7.8,
+          2,
+          1.1,
+          45,
+          41,
+          89,
+          2.3,
+          25.2
+        ],
+        "rounds": [
+          [
+            "series",
+            "PHI",
+            true,
+            4,
+            1
+          ],
+          [
+            "series",
+            "DET",
+            true,
+            4,
+            3
+          ],
+          [
+            "series",
+            "ATL",
+            true,
+            4,
+            3
+          ],
+          [
+            "series",
+            "OKC",
+            false,
+            1,
+            4
+          ]
+        ],
+        "mvp": false,
+        "dpoy": true
+      },
+      {
+        "seed": 12366,
+        "ovr": 89,
+        "wins": 58,
+        "losses": 24,
+        "confSeed": 3,
+        "champion": true,
+        "madePlayoffs": true,
+        "line": [
+          25.8,
+          6.2,
+          7.8,
+          1.9,
+          1.2,
+          47,
+          42,
+          93,
+          2.1,
+          26.6
+        ],
+        "rounds": [
+          [
+            "series",
+            "CLE",
+            true,
+            4,
+            3
+          ],
+          [
+            "series",
+            "DET",
+            true,
+            4,
+            3
+          ],
+          [
+            "series",
+            "PHI",
+            true,
+            4,
+            0
+          ],
+          [
+            "series",
+            "DEN",
+            true,
+            4,
+            2
+          ]
+        ],
+        "mvp": false,
+        "dpoy": false
+      },
+      {
+        "seed": 12373,
+        "ovr": 89,
+        "wins": 66,
+        "losses": 16,
+        "confSeed": 1,
+        "champion": false,
+        "madePlayoffs": true,
+        "line": [
+          25.6,
+          6.1,
+          7.9,
+          2,
+          1.2,
+          48,
+          41,
+          93,
+          2.2,
+          26.8
+        ],
+        "rounds": [
+          [
+            "series",
+            "ORL",
+            true,
+            4,
+            3
+          ],
+          [
+            "series",
+            "CLE",
+            true,
+            4,
+            2
+          ],
+          [
+            "series",
+            "PHI",
+            true,
+            4,
+            2
+          ],
+          [
+            "series",
+            "OKC",
+            false,
+            2,
+            4
+          ]
+        ],
+        "mvp": false,
+        "dpoy": true
+      },
+      {
+        "seed": 12380,
+        "ovr": 89,
+        "wins": 64,
+        "losses": 18,
+        "confSeed": 1,
+        "champion": false,
+        "madePlayoffs": true,
+        "line": [
+          25.6,
+          6.5,
+          7.8,
+          1.9,
+          1.1,
+          46,
+          43,
+          92,
+          1.8,
+          26.6
+        ],
+        "rounds": [
+          [
+            "series",
+            "ORL",
+            true,
+            4,
+            2
+          ],
+          [
+            "series",
+            "NYK",
+            true,
+            4,
+            2
+          ],
+          [
+            "series",
+            "CLE",
+            true,
+            4,
+            1
+          ],
+          [
+            "series",
+            "OKC",
+            false,
+            0,
+            4
+          ]
+        ],
+        "mvp": false,
+        "dpoy": true
+      },
+      {
+        "seed": 12387,
+        "ovr": 89,
+        "wins": 62,
+        "losses": 20,
+        "confSeed": 2,
+        "champion": false,
+        "madePlayoffs": true,
+        "line": [
+          24.6,
+          6,
+          7.6,
+          2,
+          1,
+          46,
+          42,
+          89,
+          2.3,
+          24.7
+        ],
+        "rounds": [
+          [
+            "series",
+            "ATL",
+            false,
+            2,
+            4
+          ]
+        ],
+        "mvp": false,
+        "dpoy": true
+      },
+      {
+        "seed": 12394,
+        "ovr": 89,
+        "wins": 53,
+        "losses": 29,
+        "confSeed": 5,
+        "champion": false,
+        "madePlayoffs": true,
+        "line": [
+          25.5,
+          6.5,
+          7.9,
+          1.9,
+          1.2,
+          46,
+          40,
+          94,
+          1.8,
+          26.7
+        ],
+        "rounds": [
+          [
+            "series",
+            "TOR",
+            true,
+            4,
+            1
+          ],
+          [
+            "series",
+            "DET",
+            true,
+            4,
+            0
+          ],
+          [
+            "series",
+            "NYK",
+            false,
+            3,
+            4
+          ]
+        ],
+        "mvp": false,
+        "dpoy": true
+      }
+    ]
+  }
+}

@@ -9,6 +9,7 @@ export interface BatchQuery {
 export interface QueryRunner {
   query<Row>(text: string, params?: unknown[]): Promise<Row[]>;
   batch(queries: BatchQuery[]): Promise<void>;
+  transaction<Row>(queries: BatchQuery[]): Promise<Row[][]>;
 }
 
 let runner: QueryRunner | null = null;
@@ -31,9 +32,17 @@ export function db(): QueryRunner {
         if (!queries.length) return;
         await client.transaction((txn) => queries.map((entry) => txn.query(entry.text, entry.params)));
       },
+      async transaction<Row>(queries: BatchQuery[]): Promise<Row[][]> {
+        if (!queries.length) return [];
+        return (await client.transaction((txn) => queries.map((entry) => txn.query(entry.text, entry.params)))) as unknown as Row[][];
+      },
     };
   }
   return runner;
+}
+
+export function setRunner(next: QueryRunner | null): void {
+  runner = next;
 }
 
 export function isUniqueViolation(error: unknown): boolean {

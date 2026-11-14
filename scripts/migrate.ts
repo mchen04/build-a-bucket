@@ -9,7 +9,7 @@ for (const statement of statements) {
   await sql.query(statement);
 }
 const check = await sql.query<{ table_name: string }>(
-  "select table_name from information_schema.tables where table_schema = 'public' and table_name in ('lobbies','participants','events','actions') order by table_name",
+  "select table_name from information_schema.tables where table_schema = 'public' and table_name in ('lobbies','participants','lobby_teams','events','actions') order by table_name",
 );
 console.log(`db/schema.sql applied: ${statements.length} statements`);
 console.log(`tables present: ${check.map((row) => row.table_name).join(', ')}`);

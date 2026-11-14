@@ -66,10 +66,12 @@ async function answerMoments(page: Page, name = 'moment'): Promise<number> {
 
 test('plays a full guard current run with moments, chips and headshots', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('button', { name: /^Play · Guard · Current$/ })).toBeVisible();
+  await expect(page.getByTestId('quick-position-guard')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('quick-era-current')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('quick-play')).toBeVisible();
   await expectNoVerticalOverflow(page, 'home');
 
-  await page.getByRole('button', { name: /^Play · Guard · Current$/ }).click();
+  await page.getByTestId('quick-play').click();
   await expect(page.locator('.spin-big')).toBeVisible();
 
   await page.locator('.spin-big').click();
@@ -120,7 +122,7 @@ test('plays a full guard current run with moments, chips and headshots', async (
   }
 
   await expect(page.locator('.slot.filled')).toHaveCount(10);
-  await expect(page.getByText('All 10 slots filled — simulate your season')).toBeVisible();
+  await expect(page.getByText('All 10 slots filled.')).toBeVisible();
   await shot(page, 'build-complete');
   await expectNoVerticalOverflow(page, 'build complete');
 
@@ -163,7 +165,7 @@ test('plays a full guard current run with moments, chips and headshots', async (
 
 test('shows the no-slot state when a player has nothing left to give', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Play · Guard · Current$/ }).click();
+  await page.getByTestId('quick-play').click();
   await page.locator('.spin-big').click();
   await page.locator('.player-card').waitFor({ state: 'visible' });
   const playerName = (await page.locator('[data-testid="source-name"]').textContent())?.trim() ?? '';
@@ -194,7 +196,7 @@ test('shows the no-slot state when a player has nothing left to give', async ({ 
     screen: 'builder',
   });
   await page.goto('/');
-  await expect(page.locator('[data-testid="no-slots"]')).toHaveText('All available slots filled for this PLAYER');
+  await expect(page.locator('[data-testid="no-slots"]')).toHaveText('No open slots for this player.');
   await expect(page.locator('.chip')).toHaveCount(GUARD_KEYS.length);
   await expect(page.locator('.chip:enabled')).toHaveCount(0);
   await expectNoVerticalOverflow(page, 'no free slot');
@@ -225,14 +227,12 @@ test('reveals the saved playoff bracket and the final report', async ({ page }) 
   await expectNoVerticalOverflow(page, 'final report');
 });
 
-test('shows the limitation text for the online modes', async ({ page }) => {
+test('shows the multiplayer entry on the home screen', async ({ page }) => {
   await page.goto('/');
-  const row = page.locator('.home-item').filter({ hasText: 'Blacktop · Compete · Versus' });
-  await expect(row).toContainText('The original live servers are gone. Lobbies above are our multiplayer.');
   await expect(page.locator('[data-testid="mp-home"]')).toBeVisible();
-  await expect(page.getByTestId('home-career')).toContainText('Career');
+  await expect(page.getByTestId('home-career')).toHaveCount(0);
   await expect(page.locator('.home-item .lock')).toHaveCount(0);
-  await expectNoVerticalOverflow(page, 'home limitations');
+  await expectNoVerticalOverflow(page, 'home modes');
 });
 
 function savedPlayoffRun(): unknown {

@@ -6,10 +6,11 @@ import {
   EAST,
   EAST_SET,
   WEST,
-} from './rules';
-import { mulberry32, seededRng, type Rng } from './rng';
-import { ovrFromValues } from './ovr';
-import type { Player, Position } from './types';
+} from './rules.js';
+import { mulberry32, seededRng, type Rng } from './rng.js';
+import { ovrFromValues } from './ovr.js';
+import { rollStats } from './season.js';
+import type { Player, Position } from './types.js';
 
 export interface SquadSlot {
   id: string;
@@ -125,11 +126,13 @@ export interface SquadSeasonResult {
   winProb: number;
   log: string;
   rounds: SquadRound[];
+  standings: StandingRow[];
 }
 
 interface StandingRow {
   short: string;
   wins: number;
+  losses: number;
   isUs: boolean;
 }
 
@@ -162,7 +165,7 @@ function playIn(
   winProb: number,
   rand: Rng,
 ): { advanced: boolean; newSeed: number; opponent: string; label: string; games: string[] } {
-  const get = (index: number) => standings[index - 1] ?? { short: '???', wins: 35, isUs: false };
+  const get = (index: number) => standings[index - 1] ?? { short: '???', wins: 35, losses: 47, isUs: false };
   if (seed === 7 || seed === 8) {
     const peer = get(seed === 7 ? 8 : 7);
     const first = rand() < (seed === 7 ? winProb + 0.04 : winProb - 0.04);
@@ -227,12 +230,12 @@ export function squadSeason(
     const base = Math.max(0.13, Math.min(0.77, 0.2 + (((row.off + row.def) / 200 - 0.59) / 0.24) * 0.57 + (rand() * 0.12 - 0.06)));
     let count = 0;
     for (let i = 0; i < 82; i++) if (rand() < base) count++;
-    return { short, wins: count, isUs: false };
+    return { short, wins: count, losses: 82 - count, isUs: false };
   });
-  rows.push({ short: team, wins, isUs: true });
+  rows.push({ short: team, wins, losses: 82 - wins, isUs: true });
   rows.sort((a, b) => b.wins - a.wins || (a.isUs ? -1 : 1));
   const seedNumber = rows.findIndex((row) => row.isUs) + 1;
-  const get = (index: number) => rows[index - 1] ?? { short: 'OPP', wins: 40, isUs: false };
+  const get = (index: number) => rows[index - 1] ?? { short: 'OPP', wins: 40, losses: 42, isUs: false };
   const rounds: SquadRound[] = [];
   let champion = false;
   let madePlayoffs = seedNumber <= 6;
@@ -314,11 +317,31 @@ export function squadSeason(
       champion = !eliminated;
     }
   }
-  return { seed: seedString, wins, losses, seedNumber, conference, champion, madePlayoffs, winProb, log: log.join(''), rounds };
+  return { seed: seedString, wins, losses, seedNumber, conference, champion, madePlayoffs, winProb, log: log.join(''), rounds, standings: rows };
 }
 
 export function honorScore(line: { ppg: number; rpg: number; apg: number; spg: number; bpg: number }, wins: number): number {
   return line.ppg + 1.2 * line.rpg + 1.5 * line.apg + 2 * (line.spg + line.bpg) + (wins - 41) * 0.08;
+}
+
+export interface SquadLine {
+  id: string;
+  ppg: number;
+  rpg: number;
+  apg: number;
+  spg: number;
+  bpg: number;
+}
+
+export function squadLines(
+  seed: string,
+  season: number,
+  slots: { id: string; pos: Position; values: Record<string, number> }[],
+): SquadLine[] {
+  return slots.map((slot) => {
+    const rolled = rollStats(slot.values, slot.pos, seededRng(`${seed}:${slot.id}:${season}`));
+    return { id: slot.id, ppg: rolled.ppg, rpg: rolled.rpg, apg: rolled.apg, spg: rolled.spg, bpg: rolled.bpg };
+  });
 }
 
 export function honorsFor(

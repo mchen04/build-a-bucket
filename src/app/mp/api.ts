@@ -1,7 +1,7 @@
 import * as v from 'valibot';
 import { newActionId } from '../../shared/mp/codes';
 import { ApiErrorSchema, LobbyDeltaSchema, LobbyEnvelopeSchema } from '../../shared/mp/schemas';
-import type { BuildDraft, LobbyDelta, LobbySettings, LobbyView } from '../../shared/mp/types';
+import type { LobbyBuild, LobbyDelta, LobbySettings, LobbyView } from '../../shared/mp/types';
 
 const TIMEOUT_MS = 8000;
 const RETRIES = 3;
@@ -119,9 +119,15 @@ export async function fetchLobbyRequest(
   since: number,
   token: string,
   events: number,
+  waiting: boolean,
+  cursor: number | null,
+  stage: number | null,
 ): Promise<LobbyUpdate | null> {
   const query = new URLSearchParams({ since: String(since), events: String(events) });
   if (token) query.set('token', token);
+  if (waiting) query.set('waiting', '1');
+  if (cursor !== null) query.set('cursor', String(cursor));
+  if (stage !== null) query.set('stage', String(stage));
   const response = await request(`/api/lobby/${code}?${query.toString()}`, { headers: authHeaders(secret) }, 0);
   if (response.status === 204) return null;
   return parseUpdate(response);
@@ -132,18 +138,53 @@ export async function startLobbyRequest(code: string, secret: string, settings: 
   return parseView(response);
 }
 
-export async function syncDraftRequest(code: string, secret: string, draft: BuildDraft): Promise<LobbyView> {
-  const response = await request(`/api/lobby/${code}/build`, postInit(secret, { actionId: newActionId(), draft }), 1);
+export async function drawRequest(code: string, secret: string): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/draw`, postInit(secret, { actionId: newActionId() }));
   return parseView(response);
 }
 
-export async function submitBuildRequest(code: string, secret: string, draft: BuildDraft): Promise<LobbyView> {
-  const response = await request(`/api/lobby/${code}/submit`, postInit(secret, { actionId: newActionId(), draft }));
+export async function rerollRequest(code: string, secret: string): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/reroll`, postInit(secret, { actionId: newActionId() }));
   return parseView(response);
 }
 
-export async function releaseRequest(code: string, secret: string, force: boolean): Promise<LobbyView> {
-  const response = await request(`/api/lobby/${code}/release`, postInit(secret, { actionId: newActionId(), force }));
+export async function lockRequest(code: string, secret: string): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/lock`, postInit(secret, { actionId: newActionId() }));
+  return parseView(response);
+}
+
+export async function submitBuildRequest(code: string, secret: string, build: LobbyBuild): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/build`, postInit(secret, { actionId: newActionId(), build }));
+  return parseView(response);
+}
+
+export async function readyRequest(code: string, secret: string, stage: number): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/ready`, postInit(secret, { actionId: newActionId(), stage }));
+  return parseView(response);
+}
+
+export async function advanceRequest(code: string, secret: string, stage: number): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/advance`, postInit(secret, { actionId: newActionId(), stage }));
+  return parseView(response);
+}
+
+export async function rematchRequest(code: string, secret: string): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/rematch`, postInit(secret, { actionId: newActionId() }));
+  return parseView(response);
+}
+
+export async function powerRequest(
+  code: string,
+  secret: string,
+  power: 'shuffle' | 'scout',
+  target: { kind: 'column'; index: number } | { kind: 'row'; tier: number } | { cardId: string },
+): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/power`, postInit(secret, { actionId: newActionId(), power, target }));
+  return parseView(response);
+}
+
+export async function removePlayerRequest(code: string, secret: string, seat: number): Promise<LobbyView> {
+  const response = await request(`/api/lobby/${code}/remove`, postInit(secret, { actionId: newActionId(), seat }));
   return parseView(response);
 }
 

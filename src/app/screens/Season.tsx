@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { MomentCard, SeasonResult } from '../../shared/engine/types';
+import type { MomentCard } from '../../shared/engine/types';
 import type { RunState } from '../../shared/run';
-import { StatGrid, TopBar } from '../components';
+import { StatGrid, StandingsTable, TopBar } from '../components';
 
 interface Props {
   run: RunState;
@@ -10,21 +10,6 @@ interface Props {
   onChoose: (optionId: string) => void;
   onToggleMoments: () => void;
   onAdvance: () => void;
-}
-
-function Standings(props: { season: SeasonResult }) {
-  return (
-    <div class="table">
-      {props.season.standings.map((row, index) => (
-        <div class={`table-row ${row.isUs ? 'us' : ''}`} key={row.short}>
-          <span class="table-seed">{index + 1}</span>
-          <span class="table-team">{row.short}</span>
-          <span class="table-wins">{row.wins}</span>
-          <span class="table-note">{row.isUs ? 'YOU' : ''}</span>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 export function Season(props: Props) {
@@ -118,7 +103,19 @@ export function Season(props: Props) {
                     <span class="num">{result.displayMvp.isPlayer ? 'YOU' : result.displayMvp.team}</span>
                   </div>
                 </div>
-                <Standings season={result} />
+                <StandingsTable
+                  rows={result.standings.map((row, index) => ({
+                    key: row.short,
+                    seed: index + 1,
+                    team: row.short,
+                    wins: row.wins,
+                    losses: row.losses ?? 82 - row.wins,
+                    isMine: row.isUs,
+                  }))}
+                  showSeed
+                  showLosses
+                  showGB
+                />
                 <StatGrid
                   items={[
                     { label: 'PPG', value: result.ppg.toFixed(1) },
@@ -131,7 +128,7 @@ export function Season(props: Props) {
             ) : (
               <div class="card">
                 <div class="tiny muted">
-                  {props.run.draft ? 'Season under way. Moments decide as they come.' : 'Simulating…'}
+                  {props.run.draft ? 'Season under way.' : 'Simulating…'}
                 </div>
               </div>
             )}

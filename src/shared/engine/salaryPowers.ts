@@ -1,11 +1,11 @@
-import { gradeFor } from './rules';
-import { SAL_COLUMNS, type SalCard, type SalColumn } from './salary';
+import { gradeFor } from './rules.js';
+import { SAL_COLUMNS, type SalCard, type SalColumn } from './salary.js';
 
 export type ShuffleTarget = { kind: 'column'; index: number } | { kind: 'row'; tier: number };
 
 function derangement(size: number, rand: () => number): number[] {
-  const order = Array.from({ length: size }, (_, index) => index);
   for (let attempt = 0; attempt < 200; attempt++) {
+    const order = Array.from({ length: size }, (_, index) => index);
     for (let i = size - 1; i > 0; i--) {
       const j = Math.floor(rand() * (i + 1));
       const a = order[i] as number;
@@ -15,7 +15,7 @@ function derangement(size: number, rand: () => number): number[] {
     }
     if (order.every((value, index) => value !== index)) return order;
   }
-  return order.map((_, index) => (index + 1) % size);
+  return Array.from({ length: size }, (_, index) => (index + 1) % size);
 }
 
 export function shuffleColumn(grid: SalCard[][], columnIndex: number, rand: () => number): SalCard[][] {
@@ -50,6 +50,7 @@ export function shuffleRow(grid: SalCard[][], tier: number, rand: () => number):
 
 export function scoutGrade(card: SalCard): string {
   const values = Object.values(card.attrs);
-  const mean = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 5;
+  if (!values.length) return 'C';
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
   return gradeFor(mean);
 }

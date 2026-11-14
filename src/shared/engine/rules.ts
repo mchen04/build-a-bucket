@@ -50,6 +50,15 @@ export function valueLabel(value: number, showGrades: boolean): string {
   return showGrades ? gradeFor(value) : String(value);
 }
 
+export function gradeTone(grade: string): string {
+  if (grade.startsWith('S')) return 'grade-s';
+  if (grade.startsWith('A')) return 'grade-a';
+  if (grade.startsWith('B')) return 'grade-b';
+  if (grade.startsWith('C')) return 'grade-c';
+  if (grade.startsWith('D')) return 'grade-d';
+  return 'grade-f';
+}
+
 export function heightLabel(inches: number | null | undefined): string | null {
   if (!inches) return null;
   return `${Math.floor(inches / 12)}'${inches % 12}"`;

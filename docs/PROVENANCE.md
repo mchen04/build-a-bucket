@@ -61,8 +61,9 @@ The constants and generators of the three rebuilt offline modes were traced from
 
 - `src/shared/engine/daily.ts` — the day key, the 2026-10-23 rotation, the `bap-daily-<date>` seed
   (`src/lib/progress.js` and the daily helpers in `src/components/BucketApp.jsx`).
-- `src/shared/engine/salary.ts` — columns, prices, rank bands, the cap table and its three fixed dates, the
-  hash RNG, the legend shuffle constant `0xBADC0FFE`, the yesterday penalty and the board generator
+- `src/shared/engine/salary.ts` — columns, prices, rank bands, the cap table and its three fixed budgets plus the
+  four fixed boards for 2026-07-15..2026-07-18 (`src/shared/engine/salaryFixed.json`, taken from the original's
+  `HARDCODED_GRIDS`), the hash RNG, the legend shuffle constant `0xBADC0FFE`, the yesterday penalty and the board generator
   (`src/lib/salaryCore.js`, `src/data/nba-salary.js`, `src/components/BucketSalaryCap.jsx`).
 - `src/shared/engine/squad.ts` — caps, the strength moves (guard `.45/.15`, big `.25/.35`), the replacement
   rating 64, the seeded record/playoff simulation, the all-time league offset and the honour composite and
@@ -70,39 +71,18 @@ The constants and generators of the three rebuilt offline modes were traced from
 - The team-pick hash (`0x45d9f3b`) and the hash RNG (`0x45d9f3b`/`0x119de1f3`) live in
   `src/shared/engine/rng.ts` beside the mulberry32 and string-hash RNGs used elsewhere.
 
-Expected values for the golden tests were transcribed from those algorithms; the original's code is never
-executed. See `docs/MODES.md` for what matches, and where a limitation is recorded.
+Expected values for the golden tests were transcribed from those algorithms. Since the parity round, the
+original's code is also executed as an oracle by
+`.claude/skills/verify-build-a-bucket/scripts/parity/run.mjs` (downloaded at run time, never vendored) and
+compared field by field with our engine; the recorded outputs of that comparison live in
+`tests/fixtures/oracle/*.json` and are checked offline by `tests/parity-oracle.test.ts`. See `docs/MODES.md` for
+the areas, the result counts, and the differences that are intended or not compared.
 
-## Career
+## What parity does and does not mean here
 
-Career's constants and roll families were traced from the pinned public source at
-`92cb2a155bb2261cd68038ac366b994ad5dbb873` (`src/lib/career.js`, `src/lib/careerAging.js`,
-`src/lib/ageLadder.js`, `src/lib/mg/combineNorms.js`, `src/utils/bucketSimulation.js`) and re-expressed in our
-own modules:
+- The comparison is a sample of seeds and dates, not an exhaustive proof of equality.
+- Shared-league play, season moments and the app shell are rebuild work with no counterpart to compare against;
+  `docs/MULTIPLAYER.md` records those adaptations.
+- Where the original has two answers for the same thing (its component serves the four fixed boards while its own
+  server check regenerates the board), we follow the one a player sees, and say so in `docs/MODES.md`.
 
-- `src/shared/engine/career/rules.ts` — the stock table by OVR (95/90/86/82/78/74/70), the rookie deal
-  (`4 yrs` to pick 30 with an option, `2` after; $12.5/9.5/6.5/5/2.8/1.9M), the injury table and its weights,
-  the season-enders, `INJ_RATE 0.019`, `INJ_PULL 0.15`, `INJ_SCALE 26/82`, `INJ_SERIOUS 0.05`, the combine
-  drills and their norms (a B guard 3.25s over three-quarters, a B big 10 bench reps), the goals, the award
-  thresholds (All-Star 21/20 ppg, All-NBA 25/24 ppg, `minGames` 65/65/40 of 82), the legacy weights
-  (`seasons 2, honors 6, firsts 10, awards 18, rings 20, playoffs 3, records 8`), the tiers 0/80/170/280, the
-  Hall bar 80 and `HOF_LEGACY 209`, the money ranges (guard 2-55, big 2-52), `STEP 10`, `MAX_SEASONS 20`,
-  `RETIRE_AGE 38`, the offseason event bank with its weights and reputation tilts, the fade classes and the
-  age ladder.
-- `src/shared/engine/career/core.ts` — `drillValue` (the original's combine maths), `stockOf` (the window, its
-  `0.5 + mid·0.08` span and the combine/interview shift), `draftOrder`, `runDraft` (the roulette weighted by
-  `need² + 1 + 8·interest`), `teamFit`/`depthChart`, `teamWinProb` (`55 + off·3.3` and the OVR boost, capped
-  at ±0.20/0.10), `teamSeason`, `conferenceStandings`, `injuryRisk`/`injuryRoll`, `seasonSwing`,
-  `bucketRoundOdds`/`bestOf7`/`gameOf`/`seriesState`/`seriesPlay`, `buildBracket` (play-in for seeds 7-10,
-  home flags, `pw`), `fadeYear`, `trainWindow`, `legacyScore` and `hofVote`.
-- `src/shared/engine/career/engine.ts` — the life cycle: creation (age 19-20, durability from the Size chip
-  with a seeded ±1 grade of luck), the combine, interviews, the draft, seasons (10 games a press, injuries,
-  moments), the playoffs, awards, the offseason (development points, training, aging, body work, events,
-  contracts and talks, trades, shoe deals), retirement and legacy.
-- `src/shared/careerStore.ts` — five slots and the 20-deep finished-career history in our own versioned keys
-  (`bab:career:v1`, `bab:career:history:v1`), validated with valibot.
-
-Expected values for the golden tests were transcribed from those algorithms: the combine readings, the draft
-window, the draft order, the team pick, the rookie deal, the per-game injury rolls, the swing rolls and the
-playoff series maths, on synthetic inputs. The original's code is never executed. See `docs/CAREER.md` for what
-matches and where a limitation is recorded.

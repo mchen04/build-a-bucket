@@ -4,7 +4,7 @@ import type { Catalog } from '../../shared/data/loader';
 import { photoFor, poolFor } from '../../shared/data/loader';
 import { archetypeFor } from '../../shared/engine/archetype';
 import { computeOvr } from '../../shared/engine/ovr';
-import { heightLabel, valueLabel, weightLabel } from '../../shared/engine/rules';
+import { gradeTone, heightLabel, valueLabel, weightLabel } from '../../shared/engine/rules';
 import { spinTarget, teamCandidates } from '../../shared/engine/spin';
 import type { Player } from '../../shared/engine/types';
 import { heightWeightFor, isBuildComplete, openOptions, pickOptions, placePick, respinSeedFor, type RunState } from '../../shared/run';
@@ -84,6 +84,7 @@ export function Builder(props: Props) {
       props.onChange({
         ...run,
         current: { team: target.team, playerName: target.player.name },
+        currentRespin: { team: teamRespin, player: playerRespin },
         teamRespinUsed: teamRespin ? true : run.teamRespinUsed,
         playerRespinUsed: playerRespin ? true : run.playerRespinUsed,
       });
@@ -93,11 +94,11 @@ export function Builder(props: Props) {
   const place = (attr: string) => {
     if (!currentPlayer) return;
     if (run.picks[attr]) {
-      setMessage('That slot is already filled.');
+      setMessage('Slot filled.');
       return;
     }
     if (placeable.length === 0) {
-      setMessage('All available slots filled for this PLAYER');
+      setMessage('No open slots for this player.');
       return;
     }
     setMessage(null);
@@ -129,7 +130,7 @@ export function Builder(props: Props) {
           </div>
           <div style={{ flex: 2, textAlign: 'right' }}>
             <div class="tiny muted">{build ? `Archetype · ${build}` : 'Archetype'}</div>
-            <div style={{ fontSize: '13px', fontWeight: 800 }}>{archetype}</div>
+            <div style={{ fontSize: '13px', fontWeight: 800 }}>{complete ? archetype : '—'}</div>
           </div>
         </div>
 
@@ -154,7 +155,7 @@ export function Builder(props: Props) {
               </div>
               {placeable.length === 0 ? (
                 <div class="notice" data-testid="no-slots">
-                  All available slots filled for this PLAYER
+                  No open slots for this player.
                 </div>
               ) : null}
               <div class="chips">
@@ -170,7 +171,9 @@ export function Builder(props: Props) {
                   >
                     <Avatar photo={photoFor(catalog, currentPlayer)} name={currentPlayer.name} size={20} />
                     <span class="chip-key">{option.short}</span>
-                    <span class="chip-val">{valueLabel(option.val, showGrades)}</span>
+                    <span class={`chip-val ${showGrades ? gradeTone(valueLabel(option.val, true)) : ''}`}>
+                      {valueLabel(option.val, showGrades)}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -193,7 +196,7 @@ export function Builder(props: Props) {
             </div>
           ) : complete ? (
             <div class="card center fade-in">
-              <div class="tiny muted">All 10 slots filled — simulate your season</div>
+              <div class="tiny muted">All 10 slots filled.</div>
               <div class="title" style={{ marginTop: '4px' }}>{archetype}</div>
               <div class="muted" style={{ fontSize: '12px', marginTop: '4px' }}>
                 OVR {ovr} · 10 traits locked{build ? ` · ${build}` : ''}
@@ -225,15 +228,7 @@ export function Builder(props: Props) {
           >
             {props.completeLabel ?? 'Spin for Team'}
           </button>
-        ) : currentPlayer ? (
-          <button class="btn" disabled>
-            Tap a trait to fill a slot
-          </button>
-        ) : (
-          <button class="btn" disabled>
-            {spinning ? 'Spinning…' : 'Spin to build'}
-          </button>
-        )}
+        ) : null}
       </div>
     </div>
   );

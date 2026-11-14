@@ -17,6 +17,7 @@ import { clearRun, loadRun, saveRun } from '../shared/persistence';
 import { createRun, type RunState } from '../shared/run';
 import { LazyScreen } from './lazy';
 import type { MpEntry } from './modes/LobbyMode';
+import { parseInvite } from '../shared/mp/invite';
 import type { MpSession } from './mp/session';
 import { pickMoment } from './momentFlow';
 import { readMomentsOff, recentMoments, rememberMoment, writeMomentsOff } from './prefs';
@@ -31,25 +32,8 @@ const loadDaily = () => import('./screens/Daily').then((module) => module.Daily)
 const loadSalary = () => import('./modes/SalaryMode').then((module) => module.SalaryMode);
 const loadSquad = () => import('./modes/SquadMode').then((module) => module.SquadMode);
 const loadLobby = () => import('./modes/LobbyMode').then((module) => module.LobbyMode);
-const loadCareer = () => import('./modes/CareerMode').then((module) => module.CareerMode);
 
-type Flow = 'classic' | 'daily' | 'squad' | 'salary' | 'career';
-
-function careerHint(): string {
-  try {
-    const raw = localStorage.getItem('bab:career:v1');
-    if (!raw) return 'Draft day to the Hall';
-    const parsed = JSON.parse(raw) as { slots?: unknown };
-    const slots = Array.isArray(parsed?.slots) ? parsed.slots : [];
-    const active = slots.find(
-      (entry) => entry && typeof entry === 'object' && (entry as { phase?: string }).phase !== 'retired',
-    ) as { name?: string; year?: number } | undefined;
-    if (!active) return 'Draft day to the Hall';
-    return `Resume ${active.name ?? 'your player'} · year ${(active.year ?? 0) + 1}`;
-  } catch {
-    return 'Draft day to the Hall';
-  }
-}
+type Flow = 'classic' | 'daily' | 'squad' | 'salary';
 
 function savedMpEntry(): MpEntry | null {
   try {
@@ -96,7 +80,15 @@ export function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [momentsOff, setMomentsOff] = useState(() => readMomentsOff());
-  const [mpEntry, setMpEntry] = useState<MpEntry | null>(() => savedMpEntry());
+  const [invite, setInvite] = useState<string | null>(() =>
+    parseInvite({ pathname: window.location.pathname, search: window.location.search }),
+  );
+  const [inviteName, setInviteName] = useState('');
+  const [mpEntry, setMpEntry] = useState<MpEntry | null>(() => {
+    const saved = savedMpEntry();
+    if (invite) return saved?.kind === 'resume' && saved.session.code === invite ? saved : null;
+    return saved;
+  });
   const [mpNotice, setMpNotice] = useState<string | null>(null);
   const bank = useRef<MomentBank | null>(null);
 
@@ -372,9 +364,6 @@ export function App() {
     if (flow === 'salary') {
       return <LazyScreen load={loadSalary} screenProps={{ catalog, plan, onExit: () => setFlow('classic') }} />;
     }
-    if (flow === 'career') {
-      return <LazyScreen load={loadCareer} screenProps={{ catalog, onExit: () => setFlow('classic') }} />;
-    }
     if (!run) {
       return (
         <Home
@@ -386,10 +375,7 @@ export function App() {
           onDaily={openDaily}
           onSalary={() => setFlow('salary')}
           onSquad={() => setFlow('squad')}
-          onCareer={() => setFlow('career')}
-          careerLabel={careerHint()}
           dailyLabel={`${plan.pos.toUpperCase()} · ${plan.mode === 'all-time' ? 'ALL-TIME' : 'CURRENT'}${daily?.done ? (daily.forfeit ? ' · left today' : ` · ${daily.ovr} OVR`) : ''}`}
-          dailyStatus={plan.key}
         />
       );
     }
@@ -416,10 +402,55 @@ export function App() {
               initial: mpEntry,
               onExit: (message: string | null) => {
                 setMpEntry(null);
+                setInvite(null);
+                window.history.replaceState({}, '', '/');
                 if (message) setMpNotice(message);
               },
             }}
           />
+        ) : invite ? (
+          <div class="screen">
+            <div class="top">
+              <span class="top-title">Join lobby</span>
+            </div>
+            <div class="body" style={{ justifyContent: 'center' }}>
+              {mpNotice ? <div class="notice bad">{mpNotice}</div> : null}
+              <div class="card" style={{ display: 'grid', gap: '8px' }}>
+                <div>
+                  <div class="tiny muted">Invite</div>
+                  <div class="code" data-testid="invite-code">
+                    {invite}
+                  </div>
+                </div>
+                <input
+                  class="field"
+                  data-testid="invite-name"
+                  placeholder="Your name"
+                  maxLength={16}
+                  autocomplete="off"
+                  value={inviteName}
+                  onInput={(event) => setInviteName((event.target as HTMLInputElement).value)}
+                />
+                <button
+                  class="btn"
+                  data-testid="invite-join"
+                  disabled={!inviteName.trim()}
+                  onClick={() => setMpEntry({ kind: 'join', name: inviteName.trim(), code: invite })}
+                >
+                  Join lobby
+                </button>
+                <button
+                  class="btn btn-ghost btn-small"
+                  onClick={() => {
+                    setInvite(null);
+                    window.history.replaceState({}, '', '/');
+                  }}
+                >
+                  Back
+                </button>
+              </div>
+            </div>
+          </div>
         ) : (
           body()
         )}

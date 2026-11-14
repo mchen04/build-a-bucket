@@ -1,9 +1,17 @@
-import { seededShuffle, weightedShuffle } from './rng';
-import type { Player } from './types';
+import { seededShuffle, weightedShuffle } from './rng.js';
+import type { Player } from './types.js';
 
 export interface SpinTarget {
   team: string;
   player: Player;
+}
+
+export interface SpinRecord {
+  attr: string;
+  team: string;
+  playerName: string;
+  teamRespin: boolean;
+  playerRespin: boolean;
 }
 
 export function teamCandidates(pool: readonly Player[]): string[] {

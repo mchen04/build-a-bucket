@@ -1,0 +1,497 @@
+{
+  "sha": "92cb2a155bb2261cd68038ac366b994ad5dbb873",
+  "args": {
+    "seeds": [
+      "b-parity-0",
+      "b-parity-1",
+      "b-parity-2",
+      "b-parity-3",
+      "b-parity-4",
+      "b-parity-5",
+      "b-parity-6",
+      "b-parity-7"
+    ],
+    "pos": "guard",
+    "count": 10
+  },
+  "types": null,
+  "oracle": {
+    "pos": "guard",
+    "mode": "classic",
+    "reel": [
+      "ATL",
+      "BKN",
+      "BOS",
+      "CHA",
+      "CHI",
+      "CLE",
+      "DAL",
+      "DEN",
+      "DET",
+      "GSW",
+      "HOU",
+      "IND",
+      "LAC",
+      "LAL",
+      "MEM",
+      "MIA",
+      "MIL",
+      "MIN",
+      "NOP",
+      "NYK",
+      "OKC",
+      "ORL",
+      "PHI",
+      "PHX",
+      "POR",
+      "SAC",
+      "SAS",
+      "TOR",
+      "UTA",
+      "WAS"
+    ],
+    "poolSize": 274,
+    "rows": [
+      {
+        "seed": "b-parity-0",
+        "spins": [
+          [
+            "SAS",
+            "Stephon Castle",
+            "Devin Vassell"
+          ],
+          [
+            "HOU",
+            "Amen Thompson",
+            "Bogdan Bogdanovic"
+          ],
+          [
+            "CHI",
+            "Josh Giddey",
+            "Norman Powell"
+          ],
+          [
+            "LAC",
+            "Jordan Miller",
+            "Brandon Ingram"
+          ],
+          [
+            "UTA",
+            "Svi Mykhailiuk",
+            "Keyonte George"
+          ],
+          [
+            "IND",
+            "Braden Smith",
+            "Quenton Jackson"
+          ],
+          [
+            "LAL",
+            "Cameron Carr",
+            "Collin Sexton"
+          ],
+          [
+            "MEM",
+            "Cam Spencer",
+            "Ty Jerome"
+          ],
+          [
+            "BOS",
+            "Payton Pritchard",
+            "Derrick White"
+          ],
+          [
+            "NYK",
+            "Jordan Clarkson",
+            "Miles McBride"
+          ]
+        ]
+      },
+      {
+        "seed": "b-parity-1",
+        "spins": [
+          [
+            "DAL",
+            "Marcus Sasser",
+            "Zaccharie Risacher"
+          ],
+          [
+            "CHI",
+            "Buddy Hield",
+            "Noa Essengue"
+          ],
+          [
+            "SAS",
+            "Stephon Castle",
+            "Julian Champagnie"
+          ],
+          [
+            "ATL",
+            "Luguentz Dort",
+            "Nickeil Alexander-Walker"
+          ],
+          [
+            "BOS",
+            "Sam Hauser",
+            "Jayson Tatum"
+          ],
+          [
+            "OKC",
+            "Jalen Williams",
+            "Ajay Mitchell"
+          ],
+          [
+            "SAC",
+            "Keegan Murray",
+            "Alex Karaban"
+          ],
+          [
+            "DET",
+            "Duncan Robinson",
+            "Ausar Thompson"
+          ],
+          [
+            "ORL",
+            "Franz Wagner",
+            "Desmond Bane"
+          ],
+          [
+            "GSW",
+            "Brandin Podziemski",
+            "Gui Santos"
+          ]
+        ]
+      },
+      {
+        "seed": "b-parity-2",
+        "spins": [
+          [
+            "ATL",
+            "Luguentz Dort",
+            "Dorian Finney-Smith"
+          ],
+          [
+            "OKC",
+            "Alex Caruso",
+            "Bennett Stirtz"
+          ],
+          [
+            "MIN",
+            "Cody Williams",
+            "Ayo Dosunmu"
+          ],
+          [
+            "GSW",
+            "Brandin Podziemski",
+            "Moses Moody"
+          ],
+          [
+            "DEN",
+            "Christian Braun",
+            "Cameron Johnson"
+          ],
+          [
+            "CHA",
+            "Sion James",
+            "Brandon Miller"
+          ],
+          [
+            "TOR",
+            "Andre Jackson Jr.",
+            "Scottie Barnes"
+          ],
+          [
+            "BOS",
+            "Jayson Tatum",
+            "Hugo Gonzalez"
+          ],
+          [
+            "LAC",
+            "Keaton Wagler",
+            "Derrick Jones Jr."
+          ],
+          [
+            "PHX",
+            "Miles Bridges",
+            "Devin Booker"
+          ]
+        ]
+      },
+      {
+        "seed": "b-parity-3",
+        "spins": [
+          [
+            "MEM",
+            "Jerami Grant",
+            "Scotty Pippen Jr."
+          ],
+          [
+            "CLE",
+            "Sam Merrill",
+            "Donovan Mitchell"
+          ],
+          [
+            "IND",
+            "Kelly Oubre Jr.",
+            "Aaron Nesmith"
+          ],
+          [
+            "ATL",
+            "Luguentz Dort",
+            "Nickeil Alexander-Walker"
+          ],
+          [
+            "OKC",
+            "Nique Clifford",
+            "Nikola Topic"
+          ],
+          [
+            "PHI",
+            "LeBron James",
+            "Jaylen Brown"
+          ],
+          [
+            "NYK",
+            "Miles McBride",
+            "Bruce Brown"
+          ],
+          [
+            "POR",
+            "Jeremy Sochan",
+            "Ja Morant"
+          ],
+          [
+            "WAS",
+            "Bub Carrington",
+            "Tre Mann"
+          ],
+          [
+            "MIL",
+            "Jaime Jaquez Jr.",
+            "Gary Trent Jr."
+          ]
+        ]
+      },
+      {
+        "seed": "b-parity-4",
+        "spins": [
+          [
+            "BOS",
+            "Jordan Walsh",
+            "Baylor Scheierman"
+          ],
+          [
+            "HOU",
+            "Kevin Durant",
+            "Amen Thompson"
+          ],
+          [
+            "PHX",
+            "Pat Spencer",
+            "Luke Kennard"
+          ],
+          [
+            "CHI",
+            "Noa Essengue",
+            "Norman Powell"
+          ],
+          [
+            "BKN",
+            "Josh Minott",
+            "Terance Mann"
+          ],
+          [
+            "MIN",
+            "Bones Hyland",
+            "Terrence Shannon Jr."
+          ],
+          [
+            "CLE",
+            "Peyton Watson",
+            "Sam Merrill"
+          ],
+          [
+            "LAC",
+            "Kris Dunn",
+            "Keaton Wagler"
+          ],
+          [
+            "ATL",
+            "CJ McCollum",
+            "Jalen Johnson"
+          ],
+          [
+            "POR",
+            "Jeremy Sochan",
+            "Ja Morant"
+          ]
+        ]
+      },
+      {
+        "seed": "b-parity-5",
+        "spins": [
+          [
+            "BOS",
+            "Payton Pritchard",
+            "Paul George"
+          ],
+          [
+            "GSW",
+            "Stephen Curry",
+            "Jimmy Butler III"
+          ],
+          [
+            "ORL",
+            "Desmond Bane",
+            "Noah Penda"
+          ],
+          [
+            "IND",
+            "Kelly Oubre Jr.",
+            "Quenton Jackson"
+          ],
+          [
+            "SAC",
+            "Alex Karaban",
+            "Zach LaVine"
+          ],
+          [
+            "MIL",
+            "Caris LeVert",
+            "Kasparas Jakucionis"
+          ],
+          [
+            "LAC",
+            "Kris Dunn",
+            "Darius Garland"
+          ],
+          [
+            "DAL",
+            "Caleb Martin",
+            "Naji Marshall"
+          ],
+          [
+            "DEN",
+            "Jamal Murray",
+            "Cameron Johnson"
+          ],
+          [
+            "MIN",
+            "Anthony Edwards",
+            "LaMelo Ball"
+          ]
+        ]
+      },
+      {
+        "seed": "b-parity-6",
+        "spins": [
+          [
+            "WAS",
+            "Bub Carrington",
+            "Tre Johnson"
+          ],
+          [
+            "IND",
+            "Andrew Nembhard",
+            "Ben Sheppard"
+          ],
+          [
+            "BKN",
+            "Drake Powell",
+            "Ben Saraf"
+          ],
+          [
+            "TOR",
+            "Jamison Battle",
+            "Immanuel Quickley"
+          ],
+          [
+            "POR",
+            "Scoot Henderson",
+            "Shaedon Sharpe"
+          ],
+          [
+            "PHI",
+            "Anfernee Simons",
+            "Dean Wade"
+          ],
+          [
+            "PHX",
+            "Collin Gillespie",
+            "Haywood Highsmith"
+          ],
+          [
+            "LAL",
+            "Luka Doncic",
+            "Dalton Knecht"
+          ],
+          [
+            "DET",
+            "Isaiah Joe",
+            "Duncan Robinson"
+          ],
+          [
+            "CHI",
+            "Jordan Hawkins",
+            "Patrick Williams"
+          ]
+        ]
+      },
+      {
+        "seed": "b-parity-7",
+        "spins": [
+          [
+            "MEM",
+            "Kris Murray",
+            "Olivier-Maxence Prosper"
+          ],
+          [
+            "SAC",
+            "Malik Monk",
+            "Darius Acuff Jr."
+          ],
+          [
+            "PHX",
+            "Jordan Goodwin",
+            "Devin Booker"
+          ],
+          [
+            "IND",
+            "Kobe Brown",
+            "T.J. McConnell"
+          ],
+          [
+            "UTA",
+            "Josh Okogie",
+            "Isaiah Collier"
+          ],
+          [
+            "BOS",
+            "Payton Pritchard",
+            "Hugo Gonzalez"
+          ],
+          [
+            "GSW",
+            "De'Anthony Melton",
+            "Gary Payton II"
+          ],
+          [
+            "WAS",
+            "Tre Mann",
+            "Kyshawn George"
+          ],
+          [
+            "SAS",
+            "De'Aaron Fox",
+            "Tobias Harris"
+          ],
+          [
+            "OKC",
+            "Jared McCain",
+            "Nikola Topic"
+          ]
+        ]
+      }
+    ]
+  }
+}

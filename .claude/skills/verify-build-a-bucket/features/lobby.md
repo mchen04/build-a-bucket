@@ -1,24 +1,29 @@
-# Multiplayer lobby
+# Shared multiplayer league
 
-Two to eight people share a lobby by invite code. The host starts; everyone builds at once and sees the others' progress live; seasons run on the server; qualifiers wait at a barrier and enter the playoffs together, with rounds revealed on a shared clock; a final standings table ranks everyone.
+Two to eight people share one server-authoritative NBA league by invite code. The host picks Normal, Salary Cap or
+Squad and the era. Everyone draws a different team, builds for it, and then watches one 82-game season, play-in and
+playoff bracket with the same results. Checkpoints pause for everyone present; away and left players never block.
 
 ## Sub-features
 
 - `lobby-create` creates a lobby with a 6-character code and makes the creator host.
 - `lobby-join` joins by code in any letter case; unknown codes and full lobbies are refused.
 - `lobby-capacity` hands out exactly 8 distinct seats under concurrent joins.
-- `lobby-activity` shows each peer's picks n/10 and a one-line ticker of the newest event.
-- `lobby-barrier` holds qualifiers until every present player is done; eliminated players never enter.
-- `lobby-playoffs` reveals rounds together and never shows a result ahead of the current round.
-- `lobby-reconnect` restores a seat after reload (same browser storage).
-- `lobby-draft` keeps a pick through an immediate reload: the draft is saved on the phone (`bab:mp:draft:v1`) and restored, and the restored pick is synced to the server on reopen without a tap (peers see n/10).
-- `lobby-submit-clears` clears the local draft after a successful submit, a refused submit, a move to playoffs/finished, or a gone lobby; the lobby keeps showing the result, not the builder, after a reload.
-- `lobby-refused-submit` lands a submit after the host starts the playoffs on the lobby screen with "The playoffs have already started." and the player spectates.
-- `lobby-leave` frees the seat before start and hands host over when the host leaves.
+- `lobby-draw` gives every participant a unique team; `lobby-reroll` spends exactly one reroll into an unclaimed team.
+- `lobby-lock` lets the host lock assignments and open building.
+- `lobby-build` runs the Normal, Salary Cap or Squad builder for the assigned team.
+- `lobby-preview` shows every team and build OVR; everyone readies or the host starts the season.
+- `lobby-season` reveals the regular season in batches and pauses at four quarter checkpoints.
+- `lobby-awards` shows final standings and awards; `lobby-playin` shows the play-in.
+- `lobby-playoffs` reveals each round game by game and never shows a result ahead of the cursor.
+- `lobby-recap` shows the champion, every finish and friend head-to-head; `lobby-rematch` keeps seats and code.
+- `lobby-reconnect` restores the same seat, team, reroll state and build after reload.
+- `lobby-leave` frees the seat before the draw and hands host over when the host leaves.
 
 ## How to get to it (user POV)
 
-- Home, "Play with friends": type a name (`[data-testid="mp-name"]`), then `Create lobby` (`create-lobby`), or type a code (`mp-code`) and `Join` (`join-lobby`).
+- Home, "Play with friends": type a name (`[data-testid="mp-name"]`), then `Create lobby` (`create-lobby`), or type a
+  code (`mp-code`) and `Join` (`join-lobby`).
 
 ## Driving it with control.mjs
 
@@ -26,20 +31,51 @@ Preconditions:
 
 - Dev launch (database reachable); one `--session` per player.
 
-- **Create.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs ui --feature lobby --session ava --step 'fill:css:[data-testid="mp-name"]=>Ava' --step 'click:css:[data-testid="create-lobby"]' --step 'read:code=[data-testid="lobby-code"]' --step overflow --step shot:created`. The code is stored as `{code}` and recorded for cleanup.
-- **Join.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs ui --feature lobby --session ben --step 'fill:css:[data-testid="mp-name"]=>Ben' --step 'fill:css:[data-testid="mp-code"]=>{code}' --step 'click:css:[data-testid="join-lobby"]' --step 'see:text:Ava' --step overflow --step shot:joined`. Repeat with more sessions up to 8; a ninth gets a "full" error.
-- **Start and build.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs ui --feature lobby --session ava --step 'see:text:Ben' --step 'click:css:[data-testid="start-season"]' --step 'click:css:[data-testid="open-builder"]' --step spinpick:3`, then in Ben's session `--step 'see:css:[data-testid="activity-ticker"]' --step shot:peer-progress`. Ben sees Ava at 3/10 and her newest pick in the ticker within about 2.5 s.
-- **Season and barrier.** Each session: `--step 'click:css:[data-testid="open-builder"]' --step spinpick:10 --step 'click:button:Spin for Team' --step 'click:css:.spin-big' --step 'click:button:Submit build' --step 'see:css:[data-testid="my-result"]'`. A qualifier shows `[data-testid="barrier-state"]` with "n/m ready"; the count is identical on every screen.
-- **Playoffs and standings.** After the last submit: `--step 'see:text:Playoffs' --step 'see:css:[data-testid="next-reveal"]' --step shot:round` in two sessions within one reveal interval show the same round; then `--step 'see:css:[data-testid="standings"]' --step shot:standings`.
+- **Create.** `ui --feature lobby --session ava --step 'fill:css:[data-testid="mp-name"]=>Ava' --step 'click:css:[data-testid="create-lobby"]' --step 'read:code=[data-testid="lobby-code"]' --step overflow --step shot:created`.
+- **Join.** `ui --feature lobby --session ben --step 'fill:css:[data-testid="mp-name"]=>Ben' --step 'fill:css:[data-testid="mp-code"]=>{code}' --step 'click:css:[data-testid="join-lobby"]' --step 'see:text:Ava' --step overflow --step shot:joined`.
+- **Start and draw.** Host: `--step 'click:css:[data-testid="start-season"]' --step 'click:css:[data-testid="draw-team"]' --step 'see:css:[data-testid="reroll-team"]'`. Each guest draws too. The roster shows one team per seat and no duplicates.
+- **Lock and build.** Host: `--step 'click:css:[data-testid="lock-teams"]'`. Each session: `--step 'click:css:[data-testid="open-builder"]' --step spinpick:10 --step 'click:button:Submit build' --step 'see:text:Build submitted'`.
+- **Preview and season.** Each session: `--step 'click:css:[data-testid="preview-ready"]'`. The last ready starts the season; `[data-testid="league-stage"]` appears and `[data-testid="awards"]`, `[data-testid="playoffs"]` and `[data-testid="recap"]` are absent.
+- **Checkpoints.** At a checkpoint the panel shows `Ready` and, for the host, `Advance`. Everyone present readies, or the host advances. A retry never skips a checkpoint.
+- **Recap and rematch.** `--step 'see:css:[data-testid="recap"]' --step 'see:css:[data-testid="champion-banner"]' --step shot:recap`; the host taps `rematch` and the lobby returns to the team draw with the same code and seats.
 - **Capacity and API side.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs lobby-load --players 8 --extra 4 --seconds 10`: `distinctSeats` is 8 and `joinStatuses` shows 7 successes and 4 refusals.
-- **Pick survives a reload.** In a started lobby: `--step 'click:css:[data-testid="open-builder"]' --step spinpick:1 --step reload --step 'see:text:Continue build · 1/10' --step 'click:css:[data-testid="open-builder"]' --step 'see:css:.slot.filled'`; a peer's roster shows 1/10 for that seat.
-- **Refused submit.** With the host at the barrier and a returner in the builder, the host taps `force-playoffs`; the returner's `Submit build` lands on the lobby with "The playoffs have already started." and `Spectating`, and no `open-builder` remains.
-- **Full scripted proof.** `npm run e2e -- e2e/lobby.spec.ts --project=mobile-chromium` drives 8 contexts end to end (needs port 4173 free).
+- **Full scripted proof.** `npm run e2e -- e2e/lobby.spec.ts --project=mobile-chromium` drives two contexts from invite code to recap and rematch (needs port 4173 free).
+
+## Full league through the phone UI
+
+`node .claude/skills/verify-build-a-bucket/scripts/control.mjs league --players 2 --mode normal` is the end-to-end
+proof for a shared league. It opens one real browser context per seat (2 to 8), creates the lobby, reads the displayed
+invite link, has every other seat open that link and join by name, draws and rerolls, builds in `--mode`
+(`normal` ten spins, `salary` one card per column plus the Scout power, `squad` five complete builds), previews, and
+then at every checkpoint:
+
+- reads `standings` from every active seat and fails unless the top ten of each conference agree;
+- reads `my-team` and fails unless that seat's record and seed match its own standings row;
+- fails if a seed appears during the season, or awards, play-in, playoffs or the champion appear before their stage;
+- writes one screenshot and aria snapshot per active seat, then has every seat Ready and the host Advance.
+
+It ends at the recap, compares the champion text across seats, then does Play Again: every retained seat readies, the
+host opens the draw, and the second game's `draw-team` must appear. `evidence/league/summary.json` holds the code,
+mode, era, each checkpoint's visible standings and each seat's record/seed, the champion, Play Again and any page or
+console errors.
+
+Chaos options, applied at the first checkpoint:
+
+- `--reload 2` reloads seat 2 mid-season, waits for the lobby to come back, and re-compares the standings.
+- `--away 2` closes seat 2's browser context; the host must still advance and the remaining seats must agree.
+- `--host-leave` taps Leave lobby on the host; another seat must receive Advance and carry the league.
+
+The season reveal is real time. A measured two-seat league took about 12 minutes because each quarter reveals roughly
+300 league games; run it in the background. The command has no internal setters or database jumps.
 
 ## Gotchas
 
 - Sessions share nothing but the server: a player only reconnects with the same `--session`.
-- Moments are off in lobbies by rule; seasons run straight through.
+- The host must lock the teams; the draw does not advance on its own, so rerolls stay available.
+- The draw auto-locks as soon as every active seat has a team. Reroll before the last seat draws, or the phase moves
+  to building and the reroll button is gone.
+- The invite link is displayed lowercase and the code inside it is uppercase; both the Copy button and the displayed
+  text work. Typing the link by hand with an uppercase `/J/` would miss the invite route.
 - On a loaded host (load average above about 10) client requests can exceed their 8 s budget and show "reconnecting"; check `uptime` before calling it a regression.
 - Lobbies made against a deployed stack are not deleted by cleanup.
-- The barrier releases on its own about 3 s after the last result when every present player is done; a returner who is away is not counted, so the host's "Start playoffs now" is the deterministic way to hold it for them.
+- Away (unseen for 60 s) and left players never block a checkpoint; the host role moves to the earliest joined present player when the host is away for 45 s or leaves.

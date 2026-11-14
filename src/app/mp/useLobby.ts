@@ -69,11 +69,24 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
       const current = sessionRef.current;
       if (!current || !alive.current) return;
       try {
-        const next = await fetchLobbyRequest(current.code, current.secret, version.current, token.current, events.current);
+        const view = open.current;
+        const waiting = view
+          ? view.league?.checkpoint === true || ['lobby', 'draw', 'building', 'preview', 'rematch', 'recap'].includes(view.phase)
+          : false;
+        const next = await fetchLobbyRequest(
+          current.code,
+          current.secret,
+          version.current,
+          token.current,
+          events.current,
+          waiting,
+          view?.league?.cursor ?? null,
+          view?.stage ?? null,
+        );
         if (!alive.current) return;
         if (next) absorb(next);
         else setStatus('live');
-        schedule(document.hidden ? 5000 : 1000);
+        schedule(document.hidden ? 5000 : waiting ? 1000 : 1500);
       } catch (caught) {
         if (!alive.current) return;
         if (isFatal(caught)) {
