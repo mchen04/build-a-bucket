@@ -220,7 +220,7 @@ class Connection {
       requestBytes: message.length,
       responseBytes: this.received - before,
       rows: this.rows.length,
-      sql: text.replace(/\s+/g, ' ').trim().slice(0, 140),
+      sql: text.replace(/\s+/g, ' ').trim().slice(0, 1200),
       ok: !error,
     };
     const rows = this.rows;

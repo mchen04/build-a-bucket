@@ -119,9 +119,11 @@ export async function fetchLobbyRequest(
   since: number,
   token: string,
   events: number,
+  waiting: boolean,
 ): Promise<LobbyUpdate | null> {
   const query = new URLSearchParams({ since: String(since), events: String(events) });
   if (token) query.set('token', token);
+  if (waiting) query.set('waiting', '1');
   const response = await request(`/api/lobby/${code}?${query.toString()}`, { headers: authHeaders(secret) }, 0);
   if (response.status === 204) return null;
   return parseUpdate(response);

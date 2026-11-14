@@ -140,7 +140,7 @@ function parseLeague(raw: unknown): LeagueResult | null {
 }
 
 const LEAGUE_CACHE_MAX = 32;
-const leagueCache = new Map<string, LeagueResult>();
+const leagueCache = new Map<string, Promise<LeagueResult | null>>();
 
 async function leagueFor(lobbyId: string, leagueVersion: number): Promise<LeagueResult | null> {
   if (!leagueVersion) return null;
@@ -151,10 +151,13 @@ async function leagueFor(lobbyId: string, leagueVersion: number): Promise<League
     leagueCache.set(key, cached);
     return cached;
   }
-  const rows = await db().query<{ league: unknown }>('select league from lobbies where id = $1::uuid', [lobbyId]);
-  const league = parseLeague(rows[0]?.league);
-  if (!league) return null;
-  leagueCache.set(key, league);
+  const load = (async () => {
+    const rows = await db().query<{ league: unknown }>('select league from lobbies where id = $1::uuid', [lobbyId]);
+    return parseLeague(rows[0]?.league);
+  })();
+  leagueCache.set(key, load);
+  const league = await load;
+  if (!league) leagueCache.delete(key);
   if (leagueCache.size > LEAGUE_CACHE_MAX) {
     const oldest = leagueCache.keys().next().value;
     if (oldest) leagueCache.delete(oldest);
@@ -377,6 +380,104 @@ select coalesce(json_agg(json_build_object(
 from (select * from events where lobby_id = (select id from lobbies where code = $1) order by id desc limit ${EVENT_LIMIT}) e
 `;
 
+const PROBE_SQL = `
+with l as (select * from lobbies where code = $1),
+hb as (
+  update participants p set last_seen = now()
+  where p.lobby_id = (select id from l) and p.token_hash = $2
+    and p.last_seen < now() - interval '10 seconds'
+  returning p.id
+)
+select json_build_object(
+  'id', (select id from l),
+  'v', (select version from l),
+  'ph', (select phase from l),
+  'st', (select stage from l),
+  'sc', (select stage_cursor from l),
+  'ss', (select stage_started_at from l),
+  'lv', (select league_version from l),
+  'hp', (select host_participant from l),
+  'hl', (select last_seen from participants where lobby_id = (select id from l) and id = (select host_participant from l)),
+  'ev', (select coalesce(max(id), 0) from events where lobby_id = (select id from l)),
+  'p', (select json_agg(json_build_array(
+      p.seat, p.status, p.ready_stage, p.preview_ready,
+      coalesce((p.build_summary->>'filled')::int, 0), coalesce(t.team, ''),
+      p.last_seen <= now() - interval '60 seconds', p.token_hash = $2,
+      p.id = (select host_participant from l)) order by p.seat)
+    from participants p
+    left join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
+    where p.lobby_id = (select id from l))
+) as probe
+`;
+
+type ProbePart = [number, string, number | string, boolean, number, string, boolean, boolean, boolean];
+
+interface ProbeData {
+  id: string | null;
+  v: number | string | null;
+  ph: LobbyPhase | null;
+  st: number | string | null;
+  sc: number | string | null;
+  ss: string | null;
+  lv: number | string | null;
+  hp: string | null;
+  hl: string | null;
+  ev: number | string;
+  p: ProbePart[];
+}
+
+export type PollDecision = 'no_content' | 'read' | 'not_found' | 'forbidden';
+
+export async function unchangedPoll(input: { code: string; secret: string; since: number; token: string | null }): Promise<PollDecision> {
+  if (input.since <= 0) return 'read';
+  try {
+    const tokenHash = await hashSecret(input.secret);
+    const rows = await db().query<{ probe: ProbeData | null }>(PROBE_SQL, [input.code, tokenHash]);
+    const row = rows[0]?.probe;
+    if (!row?.id) return 'not_found';
+    const parts = row.p ?? [];
+    const me = parts.find((entry) => entry[7]);
+    if (!me || me[1] === 'left') return 'forbidden';
+    if (Number(row.v) > input.since || input.token === null) return 'read';
+    const now = Date.now();
+    const stage = Number(row.st);
+    const league = Number(row.lv) > 0;
+    const readyOf = (entry: ProbePart) =>
+      row.ph === 'preview' || row.ph === 'rematch'
+        ? entry[3]
+        : league
+          ? Number(entry[2]) >= stage
+          : entry[1] === 'ready';
+    const away = parts.filter((entry) => entry[6]).map((entry) => entry[0]).join(',');
+    const filled = parts.reduce((total, entry) => total + Number(entry[4] ?? 0), 0);
+    const teams = parts.map((entry) => `${entry[0]}:${entry[5] ?? ''}:${readyOf(entry) ? 1 : 0}`).join(',');
+    const token = `${Number(row.ev)}:${away}:${filled}:${teams}`;
+    if (token !== input.token) return 'read';
+    const present = parts.filter((entry) => entry[1] !== 'left');
+    const active = present.filter((entry) => !entry[6]);
+    const host = parts.find((entry) => entry[8]) ?? null;
+    const facts: MaintenanceFacts = {
+      phase: row.ph as LobbyPhase,
+      stage,
+      stageCursor: Number(row.sc),
+      stageStartedAt: row.ss,
+      hostId: row.hp,
+      hostStatus: host?.[1] ?? null,
+      hostLastSeen: row.hl,
+      present: present.length,
+      active: active.length,
+      activeReady: active.length > 0 && active.every((entry) => entry[1] === 'ready'),
+      activePreviewReady: active.length > 0 && active.every((entry) => entry[3]),
+      activeHaveTeam: active.length > 0 && active.every((entry) => entry[5]),
+      activeReadyStage: active.length > 0 && active.every((entry) => Number(entry[2]) >= stage),
+      presentPreviewReady: present.length > 0 && present.every((entry) => entry[3]),
+    };
+    return needsMaintenance(facts, now, league ? await leagueFor(row.id, Number(row.lv)) : null) ? 'read' : 'no_content';
+  } catch {
+    return 'read';
+  }
+}
+
 const HOST_SQL = `
 with candidate as (
   select p.id from participants p join lobbies l on l.id = p.lobby_id
@@ -577,26 +678,65 @@ async function maintain(row: ReadRow, league: LeagueResult | null): Promise<void
   }
 }
 
-function needsMaintenance(row: ReadRow, now: number, league: LeagueResult | null): boolean {
+interface MaintenanceFacts {
+  phase: LobbyPhase;
+  stage: number;
+  stageCursor: number;
+  stageStartedAt: string | null;
+  hostId: string | null;
+  hostStatus: string | null;
+  hostLastSeen: string | null;
+  present: number;
+  active: number;
+  activeReady: boolean;
+  activePreviewReady: boolean;
+  activeHaveTeam: boolean;
+  activeReadyStage: boolean;
+  presentPreviewReady: boolean;
+}
+
+function factsFromRow(row: ReadRow): MaintenanceFacts | null {
   const raw = row.lobby;
-  if (!raw) return false;
-  const host = row.participants.find((entry) => entry.id === raw.host_participant);
-  if (!host || host.status === 'left' || now - Date.parse(host.last_seen) > HOST_IDLE_MS) return true;
+  if (!raw) return null;
+  const now = Date.now();
+  const host = row.participants.find((entry) => entry.id === raw.host_participant) ?? null;
   const present = row.participants.filter((entry) => entry.status !== 'left');
   const active = present.filter((entry) => now - Date.parse(entry.last_seen) <= AWAY_MS);
-  if (raw.phase === 'draw') return active.length >= 2 && active.every((entry) => entry.team);
-  if (raw.phase === 'building') return active.length > 0 && active.every((entry) => entry.status === 'ready');
-  if (raw.phase === 'preview') return active.length > 0 && active.every((entry) => entry.preview_ready);
-  if (raw.phase === 'rematch') return present.length >= 2 && present.every((entry) => entry.preview_ready);
-  if (raw.phase !== 'season' && raw.phase !== 'awards' && raw.phase !== 'playin' && raw.phase !== 'playoffs') return false;
-  if (!league) return false;
   const stage = Number(raw.stage);
-  const startedAt = raw.stage_started_at ? Date.parse(raw.stage_started_at) : null;
-  if (stageCursorAt(league, stage, startedAt, now) > Number(raw.stage_cursor)) return true;
-  const total = stageGamesTotal(league, stage);
-  const cursor = Math.max(Number(raw.stage_cursor), stageCursorAt(league, stage, startedAt, now));
+  return {
+    phase: raw.phase,
+    stage,
+    stageCursor: Number(raw.stage_cursor),
+    stageStartedAt: raw.stage_started_at,
+    hostId: raw.host_participant,
+    hostStatus: host?.status ?? null,
+    hostLastSeen: host?.last_seen ?? null,
+    present: present.length,
+    active: active.length,
+    activeReady: active.length > 0 && active.every((entry) => entry.status === 'ready'),
+    activePreviewReady: active.length > 0 && active.every((entry) => entry.preview_ready),
+    activeHaveTeam: active.length > 0 && active.every((entry) => entry.team),
+    activeReadyStage: active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage),
+    presentPreviewReady: present.length > 0 && present.every((entry) => entry.preview_ready),
+  };
+}
+
+function needsMaintenance(facts: MaintenanceFacts | null, now: number, league: LeagueResult | null): boolean {
+  if (!facts) return false;
+  if (!facts.hostId || facts.hostStatus === 'left' || !facts.hostLastSeen) return true;
+  if (now - Date.parse(facts.hostLastSeen) > HOST_IDLE_MS) return true;
+  if (facts.phase === 'draw') return facts.active >= 2 && facts.activeHaveTeam;
+  if (facts.phase === 'building') return facts.activeReady;
+  if (facts.phase === 'preview') return facts.activePreviewReady;
+  if (facts.phase === 'rematch') return facts.present >= 2 && facts.presentPreviewReady;
+  if (facts.phase !== 'season' && facts.phase !== 'awards' && facts.phase !== 'playin' && facts.phase !== 'playoffs') return false;
+  if (!league) return false;
+  const startedAt = facts.stageStartedAt ? Date.parse(facts.stageStartedAt) : null;
+  if (stageCursorAt(league, facts.stage, startedAt, now) > facts.stageCursor) return true;
+  const total = stageGamesTotal(league, facts.stage);
+  const cursor = Math.max(facts.stageCursor, stageCursorAt(league, facts.stage, startedAt, now));
   if (!isCheckpoint(cursor, total)) return false;
-  return active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage);
+  return facts.activeReadyStage;
 }
 
 async function advanceStage(lobbyId: string, stage: number): Promise<void> {
@@ -627,7 +767,7 @@ export async function readLobby(input: { code: string; secret: string; sinceEven
       return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     }
     let league = await leagueFor(row.lobby.id, Number(row.lobby.league_version));
-    if (needsMaintenance(row, Date.now(), league)) {
+    if (needsMaintenance(factsFromRow(row), Date.now(), league)) {
       const before = row.lobby;
       await maintain(row, league);
       const fresh = await sql.query<LobbyRow>(LOBBY_ROW_SQL, [input.code]);

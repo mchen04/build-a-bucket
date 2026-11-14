@@ -22,6 +22,7 @@ import type { LeagueResult } from '../src/shared/engine/league';
 import type { Era, Pick, Position } from '../src/shared/engine/types';
 import { generateSecret, newActionId, normalizeCode } from '../src/shared/mp/codes';
 import { stageTotal } from '../src/shared/mp/league';
+import { progressToken } from '../src/shared/mp/progress';
 import { LobbyEnvelopeSchema } from '../src/shared/mp/schemas';
 import type {
   LobbyBuild,
@@ -56,6 +57,12 @@ function authed(secret: string, path: string, body: unknown): Request {
 
 function poll(secret: string, code: string): Request {
   return new Request(`${BASE}/lobby/${code}`, { headers: { authorization: `Bearer ${secret}` } });
+}
+
+function pollWith(secret: string, code: string, since: number, token: string, events: number, waiting = true): Request {
+  const query = new URLSearchParams({ since: String(since), events: String(events), token });
+  if (waiting) query.set('waiting', '1');
+  return new Request(`${BASE}/lobby/${code}?${query.toString()}`, { headers: { authorization: `Bearer ${secret}` } });
 }
 
 async function read<T>(response: Response): Promise<T> {
@@ -566,4 +573,89 @@ describeDb('shared league API', () => {
     expect(missing.status).toBe(404);
     expect((await read<{ reason: string }>(missing)).reason).toBe('not_found');
   }, 60_000);
+
+  it('answers 204 for an unchanged poll and refreshes the seat heartbeat', async () => {
+    const settings: LobbySettings = { era: 'current', mode: 'normal' };
+    const host = await createLobby('Host', settings);
+    await join(host.code, 'Guest');
+    const lobby = await view(host.code, host.host.secret);
+    const token = progressToken(lobby);
+    const events = lobby.events[0]?.id ?? 0;
+    await db().query(
+      "update participants set last_seen = now() - interval '30 seconds' where lobby_id = (select id from lobbies where code = $1) and seat = $2",
+      [host.code, host.host.seat],
+    );
+    const response = await viewHandler(pollWith(host.host.secret, host.code, lobby.version, token, events));
+    expect(response.status).toBe(204);
+    const rows = await db().query<{ fresh: boolean }>(
+      "select last_seen > now() - interval '5 seconds' as fresh from participants where lobby_id = (select id from lobbies where code = $1) and seat = $2",
+      [host.code, host.host.seat],
+    );
+    expect(rows[0]?.fresh).toBe(true);
+  }, 60_000);
+
+  it('returns the change when another seat readies and rejects a stale token', async () => {
+    const settings: LobbySettings = { era: 'current', mode: 'normal' };
+    const host = await createLobby('Host', settings);
+    const guest = await join(host.code, 'Guest');
+    const lobby = await view(host.code, host.host.secret);
+    const token = progressToken(lobby);
+    const events = lobby.events[0]?.id ?? 0;
+    expect((await viewHandler(pollWith(host.host.secret, host.code, lobby.version, token, events))).status).toBe(204);
+    expect((await viewHandler(pollWith(host.host.secret, host.code, lobby.version, 'stale', events))).status).toBe(200);
+    await ready(host.code, guest.secret, 0);
+    const response = await viewHandler(pollWith(host.host.secret, host.code, lobby.version, token, events));
+    expect(response.status).toBe(200);
+    const body = await read<{ lobby?: LobbyView; delta?: { participants: { seat: number; ready: boolean }[] } }>(response);
+    const entry =
+      body.lobby?.participants.find((candidate) => candidate.seat === guest.seat)
+      ?? body.delta?.participants.find((candidate) => candidate.seat === guest.seat);
+    expect(entry?.ready).toBe(true);
+  }, 60_000);
+
+  it('only takes the cheap path when the client says it is waiting', async () => {
+    const settings: LobbySettings = { era: 'current', mode: 'normal' };
+    const host = await createLobby('Host', settings);
+    const lobby = await view(host.code, host.host.secret);
+    const token = progressToken(lobby);
+    const events = lobby.events[0]?.id ?? 0;
+    expect((await viewHandler(pollWith(host.host.secret, host.code, lobby.version, token, events, false))).status).toBe(200);
+    expect((await viewHandler(pollWith(host.host.secret, host.code, lobby.version, token, events, true))).status).toBe(204);
+  }, 60_000);
+
+  it('rejects a removed player on the cheap poll path', async () => {
+    const settings: LobbySettings = { era: 'current', mode: 'normal' };
+    const host = await createLobby('Host', settings);
+    const guest = await join(host.code, 'Guest');
+    const lobby = await view(host.code, host.host.secret);
+    const token = progressToken(lobby);
+    const events = lobby.events[0]?.id ?? 0;
+    await db().query(
+      "update participants set last_seen = now() - interval '10 minutes' where lobby_id = (select id from lobbies where code = $1) and seat = $2",
+      [host.code, guest.seat],
+    );
+    expect((await remove(host.code, host.host.secret, guest.seat)).status).toBe(200);
+    const response = await viewHandler(pollWith(guest.secret, host.code, lobby.version, token, events));
+    expect(response.status).toBe(403);
+  }, 60_000);
+
+  it('still advances a checkpoint and the reveal clock on a poll', async () => {
+    const { code, seats } = await setupBuilding('normal', 2);
+    await advance(code, seats[0]!.secret, 0);
+    for (const seat of seats) await ready(code, seat.secret, 0);
+    const season = await view(code, seats[0]!.secret);
+    expect(season.phase).toBe('season');
+    await fastForward(code);
+    for (const seat of seats) await ready(code, seat.secret, season.stage);
+    const before = await view(code, seats[0]!.secret);
+    const advanced = await viewHandler(pollWith(seats[0]!.secret, code, before.version, progressToken(before), before.events[0]?.id ?? 0));
+    expect(advanced.status).toBe(200);
+    const next = (await read<{ lobby: LobbyView }>(advanced)).lobby;
+    expect(next.stage).toBeGreaterThan(season.stage);
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    const reveal = await viewHandler(pollWith(seats[0]!.secret, code, next.version, progressToken(next), next.events[0]?.id ?? 0));
+    expect(reveal.status).toBe(200);
+    const revealed = (await read<{ lobby: LobbyView }>(reveal)).lobby;
+    expect(revealed.version).toBeGreaterThan(next.version);
+  }, 120_000);
 });

@@ -114,7 +114,7 @@ async function stopServer(server) {
 }
 
 function seat() {
-  return { secret: randomBytes(16).toString('hex'), version: 0, events: 0, token: '', statuses: {} };
+  return { secret: randomBytes(16).toString('hex'), version: 0, events: 0, token: '', participants: [], waiting: false, statuses: {} };
 }
 
 async function api(base, method, route, secret, body) {
@@ -137,16 +137,25 @@ function absorb(target, result) {
   if (lobby) {
     target.version = lobby.version;
     target.events = lobby.events[0]?.id ?? 0;
-    target.token = `${target.events}:${lobby.participants.filter((entry) => entry.away).length}:${lobby.participants.reduce((total, entry) => total + (entry.summary?.filled ?? 0), 0)}`;
+    target.participants = lobby.participants;
+    target.waiting = lobby.league?.checkpoint === true || ['lobby', 'draw', 'building', 'preview', 'rematch', 'recap'].includes(lobby.phase);
   } else if (delta) {
     target.version = delta.version;
     target.events = Math.max(target.events, delta.events[0]?.id ?? 0);
+    const bySeat = new Map(target.participants.map((entry) => [entry.seat, entry]));
+    for (const entry of delta.participants) bySeat.set(entry.seat, { ...bySeat.get(entry.seat), ...entry });
+    target.participants = [...bySeat.values()].sort((a, b) => a.seat - b.seat);
   }
+  const away = target.participants.filter((entry) => entry.away).map((entry) => entry.seat).join(',');
+  const filled = target.participants.reduce((total, entry) => total + (entry.summary?.filled ?? 0), 0);
+  const teams = target.participants.map((entry) => `${entry.seat}:${entry.team ?? ''}:${entry.ready ? 1 : 0}`).join(',');
+  target.token = `${target.events}:${away}:${filled}:${teams}`;
 }
 
 async function poll(base, code, target, since = target.version) {
   const query = new URLSearchParams({ since: String(since), events: String(target.events) });
   if (target.token) query.set('token', target.token);
+  if (target.waiting) query.set('waiting', '1');
   const result = await api(base, 'GET', `/api/lobby/${code}?${query.toString()}`, target.secret);
   const kind = result.status === 204 ? '204' : result.json?.delta ? 'delta' : 'full';
   target.statuses[kind] = (target.statuses[kind] ?? 0) + 1;
@@ -196,6 +205,7 @@ function fastForward(code) {
 async function idleJourney(base, seconds) {
   const { code, seats } = await createLobby(base, 'Idle0', { era: 'current', mode: 'normal' });
   await joinSeats(base, code, seats, 8);
+  const pollFrom = readMeter().length;
   const stopAt = Date.now() + seconds * 1000;
   const polls = [];
   await Promise.all(seats.map(async (entry) => {
@@ -204,7 +214,93 @@ async function idleJourney(base, seconds) {
       await sleep(1000);
     }
   }));
-  return { code, seats: seats.length, polls: polls.length, statuses: seats.reduce((acc, entry) => { for (const [kind, count] of Object.entries(entry.statuses)) acc[kind] = (acc[kind] ?? 0) + count; return acc; }, {}) };
+  return { code, seats: seats.length, seconds, polls: polls.length, pollFrom, statuses: seats.reduce((acc, entry) => { for (const [kind, count] of Object.entries(entry.statuses)) acc[kind] = (acc[kind] ?? 0) + count; return acc; }, {}) };
+}
+
+async function waitJourney(base, mode, phase, seconds) {
+  const settings = { era: 'current', mode };
+  const { code, host, seats } = await createLobby(base, 'Host', settings);
+  await joinSeats(base, code, seats, 8);
+  await act(base, code, host, 'start', { settings });
+  await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
+  await act(base, code, host, 'lock');
+  await act(base, code, host, 'advance', { stage: 0 });
+  if (phase === 'building') {
+    await act(base, code, seats[1], 'ready', { stage: 0 });
+  } else {
+    await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
+    await poll(base, code, host);
+    if (phase === 'checkpoint') {
+      fastForward(code);
+      await Promise.all(seats.map((entry) => poll(base, code, entry, 0)));
+    }
+  }
+  const pollFrom = readMeter().length;
+  const stopAt = Date.now() + seconds * 1000;
+  const polls = [];
+  await Promise.all(seats.map(async (entry) => {
+    while (Date.now() < stopAt) {
+      polls.push(await poll(base, code, entry));
+      await sleep(1000);
+    }
+  }));
+  const statuses = seats.reduce((acc, entry) => {
+    for (const [kind, count] of Object.entries(entry.statuses)) acc[kind] = (acc[kind] ?? 0) + count;
+    return acc;
+  }, {});
+  return { code, mode, phase, seats: seats.length, seconds, polls: polls.length, pollFrom, statuses };
+}
+
+async function freshnessJourney(base) {
+  const settings = { era: 'current', mode: 'normal' };
+  const { code, host, seats } = await createLobby(base, 'Host', settings);
+  await joinSeats(base, code, seats, 8);
+  const latencies = [];
+  const watch = async (watcher, started, seen) => {
+    while (Date.now() - started < 5000) {
+      const result = await poll(base, code, watcher);
+      const view = result.json?.lobby ?? null;
+      const delta = result.json?.delta ?? null;
+      if (seen(view, delta)) return Date.now() - started;
+      await sleep(1000);
+    }
+    return null;
+  };
+  for (const actor of seats) {
+    const started = Date.now();
+    const watches = seats
+      .filter((entry) => entry !== actor)
+      .map((watcher) => watch(watcher, started, (view, delta) => {
+        const entry = view?.participants?.find((candidate) => candidate.seat === actor.seat)
+          ?? delta?.participants?.find((candidate) => candidate.seat === actor.seat);
+        return entry?.ready === true;
+      }));
+    await act(base, code, actor, 'ready', { stage: 0 });
+    latencies.push(...(await Promise.all(watches)).filter((value) => value !== null));
+  }
+  await act(base, code, host, 'start', { settings });
+  await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
+  await act(base, code, host, 'lock');
+  await act(base, code, host, 'advance', { stage: 0 });
+  await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
+  const seasonStart = Date.now();
+  const seasonWatches = seats.map((watcher) => watch(watcher, seasonStart, (view) => view?.phase === 'season'));
+  await poll(base, code, host);
+  latencies.push(...(await Promise.all(seasonWatches)).filter((value) => value !== null));
+  const before = await poll(base, code, seats[0], 0);
+  const baseVersion = before.json?.lobby?.version ?? 0;
+  await sleep(1400);
+  const revealStart = Date.now();
+  const revealWatches = seats.map((watcher) => watch(watcher, revealStart, (view) => (view?.version ?? 0) > baseVersion));
+  latencies.push(...(await Promise.all(revealWatches)).filter((value) => value !== null));
+  const sorted = [...latencies].sort((a, b) => a - b);
+  return {
+    seats: seats.length,
+    samples: latencies.length,
+    p50: sorted[Math.floor(sorted.length * 0.5)] ?? null,
+    p95: sorted[Math.floor(sorted.length * 0.95)] ?? null,
+    max: sorted[sorted.length - 1] ?? null,
+  };
 }
 
 async function leagueJourney(base, mode, options) {
@@ -236,6 +332,7 @@ async function leagueJourney(base, mode, options) {
       reconnect = { seat: 4, since: 0, versionBefore: target.version, status: reload.status, bytes: reload.bytes, kind: reload.kind };
     }
     fastForward(code);
+    await Promise.all(seats.map((entry) => poll(base, code, entry, 0)));
     await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: current.stage })));
     stages += 1;
   }
@@ -328,6 +425,24 @@ async function runOnce(base, runIndex) {
     windows.push({ name: 'idle-lobby', started, ended: Date.now(), apiFrom: apiBefore, apiTo: apiCalls.length, dbFrom: before, dbTo: readMeter().length, detail: result });
   }
 
+  if (JOURNEYS.includes('wait')) {
+    for (const [phase, mode] of [['building', 'normal'], ['checkpoint', 'normal'], ['reveal', 'normal']]) {
+      const started = Date.now();
+      const before = readMeter().length;
+      const apiBefore = apiCalls.length;
+      const result = await waitJourney(base, mode, phase, SECONDS);
+      windows.push({ name: `wait-${phase}`, started, ended: Date.now(), apiFrom: apiBefore, apiTo: apiCalls.length, dbFrom: before, dbTo: readMeter().length, detail: result });
+    }
+  }
+
+  if (JOURNEYS.includes('freshness')) {
+    const started = Date.now();
+    const before = readMeter().length;
+    const apiBefore = apiCalls.length;
+    const result = await freshnessJourney(base);
+    windows.push({ name: 'freshness', started, ended: Date.now(), apiFrom: apiBefore, apiTo: apiCalls.length, dbFrom: before, dbTo: readMeter().length, detail: result });
+  }
+
   if (JOURNEYS.includes('league')) {
     for (const mode of MODES) {
       const started = Date.now();
@@ -343,6 +458,9 @@ async function runOnce(base, runIndex) {
   for (const window of windows) {
     const entries = meter.slice(window.dbFrom, window.dbTo).filter((entry) => !entry.sql.startsWith('/*harness*/'));
     window.db = windowStats(entries);
+    if (window.detail?.pollFrom !== undefined) {
+      window.poll = windowStats(meter.slice(window.detail.pollFrom, window.dbTo).filter((entry) => !entry.sql.startsWith('/*harness*/')));
+    }
     window.api = apiStats(apiCalls.slice(window.apiFrom, window.apiTo));
     delete window.dbFrom;
     delete window.dbTo;
@@ -374,6 +492,20 @@ function aggregate(runs) {
       dbP95: { median: median(pick((entry) => entry.db.p95)), range: [Math.min(...pick((entry) => entry.db.p95)), Math.max(...pick((entry) => entry.db.p95))] },
       dbMax: { median: median(pick((entry) => entry.db.max)), range: [Math.min(...pick((entry) => entry.db.max)), Math.max(...pick((entry) => entry.db.max))] },
       dbBytesPerPoll: { median: median(pick((entry) => Math.round(entry.db.responseBytes / polls(entry)))), range: [Math.min(...pick((entry) => Math.round(entry.db.responseBytes / polls(entry)))), Math.max(...pick((entry) => Math.round(entry.db.responseBytes / polls(entry))))] },
+      dbBytesPerSeatMinute: {
+        median: median(pick((entry) => (entry.detail?.seats && entry.detail?.seconds ? Math.round(entry.db.responseBytes / ((entry.detail.seats * entry.detail.seconds) / 60)) : 0))),
+        range: [
+          Math.min(...pick((entry) => (entry.detail?.seats && entry.detail?.seconds ? Math.round(entry.db.responseBytes / ((entry.detail.seats * entry.detail.seconds) / 60)) : 0))),
+          Math.max(...pick((entry) => (entry.detail?.seats && entry.detail?.seconds ? Math.round(entry.db.responseBytes / ((entry.detail.seats * entry.detail.seconds) / 60)) : 0))),
+        ],
+      },
+      dbBytesPerSeatMinuteSteady: {
+        median: median(pick((entry) => (entry.detail?.seats && entry.detail?.seconds && entry.poll ? Math.round(entry.poll.responseBytes / ((entry.detail.seats * entry.detail.seconds) / 60)) : 0))),
+        range: [
+          Math.min(...pick((entry) => (entry.detail?.seats && entry.detail?.seconds && entry.poll ? Math.round(entry.poll.responseBytes / ((entry.detail.seats * entry.detail.seconds) / 60)) : 0))),
+          Math.max(...pick((entry) => (entry.detail?.seats && entry.detail?.seconds && entry.poll ? Math.round(entry.poll.responseBytes / ((entry.detail.seats * entry.detail.seconds) / 60)) : 0))),
+        ],
+      },
       apiRequests: { median: median(pick((entry) => entry.api.requests)), range: [Math.min(...pick((entry) => entry.api.requests)), Math.max(...pick((entry) => entry.api.requests))] },
       apiBytes: { median: median(pick((entry) => entry.api.bytes)), range: [Math.min(...pick((entry) => entry.api.bytes)), Math.max(...pick((entry) => entry.api.bytes))] },
       apiP50: { median: median(pick((entry) => entry.api.p50)), range: [Math.min(...pick((entry) => entry.api.p50)), Math.max(...pick((entry) => entry.api.p50))] },
