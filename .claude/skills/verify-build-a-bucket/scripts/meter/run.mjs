@@ -165,12 +165,18 @@ function absorb(target, result) {
     target.events = lobby.events[0]?.id ?? 0;
     target.participants = lobby.participants;
     target.waiting = lobby.league?.checkpoint === true || ['lobby', 'draw', 'building', 'preview', 'rematch', 'recap'].includes(lobby.phase);
+    target.cursor = lobby.league?.stageCursor ?? target.cursor;
+    target.stage = lobby.stage ?? target.stage;
   } else if (delta) {
     target.version = delta.version;
     target.events = Math.max(target.events, delta.events[0]?.id ?? 0);
-    const bySeat = new Map(target.participants.map((entry) => [entry.seat, entry]));
-    for (const entry of delta.participants) bySeat.set(entry.seat, { ...bySeat.get(entry.seat), ...entry });
-    target.participants = [...bySeat.values()].sort((a, b) => a.seat - b.seat);
+    if (delta.participants) {
+      const bySeat = new Map(target.participants.map((entry) => [entry.seat, entry]));
+      for (const entry of delta.participants) bySeat.set(entry.seat, { ...bySeat.get(entry.seat), ...entry });
+      target.participants = [...bySeat.values()].sort((a, b) => a.seat - b.seat);
+    }
+    target.cursor = delta.league?.stageCursor ?? target.cursor;
+    target.stage = delta.league?.stage ?? target.stage;
   }
   const away = target.participants.filter((entry) => entry.away).map((entry) => entry.seat).join(',');
   const filled = target.participants.reduce((total, entry) => total + (entry.summary?.filled ?? 0), 0);
@@ -182,6 +188,8 @@ async function poll(base, code, target, since = target.version) {
   const query = new URLSearchParams({ since: String(since), events: String(target.events) });
   if (target.token) query.set('token', target.token);
   if (target.waiting) query.set('waiting', '1');
+  if (target.cursor !== undefined) query.set('cursor', String(target.cursor));
+  if (target.stage !== undefined) query.set('stage', String(target.stage));
   const result = await api(base, 'GET', `/api/lobby/${code}?${query.toString()}`, target.secret);
   const kind = result.status === 204 ? '204' : result.json?.delta ? 'delta' : 'full';
   target.statuses[kind] = (target.statuses[kind] ?? 0) + 1;
@@ -403,6 +411,60 @@ async function leagueJourney(base, mode, options) {
   return { code, mode, seats: seats.length, polls, stages, champion: champion?.team ?? champion, reconnect, rematch };
 }
 
+function setStageClock(code, ms) {
+  psql(`update lobbies set stage_started_at = now() - interval '${Math.round(ms)} milliseconds' where code = '${code}'`);
+}
+
+async function tryAct(base, code, target, action, body = {}) {
+  const result = await api(base, 'POST', `/api/lobby/${code}/${action}`, target.secret, { actionId: randomUUID(), ...body });
+  if (result.status < 300) absorb(target, result);
+  return result;
+}
+
+async function seasonJourney(base, mode = 'normal') {
+  const settings = { era: 'current', mode };
+  const { code, host, seats } = await createLobby(base, 'Host', settings);
+  await joinSeats(base, code, seats, 8);
+  await act(base, code, host, 'start', { settings });
+  await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
+  await act(base, code, host, 'lock');
+  await act(base, code, host, 'advance', { stage: 0 });
+  await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
+  let view = (await poll(base, code, host, 0)).json?.lobby;
+  const phases = [];
+  let guard = 0;
+  while (view && Number(view.stage) < 10 && guard++ < 30) {
+    const stage = Number(view.stage);
+    const total = Number(view.stageTotal);
+    const batch = stage <= 3 ? 3 : stage >= 6 && stage <= 9 ? 1 : Math.max(1, total);
+    const stepMs = stage <= 3 ? 1200 : 1500;
+    const ticks = Math.max(1, Math.ceil(total / batch));
+    const extraEvery = stage <= 3 ? 10 : 3;
+    const started = Date.now();
+    const before = readMeter().length;
+    const apiBefore = apiCalls.length;
+    for (let k = 1; k <= ticks; k++) {
+      setStageClock(code, k * stepMs + 600);
+      await Promise.all(seats.map((entry) => poll(base, code, entry)));
+      if (k % extraEvery === 0) await Promise.all(seats.map((entry) => poll(base, code, entry)));
+    }
+    for (let round = 0; round < 2; round++) await Promise.all(seats.map((entry) => poll(base, code, entry)));
+    await Promise.all(seats.map((entry) => tryAct(base, code, entry, 'ready', { stage })));
+    await Promise.all(seats.map((entry) => poll(base, code, entry)));
+    let current = (await poll(base, code, host, 0)).json?.lobby;
+    if (current && Number(current.stage) === stage) {
+      await tryAct(base, code, host, 'advance', { stage });
+      current = (await poll(base, code, host, 0)).json?.lobby;
+    }
+    view = current;
+    phases.push({ stage, total, ticks, started, ended: Date.now(), dbFrom: before, dbTo: readMeter().length, apiFrom: apiBefore, apiTo: apiCalls.length });
+  }
+  const recap = await poll(base, code, host, 0);
+  const champion = recap.json?.lobby?.league?.recap?.champion ?? null;
+  if (!champion) throw new Error(`no champion for ${mode}`);
+  return { code, mode, seats: seats.length, phases, champion: champion?.team ?? champion };
+}
+
 async function staticPayload(base) {
   const index = await fetch(`${base}/`, { headers: { 'accept-encoding': 'identity' } });
   const html = await index.text();
@@ -495,6 +557,24 @@ async function runOnce(base, runIndex) {
       const apiBefore = apiCalls.length;
       const result = await leagueJourney(base, mode, { reconnect: true, rematch: true });
       windows.push({ name: `league-${mode}`, started, ended: Date.now(), apiFrom: apiBefore, apiTo: apiCalls.length, dbFrom: before, dbTo: readMeter().length, detail: result });
+    }
+  }
+
+  if (JOURNEYS.includes('season')) {
+    for (const mode of MODES) {
+      const result = await seasonJourney(base, mode);
+      for (const phase of result.phases) {
+        windows.push({
+          name: `season-${phase.stage}`,
+          started: phase.started,
+          ended: phase.ended,
+          apiFrom: phase.apiFrom,
+          apiTo: phase.apiTo,
+          dbFrom: phase.dbFrom,
+          dbTo: phase.dbTo,
+          detail: { seats: result.seats, seconds: (phase.ended - phase.started) / 1000, stage: phase.stage, ticks: phase.ticks, total: phase.total },
+        });
+      }
     }
   }
 
