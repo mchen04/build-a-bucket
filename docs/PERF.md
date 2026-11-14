@@ -71,6 +71,83 @@ The round 5 cold mix is 4.89 GB at 115 lobbies: under the 5 GB quota with about 
 
 The 8-seat UI run at dfc37cb completed a full season, Play-In, playoffs, recap and Play Again. Phase durations: first quarter 121 s, second 126 s, third 124 s, fourth 2 s, awards 2 s, Play-In 70 s, first round 31 s, semifinals 19 s, conference finals 12 s, Finals 1 s. The season window was 10.6 minutes; the DB response was 598.5 KB/seat-minute and the request 195.6 KB/seat-minute, 794.1 KB total. The full-season mix is about twice the stage-0 wait journey because the later stages carry larger game lists. At 115 lobbies the response projection is 11.01 GB and the total 14.61 GB: the 5 GB quota is not met (52 lobbies fit 5 GB, 41 fit 4 GB). The run recorded one 409 on seat 1, a duplicate action; the season, recap and Play Again completed.
 
+## Round 5 full season
+
+The round 5 baseline is the same 8-seat UI season at 20d53e3's parent: 49,056.9 KB of response and 15,708.8 KB of request over 84.43 seat-minutes (581.0 and 186.0 KB/seat-minute). The breakdown by query:
+
+| Query | Calls | Response KB | Per call |
+|---|---|---|---|
+| meta | 4,459 | 15,953.7 | 3,664 |
+| games | 4,459 | 14,809.6 | 3,401 |
+| probe | 6,057 | 13,102.3 | 2,215 |
+| read | 322 | 2,153.8 | 6,849 |
+| advance-league | 11 | 1,734.1 | 161,431 |
+| checkpoint | 3,593 | 1,514.4 | 432 |
+| events | 4,294 | 925.7 | 216 |
+| clock | 5,029 | 830.0 | 169 |
+
+The largest cell was the playoff meta: 606 calls at 15,708 B in the first two rounds, because the meta row carried the full four-round series (10.9 KB), the full humans (2.5 KB), the standings, awards and Play-In on every poll. The games read re-read the last 30 games, every game of the caller's team and the last 20 human-vs-human games on every poll. The advance handler read the 177 KB `league` column to get the clock.
+
+### Kept changes
+
+1. **Series filter.** The meta read returns only the series for the current round (`round <= stage - 5`). The replay's first-round meta fell from 11,265 KB to 9,359 KB in one run; the three-run medians for the series filter plus the advance fix are 49,392 KB [49,249-50,519] before and 46,799 KB [45,357-46,832] after, a 2,593 KB (5.2%) gain beyond the run-to-run range.
+2. **Advance clock from the slice.** `advanceLobby` reads `league_slices.clock` (107 B) instead of the 177 KB `league` column, with the old column as the fallback. Eleven advances per season save 1.7 MB.
+3. **League delta.** A reveal poll now sends only the games past the client's cursor and the changed standings; the client merges them into its view. The server reads the new games only (`game_no > sinceCursor`), the checkpoint for the partial standings, and the current round's series. The client sends `cursor` and `stage`; a poll without them falls back to the full clock view. `tests/league-slice.test.ts` merges a delta into the previous view for every stage, four cursor pairs and all eight seats and compares it to the full view. The replay fell from 28,838 KB to 25,246 KB; the real run is below.
+4. **Reveal cadence.** Visible reveal polls moved from 1 s to 1.5 s, matching the 1.2 s regular and 1.5 s playoff reveal cadence; checkpoint and recap polls stay at 1 s. The real run's poll count fell from 6,057 to 4,394 (27%). Peer-action propagation is bounded by the 1.5 s poll interval plus the server, under the 2 s p95 limit.
+
+### Rejected
+
+- **Query combination.** The Neon calibration shows a ~120 B fixed HTTP body overhead per query, not the ~1 KB the client-side `fullTypes` object suggested, so folding the poll's six queries into one saves little.
+- **2 s reveal cadence.** Not needed: 1.5 s already meets the local 4 GB target and keeps the reveal matched to the cadence.
+- **Series delta.** Not implemented. The playoff meta is still 8.1 MB of the 14.7 MB final run (55%); sending only the newly revealed series games is the next lever.
+
+### Final 8-seat real-time run (20d53e3)
+
+The season window was 630.6 s (84.08 seat-minutes); the response was 14,736.3 KB and the request 9,464.3 KB, **175.3 KB/seat-minute response and 112.6 request**, down 70.7% from 581.0. Phase durations: first quarter 122 s, second 127 s, third 124 s, fourth 1 s, awards 1 s, Play-In 69 s, first round 27 s, semifinals 21 s, conference finals 9 s, Finals 2 s. The season, recap and Play Again completed; one 409 on seat 1 was a duplicate action.
+
+| Query | Calls | Response KB | Per call |
+|---|---|---|---|
+| meta | 3,444 | 8,111.3 | 2,412 |
+| probe | 4,394 | 3,247.6 | 757 |
+| read | 323 | 2,181.3 | 6,915 |
+| games | 2,805 | 1,265.0 | 462 |
+| checkpoint | 2,691 | 1,134.1 | 432 |
+| clock | 3,382 | 558.2 | 169 |
+| clock-write | 642 | 65.4 | 104 |
+| events | 11 | 38.9 | 3,620 |
+
+By phase: regular-0 3,424.3 KB, regular-1 1,748.9, regular-2 1,821.7, regular-3 1,803.4, awards 277.2, Play-In 326.5, first round 2,788.1, semifinals 1,634.5, conference finals 1,562.2, Finals 992.9, recap 380.3. The playoff meta is 6,112-10,623 B per call because the series is still read whole for the current round.
+
+### Neon calibration
+
+The dev branch (`ep-young-dust-bbry4hnh-pooler.c-15.us-east-1.aws.neon.tech`, `neondb`) received the additive schema (48 statements) and one short 8-seat journey: create, join, start, draw, lock, advance and 12 rounds of eight delta polls. The journey moved 4.03 MB of `fullResults` JSON, about 2.8 MB of true HTTP body. The client-side `_types`/`_parsers` object is not part of the response; the true body is `{fields, rows, command, rowCount}`.
+
+| Query | Neon body | Local wire | Ratio |
+|---|---|---|---|
+| `select 1` | 170 B | — | — |
+| clock | 276 B | 169 B | 1.63 |
+| checkpoint | 522 B | 432 B | 1.21 |
+| games (3) | ~500 B | 462 B | 1.08 |
+| meta (regular) | 1,870 B | 870 B | 2.15 |
+| compact probe | ~1,500 B | 757 B | 1.98 |
+
+The weighted ratio for the final run's query mix is **1.63**. The earlier calibration against main's 4.1 GB assumed 1.0 for both.
+
+### Projection
+
+Assumptions: 8 seats, 20 minutes per 8-seat lobby (160 seat-minutes), 115 lobbies a month (18,400 seat-minutes). Warm and cold are the same for new lobbies: the slice and delta paths do not use the in-memory league cache, and the cold replay (`BAB_DISABLE_LEAGUE_CACHE=1`) matches warm.
+
+| Per 8-seat, 20-minute lobby | Round 5 baseline | Final (local) | Final (Neon ×1.63) |
+|---|---|---|---|
+| Response | 92.9 MB | 28.0 MB | 45.7 MB |
+| Request | 29.8 MB | 18.0 MB | 29.3 MB |
+| At 115 lobbies, response | 10.68 GB | 3.23 GB | 5.26 GB |
+| At 115 lobbies, total | 14.10 GB | 5.30 GB | 8.64 GB |
+| Lobbies that fit 4 GB (response) | 43 | 142 | 87 |
+| Lobbies that fit 5 GB (response) | 53 | 178 | 109 |
+
+The local response projection is 3.23 GB at 115 lobbies, under the 4 GB target and the 5 GB quota. The calibrated projection is 5.26 GB, 5% over the 5 GB quota: the remaining gap is the playoff meta (8.1 MB of 14.7 MB) and the compact probe (3.2 MB). A series delta that sends only the newly revealed series games is the next lever.
+
 ## Bundled changes
 
 - Slice storage: cold reveal 274.6 KB → 4.9 KB (round 4).
@@ -111,7 +188,10 @@ Round 2: waiting polls fell 60-90% per seat-minute. Round 3: the build payload i
 ```
 node .claude/skills/verify-build-a-bucket/scripts/control.mjs perf --runs 3 --seconds 20 --journeys wait,freshness --modes normal --tag warm
 BAB_DISABLE_LEAGUE_CACHE=1 node .claude/skills/verify-build-a-bucket/scripts/control.mjs perf --runs 3 --seconds 20 --journeys wait,freshness --modes normal --tag cold
+node .claude/skills/verify-build-a-bucket/scripts/control.mjs perf --out evidence/perf --runs 3 --journeys season --modes normal --tag season
 npx vitest run tests/league-slice.test.ts tests/league-reveal.test.ts
 ```
 
-Evidence: `meter-<tag>-<timestamp>.json`, `db-meter.jsonl`, `server.log`. The cluster is stopped at the end.
+The `season` journey drives all eleven stages through the API, advancing the stage clock in controlled increments so the cursor moves three games per tick in the regular season and one per tick in the playoffs, with one full and occasional no-change poll per seat per tick. It finishes in about 12 s. The 8-seat UI run needs the local meter env on a `launch` and then `control.mjs league --players 8 --mode normal` (12.7 minutes of wall clock).
+
+Evidence: `meter-<tag>-<timestamp>.json`, `ui-db-meter*.jsonl`, `db-meter.jsonl`, `server.log`. The cluster is stopped at the end.
