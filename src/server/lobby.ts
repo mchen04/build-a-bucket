@@ -350,6 +350,7 @@ export function buildLobbyDelta(view: LobbyView, sinceEvent: number): LobbyDelta
   return {
     version: view.version,
     serverTime: view.serverTime,
+    phase: view.phase,
     participants: view.participants.map((entry) => ({
       seat: entry.seat,
       status: entry.status,
@@ -925,6 +926,7 @@ async function buildLeagueDelta(probe: CompactProbeOk, sinceCursor: number, sinc
   return {
     version,
     serverTime: new Date(now).toISOString(),
+    phase: raw.phase,
     events,
     league,
     participants,

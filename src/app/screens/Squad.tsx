@@ -4,7 +4,7 @@ import { SQUAD_SLOTS, type SquadSeasonResult, type SquadStrength } from '../../s
 import { ovrFromValues } from '../../shared/engine/ovr';
 import type { SquadState, SquadStage } from '../../shared/squadStore';
 import { StatGrid, StandingsTable, TopBar } from '../components';
-import { squadFinish, squadFinishVisible, squadRoundLabel, squadRoundResult } from '../mp/squadResult';
+import { squadFinish, squadFinishDetail, squadFinishVisible, squadRoundLabel, squadRoundResult } from '../mp/squadResult';
 
 export interface SquadOutcome {
   strength: SquadStrength;
@@ -288,8 +288,8 @@ export function Squad(props: Props) {
             </div>
             {finishShown ? (
               <div class={`banner ${season.champion ? '' : 'miss'}`} data-testid="squad-playoff-banner">
-                <h1>{season.champion ? 'CHAMPIONS' : season.madePlayoffs ? 'SEASON OVER' : 'ELIMINATED'}</h1>
-                <p>{squadFinish(season)}</p>
+                <h1>{season.champion ? 'NBA CHAMPIONS!' : season.madePlayoffs ? 'SEASON OVER' : 'ELIMINATED'}</h1>
+                <p>{squadFinishDetail(season)}</p>
               </div>
             ) : (
               <p class="tiny muted center" style={{ margin: 0 }}>

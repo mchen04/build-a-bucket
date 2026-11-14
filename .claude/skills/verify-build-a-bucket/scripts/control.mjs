@@ -217,6 +217,33 @@ async function ui() {
       else if (verb === 'repeat') { const [n, ...inner] = arg.split('|'); for (let i = 0; i < Number(n); i++) { const [v2, ...a2] = inner.join('|').split(':'); if (v2 === 'click') { const el = target(a2.join(':')); if (await el.isVisible().catch(() => false)) await el.click(); } } }
       else if (verb === 'overflow') { const m = await page.evaluate(() => ({ scrollHeight: document.documentElement.scrollHeight, innerHeight: window.innerHeight, scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })); log.push({ step, ...m }); if (m.scrollHeight > m.innerHeight + 1 || m.scrollWidth > m.innerWidth + 1) throw new Error(`overflow ${JSON.stringify(m)}`); continue; }
       else if (verb === 'shot') { await page.screenshot({ path: path.join(ev, `${arg}.png`) }); fs.writeFileSync(path.join(ev, `${arg}.aria.txt`), await page.locator('body').ariaSnapshot()); }
+      else if (verb === 'scroll') { await target(arg).evaluate((element) => element.scrollIntoView({ block: 'start' })); await page.waitForTimeout(300); }
+      else if (verb === 'cover') {
+        const m = await target(arg).evaluate((element) => {
+          const rows = [...element.querySelectorAll('.table-row:not(.head)')];
+          const visible = rows.filter((row) => {
+            const rect = row.getBoundingClientRect();
+            const box = row.closest('.table')?.getBoundingClientRect();
+            const top = Math.max(0, box ? box.top : 0);
+            const bottom = Math.min(window.innerHeight, box ? box.bottom : window.innerHeight);
+            return rect.top >= top && rect.bottom <= bottom;
+          });
+          const hits = visible.map((row) => {
+            const rect = row.getBoundingClientRect();
+            const hit = document.elementFromPoint(rect.left + Math.min(20, rect.width / 2), rect.top + rect.height / 2);
+            return hit !== null && !row.contains(hit) ? { hit, row } : null;
+          });
+          const covered = hits.filter((hit) => hit !== null);
+          const byHeader = covered.filter((entry) => entry.hit.closest('.table-row.head') !== null).length;
+          const others = covered
+            .filter((entry) => entry.hit.closest('.table-row.head') === null)
+            .map((entry) => `${entry.row.innerText.replace(/\s+/g, ' ').slice(0, 18)} <- ${entry.hit.tagName.toLowerCase()}.${String(entry.hit.className)}`);
+          return { rows: rows.length, visible: visible.length, coveredByHeader: byHeader, coveredByOther: covered.length - byHeader, covers: others };
+        });
+        log.push({ step, ...m });
+        if (m.coveredByOther > 0) throw new Error(`covered rows ${JSON.stringify(m)}`);
+        continue;
+      }
       else if (verb === 'storage') { const dump = await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map((k) => [k, localStorage.getItem(k)]))); fs.writeFileSync(path.join(ev, `${arg || 'storage'}.json`), JSON.stringify(dump, null, 2)); }
       else throw new Error(`unknown step ${step}`);
       log.push({ step, ms: Date.now() - t0 });
@@ -300,9 +327,16 @@ async function leagueRun() {
     const context = await browser.newContext({ ...ctxOpts, viewport });
     const page = await context.newPage();
     const errors = [];
+    const http = [];
     page.on('pageerror', (error) => errors.push(String(error).slice(0, 200)));
     page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text().slice(0, 200)); });
-    seats.push({ index, seat: index + 1, name: names[index], context, page, errors, closed: false });
+    page.on('response', (response) => {
+      if (response.status() < 400) return;
+      const entry = { status: response.status(), method: response.request().method(), url: response.url(), body: '' };
+      http.push(entry);
+      response.text().then((text) => { entry.body = text.slice(0, 300); }).catch(() => {});
+    });
+    seats.push({ index, seat: index + 1, name: names[index], context, page, errors, http, closed: false });
   }
   const active = () => seats.filter((seat) => !seat.closed);
   const clean = (text) => text.replace(/YOU/g, '').replace(/\s+/g, ' ').trim();
@@ -387,7 +421,7 @@ async function leagueRun() {
     for (const seat of active()) if (await visible(seat, testId)) return seat;
     return null;
   };
-  const verifyStage = async (label) => {
+  const verifyStageInner = async (label) => {
     for (const seat of active()) await waitStage(seat);
     let phases = [];
     let phase = '';
@@ -425,35 +459,48 @@ async function leagueRun() {
       if (row.seed !== parsed.seed) throw new Error(`seed disagrees with standings at ${label} for seat ${seat.seat}`);
       mine.push({ seat: seat.seat, name: seat.name, ...parsed });
     }
+    const states = [];
+    for (const seat of active()) states.push({ seat, phase: await phaseOf(seat), banner: await visible(seat, 'champion-banner') });
     if (phase === 'Season running') {
-      for (const testId of ['awards', 'playin', 'playoffs', 'champion-banner']) {
-        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
-          throw new Error(`${testId} revealed during the season at ${label}`);
+      for (const state of states) {
+        if (state.phase !== phase) continue;
+        for (const testId of ['awards', 'playin', 'playoffs', 'champion-banner']) {
+          if (await visible(state.seat, testId)) throw new Error(`${testId} revealed during the season at ${label} for seat ${state.seat.seat}`);
         }
       }
       if (mine.some((entry) => entry.seed !== null)) throw new Error(`seed revealed during the season at ${label}`);
     } else if (phase === 'Awards') {
       if (!(await anyVisible('awards'))) throw new Error(`awards missing at ${label}`);
-      for (const testId of ['playin', 'playoffs', 'champion-banner']) {
-        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
-          throw new Error(`${testId} revealed at awards ${label}`);
+      for (const state of states) {
+        if (state.phase !== phase) continue;
+        for (const testId of ['playin', 'playoffs', 'champion-banner']) {
+          if (await visible(state.seat, testId)) throw new Error(`${testId} revealed at awards ${label} for seat ${state.seat.seat}`);
         }
       }
       if (mine.some((entry) => entry.seed === null)) throw new Error(`seed missing at awards ${label}`);
     } else if (phase === 'Play-In') {
       if (!(await anyVisible('playin'))) throw new Error(`play-in missing at ${label}`);
-      for (const testId of ['playoffs', 'champion-banner']) {
-        if ((await anyVisible(testId)) && (await phaseOf(active()[0])) === phase) {
-          throw new Error(`${testId} revealed at play-in ${label}`);
+      for (const state of states) {
+        if (state.phase !== phase) continue;
+        for (const testId of ['playoffs', 'champion-banner']) {
+          if (await visible(state.seat, testId)) throw new Error(`${testId} revealed at play-in ${label} for seat ${state.seat.seat}`);
         }
       }
     } else if (phase === 'Playoffs') {
       if (!(await anyVisible('playoffs'))) throw new Error(`playoffs missing at ${label}`);
-      if ((await anyVisible('champion-banner')) && (await phaseOf(active()[0])) === phase) {
-        throw new Error(`champion revealed before the recap at ${label}`);
+      for (const state of states) {
+        if (state.phase === phase && state.banner) throw new Error(`champion revealed before the recap at ${label} for seat ${state.seat.seat}`);
       }
     } else if (phase === 'Recap') {
-      if (!(await anyVisible('champion-banner'))) throw new Error(`champion missing at recap ${label}`);
+      const recapDeadline = Date.now() + 20000;
+      for (;;) {
+        const pending = [];
+        for (const seat of active()) if ((await phaseOf(seat)) !== 'Recap') pending.push(seat.seat);
+        if (!pending.length) break;
+        if (Date.now() > recapDeadline) throw new Error(`seats not at recap ${label}: ${pending.join(', ')}`);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      for (const seat of active()) if (!(await visible(seat, 'champion-banner'))) throw new Error(`champion missing at recap ${label} for seat ${seat.seat}`);
     } else {
       throw new Error(`unexpected phase ${phase} at ${label}`);
     }
@@ -465,6 +512,21 @@ async function leagueRun() {
       champion = banners[0];
     }
     return { label, phase, stageName: await stageName(active()[0]), standings: top[0], mine, champion, at: Date.now() };
+  };
+  const verifyStage = async (label) => {
+    try {
+      return await verifyStageInner(label);
+    } catch (error) {
+      const states = [];
+      for (const seat of active()) {
+        const phase = await phaseOf(seat).catch(() => 'unknown');
+        const banner = await visible(seat, 'champion-banner').catch(() => false);
+        states.push({ seat: seat.seat, name: seat.name, phase, banner });
+        await snap(seat, `failure-${label}`).catch(() => {});
+      }
+      fs.writeFileSync(path.join(ev, `failure-${label}.json`), JSON.stringify({ label, error: String(error), states }, null, 2));
+      throw error;
+    }
   };
   const stages = [];
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
@@ -555,6 +617,34 @@ async function leagueRun() {
       const record = await verifyStage(`checkpoint-${checkpoint}`);
       stages.push(record);
       for (const seat of active()) await snap(seat, `checkpoint-${checkpoint}`);
+      if (checkpoint === 0) {
+        for (const seat of active()) {
+          const card = seat.page.getByTestId('standings');
+          if (!(await card.isVisible().catch(() => false))) continue;
+          await card.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+          await seat.page.waitForTimeout(400);
+          const cover = await card.evaluate((element) => {
+            const rows = [...element.querySelectorAll('.table-row:not(.head)')];
+            const visible = rows.filter((row) => {
+              const rect = row.getBoundingClientRect();
+              const box = row.closest('.table')?.getBoundingClientRect();
+              const top = Math.max(0, box ? box.top : 0);
+              const bottom = Math.min(window.innerHeight, box ? box.bottom : window.innerHeight);
+              return rect.top >= top && rect.bottom <= bottom;
+            });
+            const hits = visible.map((row) => {
+              const rect = row.getBoundingClientRect();
+              const hit = document.elementFromPoint(rect.left + Math.min(20, rect.width / 2), rect.top + rect.height / 2);
+              return hit !== null && !row.contains(hit) ? hit : null;
+            });
+            const covered = hits.filter((hit) => hit !== null);
+            const byHeader = covered.filter((hit) => hit.closest('.table-row.head') !== null).length;
+            return { rows: rows.length, visible: visible.length, coveredByHeader: byHeader, coveredByOther: covered.length - byHeader };
+          });
+          stages.push({ label: `standings-scrolled`, seat: seat.seat, ...cover });
+          await snap(seat, 'standings-scrolled');
+        }
+      }
       if (record.phase === 'Recap') break;
       if (!chaosDone && checkpoint === 0) {
         chaosDone = true;
@@ -653,6 +743,7 @@ async function leagueRun() {
       playAgain,
       rematchNote,
       errors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, errors: seat.errors })),
+      httpErrors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, responses: seat.http })),
       evidence: ev,
     };
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
@@ -672,35 +763,33 @@ async function lobbyLoad() {
   const seat = () => ({ secret: randomBytes(16).toString('hex'), version: 0, token: '', events: 0, away: new Map(), filled: new Map() });
   const GUARD_ATTRS = ['jumpShot', 'finishing', 'passing', 'handles', 'perimeterDefense', 'speed', 'bounce', 'size', 'basketballIQ', 'clutch'];
   const guardPool = await loadGuardPool();
-  const pickFor = (attr) => {
-    const player = guardPool.find((entry) => entry.attrs && entry.attrs[attr] !== undefined);
-    if (!player) throw new Error(`no current guard has ${attr}`);
-    return { attr, val: player.attrs[attr], playerName: player.name, playerShort: player.short ?? player.name, team: player.team };
+  let engine = null;
+  let spinTarget = null;
+  const loadEngine = async () => {
+    if (spinTarget) return spinTarget;
+    engine = await (await import('vite')).createServer({ configFile: false, root: repo, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
+    spinTarget = (await engine.ssrLoadModule('/src/shared/engine/spin.ts')).spinTarget;
+    return spinTarget;
   };
-  const draftFor = (tick) => {
-    const count = Math.min(1 + Math.floor(tick / 3), GUARD_ATTRS.length);
+  const buildFor = (participant) => {
+    if (!participant.buildSeed) return null;
     const picks = {};
-    for (let n = 0; n < count; n++) {
-      const attr = GUARD_ATTRS[n];
-      picks[attr] = pickFor(attr);
+    const spins = [];
+    for (let index = 0; index < GUARD_ATTRS.length; index++) {
+      const target = spinTarget(guardPool, participant.buildSeed, index, false, 0, `${participant.buildSeed}:r`);
+      if (!target) return null;
+      const attr = GUARD_ATTRS[index];
+      picks[attr] = { attr, val: target.player.attrs[attr] ?? 0, playerName: target.player.name, playerShort: target.player.short ?? target.player.name, team: target.player.team };
+      spins.push({ attr, team: target.team, playerName: target.player.name, teamRespin: false, playerRespin: false });
     }
-    const last = picks[GUARD_ATTRS[count - 1]];
-    return {
-      position: 'guard',
-      era: 'current',
-      picks,
-      spinIndex: tick,
-      teamRespinUsed: false,
-      playerRespinUsed: false,
-      current: null,
-      team: null,
-      latest: { attr: last.attr, playerName: last.playerName },
-    };
+    return { kind: 'normal', position: 'guard', era: 'current', picks, spins };
   };
   const absorb = (p, lobby, delta) => {
     if (lobby) {
       p.version = lobby.version;
       p.events = lobby.events[0]?.id ?? 0;
+      if (lobby.me?.seat) p.seat = lobby.me.seat;
+      if (lobby.me?.buildSeed) p.buildSeed = lobby.me.buildSeed;
       for (const entry of lobby.participants) {
         p.away.set(entry.seat, Boolean(entry.away));
         p.filled.set(entry.seat, entry.summary?.filled ?? 0);
@@ -726,25 +815,39 @@ async function lobbyLoad() {
   const seated = [host, ...guests.filter((_, i) => joins[i].status < 300)];
   const seatNumbers = [created.json.lobby.me.seat, ...joins.filter((j) => j.status < 300).map((j) => j.json.lobby.me.seat)];
   const joinStatuses = joins.reduce((acc, j) => ({ ...acc, [j.status]: (acc[j.status] ?? 0) + 1 }), {});
-  const started = await api(base, 'POST', `/api/lobby/${code}/start`, host.secret, { actionId: randomUUID(), settings: { era: 'current', positions: ['guard', 'big'], revealSeconds: 4 } });
+  const started = await api(base, 'POST', `/api/lobby/${code}/start`, host.secret, { actionId: randomUUID(), settings: { era: 'current', mode: 'normal' } });
   add('start', started);
+  if (started.status >= 300) throw new Error(`start ${started.status} ${JSON.stringify(started.json)}`);
+  const draws = await Promise.all(seated.map((p) => api(base, 'POST', `/api/lobby/${code}/draw`, p.secret, { actionId: randomUUID() })));
+  for (const draw of draws) if (draw.status >= 300) throw new Error(`draw ${draw.status} ${JSON.stringify(draw.json)}`);
+  const locked = await api(base, 'POST', `/api/lobby/${code}/lock`, host.secret, { actionId: randomUUID() });
+  if (locked.status >= 300) throw new Error(`lock ${locked.status} ${JSON.stringify(locked.json)}`);
+  absorb(host, locked.json?.lobby);
   const stopAt = Date.now() + seconds * 1000;
-  await Promise.all(seated.map(async (p, idx) => {
-    let draftTick = 0;
-    while (Date.now() < stopAt) {
-      const query = new URLSearchParams({ since: String(p.version), events: String(p.events) });
-      if (p.token) query.set('token', p.token);
-      const r = await api(base, 'GET', `/api/lobby/${code}?${query.toString()}`, p.secret);
-      add(r.status === 204 ? 'poll-204' : r.json?.delta ? 'poll-200-delta' : 'poll-200', r);
-      absorb(p, r.json?.lobby, r.json?.delta);
-      if (o.drafts !== 'off' && ++draftTick % 3 === idx % 3) {
-        const d = await api(base, 'POST', `/api/lobby/${code}/build`, p.secret, { actionId: randomUUID(), draft: draftFor(draftTick) });
-        add('build-sync', d);
-        absorb(p, d.json?.lobby);
+  if (o.drafts !== 'off') await loadEngine();
+  try {
+    await Promise.all(seated.map(async (p, idx) => {
+      let draftTick = 0;
+      while (Date.now() < stopAt) {
+        const query = new URLSearchParams({ since: String(p.version), events: String(p.events) });
+        if (p.token) query.set('token', p.token);
+        const r = await api(base, 'GET', `/api/lobby/${code}?${query.toString()}`, p.secret);
+        add(r.status === 204 ? 'poll-204' : r.json?.delta ? 'poll-200-delta' : 'poll-200', r);
+        absorb(p, r.json?.lobby, r.json?.delta);
+        if (o.drafts !== 'off' && p.buildSeed && p.filled.get(p.seat) !== 10 && ++draftTick % 3 === idx % 3) {
+          const build = buildFor(p);
+          if (build) {
+            const d = await api(base, 'POST', `/api/lobby/${code}/build`, p.secret, { actionId: randomUUID(), build });
+            add('build-sync', d);
+            absorb(p, d.json?.lobby);
+          }
+        }
+        await sleep(pollMs);
       }
-      await sleep(pollMs);
-    }
-  }));
+    }));
+  } finally {
+    if (engine) await engine.close();
+  }
   for (const p of seated) add('leave', await api(base, 'POST', `/api/lobby/${code}/leave`, p.secret, { actionId: randomUUID() }));
   const summary = Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, { n: v.ms.length, p50: median(v.ms), p95: pct(v.ms, 95), max: Math.round(Math.max(...v.ms)), bytesTotal: v.bytes.reduce((a, b) => a + b, 0), bytesP50: median(v.bytes), status: v.status }]));
   const poll = (() => {

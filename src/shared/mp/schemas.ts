@@ -298,6 +298,7 @@ const LeagueDeltaSchema = v.object({
 export const LobbyDeltaSchema = v.object({
   version: v.number(),
   serverTime: v.string(),
+  phase: v.optional(v.picklist(['lobby', 'draw', 'building', 'preview', 'season', 'awards', 'playin', 'playoffs', 'recap', 'rematch'])),
   participants: v.optional(v.array(ParticipantProgressSchema)),
   events: v.array(EventViewSchema),
   league: v.optional(LeagueDeltaSchema),

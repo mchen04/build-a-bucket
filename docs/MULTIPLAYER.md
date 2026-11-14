@@ -213,14 +213,16 @@ fresh copy of the old schema with old rows.
 
 ## Transport and privacy
 
-The client polls every second while visible and every five seconds while hidden, and re-fetches after its own
-actions. The view exposes names, seats, teams, build summaries, revealed results and the last 30 events. It
+The client polls every second while waiting or at a checkpoint, every 1.5 s while a stage reveals, and every five
+seconds while hidden; it re-fetches after its own actions. The view exposes names, seats, teams, build summaries,
+revealed results and the last 30 events. It
 never exposes another participant's secret, token hash, participant id or full build. A lobby is reachable only
 by code. Names are trimmed to 16 characters and control characters are removed.
 
-During a reveal the server re-reads only the small lobby row and the event feed after maintenance; the full
-league JSON is read once per request. The remaining cost is the league blob itself, which is the price of one
-authoritative result per matchup.
+During a reveal the server reads the compact league slice keyed by lobby, stage and cursor: the meta row, one
+checkpoint row and the games the view needs, not the full league JSON. An unchanged poll is answered 204 from the
+cheap probe. The full `league` column is read only when the slice is missing (a lobby locked before the slice
+migration).
 
 ## Tests
 

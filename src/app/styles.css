@@ -1045,10 +1045,26 @@ button {
 }
 
 .roster-row .seat {
-  width: 16px;
+  width: 26px;
   flex: none;
   text-align: center;
   font-size: 10px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.roster-row.head {
+  height: 18px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.roster-row.head .seat,
+.roster-row.head .who,
+.roster-row.head .state {
+  font-size: 9px;
   font-weight: 800;
   color: var(--muted);
 }

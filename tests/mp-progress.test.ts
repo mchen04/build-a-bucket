@@ -88,6 +88,14 @@ describe('progress token', () => {
 });
 
 describe('delta merge', () => {
+  it('takes the phase from the delta so the status cannot lag the recap', () => {
+    const base = view({ phase: 'playoffs' });
+    const withPhase = mergeDelta(base, { version: 8, serverTime: '2026-01-01T00:00:06.000Z', phase: 'recap', events: [] });
+    expect(withPhase.phase).toBe('recap');
+    const withoutPhase = mergeDelta(base, { version: 9, serverTime: '2026-01-01T00:00:07.000Z', events: [] });
+    expect(withoutPhase.phase).toBe('playoffs');
+  });
+
   it('applies progress to each seat and keeps the rest of the view', () => {
     const base = view({ participants: [participant(1), participant(2)] });
     const delta: LobbyDelta = {

@@ -38,5 +38,5 @@ There is no Career mode in this rebuild. A feature that is not in this list has 
 ## Production checks
 
 After a deploy, compare the deployed asset hash with the local production build, run `npm run db:migrate` against the
-deployed database and confirm the five tables, then smoke the deployed stack with `cold-load --url`,
+deployed database and confirm the eight tables, then smoke the deployed stack with `cold-load --url`,
 `lobby-load --base` and `league --base`. `SKILL.md` has the exact commands and what each one proves.

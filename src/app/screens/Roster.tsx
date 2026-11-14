@@ -42,6 +42,11 @@ export function Roster(props: Props) {
   const openSeats = Math.max(0, props.capacity - props.participants.length);
   return (
     <div class="roster" data-testid="roster">
+      <div class="roster-row head">
+        <span class="seat">SEAT</span>
+        <span class="who">PLAYER</span>
+        <span class="state">STATUS</span>
+      </div>
       {props.participants.map((entry) => (
         <div
           class={`roster-row${entry.isMe ? ' me' : ''}${entry.status === 'left' ? ' gone' : ''}`}

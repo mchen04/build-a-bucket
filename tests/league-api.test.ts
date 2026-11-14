@@ -244,8 +244,12 @@ async function setupBuilding(mode: LobbySettings['mode'], players: number): Prom
   return { code: host.code, seats };
 }
 
-async function runLeague(mode: LobbySettings['mode'], players = 8): Promise<{ code: string; seats: Seat[]; view: LobbyView }> {
-  const settings: LobbySettings = { era: 'current', mode };
+async function runLeague(
+  mode: LobbySettings['mode'],
+  players = 8,
+  era: LobbySettings['era'] = 'current',
+): Promise<{ code: string; seats: Seat[]; view: LobbyView }> {
+  const settings: LobbySettings = { era, mode };
   const host = await createLobby('Host', settings);
   const seats: Seat[] = [host.host];
   for (let index = 2; index <= players; index++) seats.push(await join(host.code, `P${index}`));
@@ -309,6 +313,83 @@ describeDb('shared league API', () => {
     expect(recap.league?.recap?.champion).toBeTruthy();
     expect(recap.league?.awards).not.toBeNull();
   }, 180_000);
+
+  it('runs the normal all-time board to recap', async () => {
+    const { view: recap } = await runLeague('normal', 2, 'alltime');
+    expect(recap.league?.recap?.champion).toBeTruthy();
+    expect(recap.league?.awards).not.toBeNull();
+  }, 120_000);
+
+  it('runs the salary all-time board to recap', async () => {
+    const { view: recap } = await runLeague('salary', 2, 'alltime');
+    expect(recap.league?.recap?.champion).toBeTruthy();
+    expect(recap.league?.awards).not.toBeNull();
+  }, 120_000);
+
+  it('runs the squad all-time board to recap', async () => {
+    const { view: recap } = await runLeague('squad', 2, 'alltime');
+    expect(recap.league?.recap?.champion).toBeTruthy();
+    expect(recap.league?.awards).not.toBeNull();
+  }, 120_000);
+
+  it('sends no champion until the recap, in the view or a delta', async () => {
+    const { code, seats } = await setupBuilding('normal', 2);
+    for (let index = 0; index < seats.length; index++) {
+      const seatView = await view(code, seats[index]!.secret);
+      await submitOk(code, seats[index]!.secret, await buildFor('normal', seatView, index));
+    }
+    for (const seat of seats) await ready(code, seat.secret, 0);
+    let current = await view(code, seats[1]!.secret);
+    for (let guard = 0; guard < 12 && current.stage < 8; guard++) {
+      await fastForward(code);
+      current = await view(code, seats[1]!.secret);
+      if (current.stage >= 8) break;
+      for (const seat of seats) await ready(code, seat.secret, current.stage);
+    }
+    expect(current.stage).toBe(8);
+    const beforeFinals = current;
+    await fastForward(code);
+    current = await view(code, seats[1]!.secret);
+    for (const seat of seats) await ready(code, seat.secret, current.stage);
+    current = await view(code, seats[1]!.secret);
+    expect(current.stage).toBe(9);
+    expect(current.phase).toBe('playoffs');
+    expect(current.league?.recap).toBeNull();
+    expect(current.participants.every((entry) => entry.season?.champion !== true)).toBe(true);
+
+    const finalsResponse = await viewHandler(pollWith(seats[1]!.secret, code, beforeFinals.version, progressToken(beforeFinals), beforeFinals.events[0]?.id ?? 0, false));
+    const finalsBody = await read<{ delta?: { phase?: string; league?: { stage: number; recap?: unknown } }; lobby?: LobbyView }>(finalsResponse);
+    expect(finalsBody.delta?.phase ?? finalsBody.lobby?.phase).toBe('playoffs');
+    expect((finalsBody.delta?.league ?? finalsBody.lobby?.league)?.stage).toBe(9);
+    expect((finalsBody.delta?.league ?? finalsBody.lobby?.league)?.recap ?? null).toBeNull();
+
+    const beforeRecap = current;
+    await fastForward(code);
+    current = await view(code, seats[1]!.secret);
+    for (const seat of seats) await ready(code, seat.secret, current.stage);
+    current = await view(code, seats[1]!.secret);
+    expect(current.phase).toBe('recap');
+    expect(current.league?.recap?.champion).toBeTruthy();
+
+    const recapBody = await read<{ delta?: { phase?: string; league?: { stage: number; recap?: { champion?: string | null } | null } }; lobby?: LobbyView }>(
+      await viewHandler(pollWith(seats[1]!.secret, code, beforeRecap.version, progressToken(beforeRecap), beforeRecap.events[0]?.id ?? 0, false)),
+    );
+    expect(recapBody.delta?.phase ?? recapBody.lobby?.phase).toBe('recap');
+    expect((recapBody.delta?.league ?? recapBody.lobby?.league)?.stage).toBe(10);
+    expect((recapBody.delta?.league ?? recapBody.lobby?.league)?.recap?.champion).toBeTruthy();
+  }, 120_000);
+
+  it('rejects an advance after the recap without changing the result', async () => {
+    const { code, seats, view: recap } = await runLeague('normal', 2);
+    const response = await advance(code, seats[0]!.secret, recap.stage);
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain('not at a checkpoint');
+    const after = await view(code, seats[0]!.secret);
+    expect(after.phase).toBe('recap');
+    expect(after.stage).toBe(recap.stage);
+    expect(after.league?.cursor).toBe(recap.league?.cursor);
+    expect(after.league?.recap?.champion).toBe(recap.league?.recap?.champion);
+  }, 120_000);
 
   it('needs at least two players to start', async () => {
     const settings: LobbySettings = { era: 'current', mode: 'normal' };
@@ -576,6 +657,25 @@ describeDb('shared league API', () => {
     expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
     const drawn = await draw(code, seats[0]!.secret);
     expect(drawn.teams.find((entry) => entry.seat === seats[0]!.seat)?.rerollUsed).toBe(false);
+    await draw(code, seats[1]!.secret);
+  }, 120_000);
+
+  it('consumes the team respin once under concurrent rerolls and keeps it after a reload', async () => {
+    const { code, seats } = await runLeague('normal', 2);
+    expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
+    await ready(code, seats[0]!.secret, 0);
+    await ready(code, seats[1]!.secret, 0);
+    await draw(code, seats[0]!.secret);
+    const [a, b] = await Promise.all([reroll(code, seats[0]!.secret), reroll(code, seats[0]!.secret)]);
+    const mine = (lobby: LobbyView) => lobby.teams.find((entry) => entry.seat === seats[0]!.seat);
+    expect(mine(a)?.rerollUsed).toBe(true);
+    expect(mine(b)?.rerollUsed).toBe(true);
+    expect(mine(a)?.team).toBe(mine(b)?.team);
+    const reloaded = await view(code, seats[0]!.secret);
+    expect(mine(reloaded)?.team).toBe(mine(a)?.team);
+    expect(mine(reloaded)?.rerollUsed).toBe(true);
+    const again = await reroll(code, seats[0]!.secret);
+    expect(mine(again)?.team).toBe(mine(a)?.team);
     await draw(code, seats[1]!.secret);
   }, 120_000);
 

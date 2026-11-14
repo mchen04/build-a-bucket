@@ -41,6 +41,7 @@ export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
     ...view,
     version: delta.version,
     serverTime: delta.serverTime,
+    phase: delta.phase ?? view.phase,
     participants,
     me: participants.find((entry) => entry.isMe) ?? view.me,
     events: [...delta.events, ...view.events].slice(0, EVENT_LIMIT),

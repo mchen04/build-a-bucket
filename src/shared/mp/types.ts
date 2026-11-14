@@ -185,6 +185,7 @@ export interface ParticipantProgress {
 export interface LobbyDelta {
   version: number;
   serverTime: string;
+  phase?: LobbyPhase;
   participants?: ParticipantProgress[];
   events: EventView[];
   league?: LeagueDelta;

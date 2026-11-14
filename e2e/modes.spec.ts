@@ -117,15 +117,45 @@ function savedRun(id: string, keys: string[], position: 'guard' | 'big'): unknow
   };
 }
 
+function strongRun(id: string, keys: string[], position: 'guard' | 'big'): unknown {
+  const picks: Record<string, unknown> = {};
+  keys.forEach((attr, index) => {
+    picks[attr] = {
+      attr,
+      val: 10,
+      playerName: `Strong ${id} ${index}`,
+      playerShort: `T${index}`,
+      team: ['BOS', 'LAL', 'DEN', 'MIA', 'CHI'][index % 5],
+    };
+  });
+  return {
+    v: 1,
+    seed: `b-e2e-strong-${id}`,
+    position,
+    era: 'current',
+    picks,
+    spinIndex: keys.length,
+    teamRespinUsed: false,
+    playerRespinUsed: false,
+    current: null,
+    team: null,
+    season: null,
+    draft: null,
+    moment: null,
+    screen: 'builder',
+  };
+}
+
 test('daily challenge plays to its end state, resumes after reload and locks the day', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-10-24T18:00:00Z'));
   await page.goto('/');
   await page.getByTestId('home-daily').click();
   await expect(page.getByTestId('daily-card')).toBeVisible();
   await expectNoVerticalOverflow(page, 'daily home');
   await shot(page, 'daily-card');
 
-  const footballDay = await page.getByTestId('daily-nfl').isVisible().catch(() => false);
-  test.skip(footballDay, 'today is a football day in the original rotation');
+  await expect(page.getByTestId('daily-nfl')).toHaveCount(0);
+  await expect(page.getByTestId('daily-card')).toContainText('BASKETBALL');
   await expect(page.getByTestId('daily-play')).toContainText(/Play Daily|Resume Daily/);
   await page.getByTestId('daily-play').click();
 
@@ -165,6 +195,21 @@ test('daily challenge plays to its end state, resumes after reload and locks the
   await expect(page.getByTestId('daily-awards')).toBeVisible();
   await expect(page.getByTestId('daily-view')).toBeVisible();
   await expect(page.getByTestId('daily-play')).toHaveCount(0);
+  const stored = await page.evaluate(() => {
+    const store = JSON.parse(localStorage.getItem('bab:daily:v1') ?? '{}') as {
+      days?: Record<string, { run?: { season?: { wins: number; seed: number; standings: { wins: number }[] } } }>;
+    };
+    const season = Object.values(store.days ?? {})[0]?.run?.season;
+    if (!season) return null;
+    const sorted = season.standings.every((row, index, all) => index === 0 || (all[index - 1] as { wins: number }).wins >= row.wins);
+    const above = season.standings.slice(0, season.seed - 1);
+    return { wins: season.wins, seed: season.seed, sorted, consistent: above.every((row) => row.wins >= season.wins) };
+  });
+  expect(stored).not.toBeNull();
+  expect(stored?.sorted).toBe(true);
+  expect(stored?.consistent).toBe(true);
+  await expect(page.getByTestId('daily-result')).toContainText(`${stored?.wins}-`);
+  await expect(page.getByTestId('daily-result')).toContainText(`SEED #${stored?.seed}`);
   await expectNoVerticalOverflow(page, 'daily locked');
   await shot(page, 'daily-result-full');
   await page.getByTestId('daily-view').click();
@@ -333,6 +378,7 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
 });
 
 test('squad builder fills five slots, simulates the season and survives a reload', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await page.getByTestId('home-squad').click();
   await expect(page.getByTestId('squad-slots')).toBeVisible();
@@ -381,17 +427,23 @@ test('squad builder fills five slots, simulates the season and survives a reload
   await page.getByTestId('squad-season-skip').click();
   await expect(page.getByTestId('squad-standings')).toBeVisible();
   await expect(page.getByTestId('squad-standings')).not.toContainText('CHAMPIONS');
-  await expect(page.getByTestId('squad-standings')).not.toContainText('Missed playoffs');
+  await expect(page.getByTestId('squad-standings')).not.toContainText('Missed the Playoffs');
   await expectNoVerticalOverflow(page, 'squad standings');
   await shot(page, 'squad-standings');
   const standingsNext = page.getByTestId('squad-standings-next');
   if ((await standingsNext.textContent())?.includes('Playoffs')) {
+    await page.clock.install();
     await standingsNext.click();
     await expect(page.getByTestId('squad-playoffs')).toBeVisible();
-    await expect(page.getByTestId('squad-playoffs')).not.toContainText('CHAMPIONS');
-    await shot(page, 'squad-playoffs');
-    await page.getByTestId('squad-playoffs-skip').click();
+    const rounds = page.getByTestId('squad-playoff-rounds').locator('.round');
+    await expect(page.getByTestId('squad-playoff-banner')).toHaveCount(0);
+    await page.clock.runFor(520);
+    await expect(rounds).toHaveCount(1);
+    await shot(page, 'squad-playoffs-first-round');
+    await page.clock.runFor(5 * 520);
     await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
+    expect(await rounds.count()).toBeGreaterThan(0);
+    await shot(page, 'squad-playoffs');
     await page.getByTestId('squad-recap-next').click();
   } else {
     await standingsNext.click();
@@ -408,4 +460,74 @@ test('squad builder fills five slots, simulates the season and survives a reload
   await expect(page.getByTestId('squad-result')).toContainText('SEED');
   await expect(page.getByTestId('squad-again')).toBeVisible();
   await expect(page.getByTestId('squad-new')).toBeVisible();
+});
+
+test('squad playoff walkthrough reveals every round before the recap', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const squad = {
+    v: 1,
+    seed: 'scan-0',
+    team: 'BOS',
+    season: 0,
+    slots: [
+      { id: 'PG', pos: 'guard', run: strongRun('PG', GUARD_KEYS, 'guard') },
+      { id: 'SG', pos: 'guard', run: strongRun('SG', GUARD_KEYS, 'guard') },
+      { id: 'SF', pos: 'guard', run: strongRun('SF', GUARD_KEYS, 'guard') },
+      { id: 'PF', pos: 'big', run: strongRun('PF', BIG_KEYS, 'big') },
+      { id: 'C', pos: 'big', run: strongRun('C', BIG_KEYS, 'big') },
+    ],
+    result: null,
+  };
+  await page.evaluate((value) => localStorage.setItem('bab:squad:v1', JSON.stringify(value)), squad);
+  await page.reload();
+  await page.getByTestId('home-squad').click();
+  await expect(page.getByTestId('squad-slots').locator('.sq-slot.filled')).toHaveCount(5);
+  await page.getByTestId('squad-review').click();
+  await page.getByTestId('squad-simulate').click();
+  await expect(page.getByTestId('squad-season')).toBeVisible();
+  await page.getByTestId('squad-season-skip').click();
+  await expect(page.getByTestId('squad-standings')).toBeVisible();
+  const next = page.getByTestId('squad-standings-next');
+  await expect(next).toContainText('Playoffs');
+  await page.clock.install();
+  await next.click();
+  await expect(page.getByTestId('squad-playoffs')).toBeVisible();
+
+  const stamp = (label: string) => console.log(`[squad-walkthrough] ${label} ${new Date().toISOString()}`);
+  const rounds = page.getByTestId('squad-playoff-rounds').locator('.round');
+  const banner = page.getByTestId('squad-playoff-banner');
+  await expect(rounds).toHaveCount(0);
+  await expect(banner).toHaveCount(0);
+  for (let index = 1; index <= 3; index++) {
+    await page.clock.runFor(520);
+    await expect(rounds).toHaveCount(index);
+    await expect(banner).toHaveCount(0);
+    stamp(`rounds=${index}`);
+    await shot(page, `squad-playoffs-${index}`);
+  }
+  await page.clock.runFor(520);
+  expect(await rounds.count(), 'fixture seed scan-0 must reach and win all four rounds; re-run the seed scan if this stops holding').toBe(4);
+  await expect(banner).toBeVisible();
+  stamp(`all-rounds-banner rounds=${await rounds.count()}`);
+  const last = rounds.last();
+  await expect(last).toContainText('NBA Finals');
+  expect(await last.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { opacity: style.opacity, animation: style.animationName };
+  })).toEqual({ opacity: '1', animation: 'none' });
+  await shot(page, 'squad-playoffs-all');
+  expect((await rounds.locator('.rname').allInnerTexts()).map((label) => label.toLowerCase())).toEqual([
+    'first round',
+    'conference semifinals',
+    'conference finals',
+    'nba finals',
+  ]);
+  await expect(banner).toContainText('NBA CHAMPIONS!');
+  await expect(banner).toContainText(/NBA CHAMPIONS!.*\d+-\d+ Season · \d+-\d+ vs [A-Z]{2,4}/);
+  await page.getByTestId('squad-recap-next').click();
+  await expect(page.getByTestId('squad-result')).toContainText('SEED');
+  stamp('recap');
+  await shot(page, 'squad-recap');
 });

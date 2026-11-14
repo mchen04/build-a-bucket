@@ -155,6 +155,7 @@ describe('simulateSeason', () => {
       expect(us).toHaveLength(1);
       expect(us[0]?.short).toBe(team);
       expect(result.seed).toBe(result.standings.findIndex((row) => row.isUs) + 1);
+      expect(result.standings.slice(0, result.seed - 1).every((row) => row.wins >= result.wins)).toBe(true);
       expect(result.seed).toBeGreaterThanOrEqual(1);
       expect(result.seed).toBeLessThanOrEqual(15);
       expect(result.conference).toBe(['MIA', 'BOS'].includes(team) ? 'east' : 'west');
