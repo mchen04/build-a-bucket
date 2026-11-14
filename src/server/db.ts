@@ -36,6 +36,10 @@ export function db(): QueryRunner {
   return runner;
 }
 
+export function setRunner(next: QueryRunner | null): void {
+  runner = next;
+}
+
 export function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
 }

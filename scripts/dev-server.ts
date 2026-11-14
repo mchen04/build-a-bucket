@@ -122,5 +122,15 @@ const vite = await createViteServer({
   appType: 'spa',
 });
 
+if (process.env.BAB_DB_RUNNER) {
+  const dbModule = (await vite.ssrLoadModule(path.join(root, 'src/server/db.ts'))) as {
+    setRunner: (runner: unknown) => void;
+  };
+  const runnerModule = (await vite.ssrLoadModule(path.resolve(process.env.BAB_DB_RUNNER))) as {
+    createRunner: () => Promise<unknown>;
+  };
+  dbModule.setRunner(await runnerModule.createRunner());
+}
+
 await vite.listen();
 vite.printUrls();
