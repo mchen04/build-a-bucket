@@ -846,7 +846,7 @@ async function cleanup() {
 }
 
 async function perf() {
-  const run = o.base ? null : currentRun();
+  const run = o.out || o.base ? null : currentRun();
   const out = o.out ?? (run ? evidenceDir(run.dir, 'perf') : path.join(repo, 'evidence', 'perf'));
   const args = [path.join(repo, '.claude/skills/verify-build-a-bucket/scripts/meter/run.mjs'), '--out', out];
   for (const key of ['runs', 'seconds', 'modes', 'journeys', 'tag', 'repo', 'schema', 'pg-port', 'port']) {
