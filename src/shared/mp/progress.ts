@@ -7,6 +7,7 @@ import {
   type ParticipantView,
 } from './types.js';
 import type { LeagueGameView, LeagueView } from './league.js';
+import { stagePhase } from './league.js';
 import { LEAGUE_TEAMS } from '../engine/league.js';
 import { EAST_SET } from '../engine/rules.js';
 
@@ -64,6 +65,7 @@ function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
   const my = delta.rows ? myFromRows(delta.rows, view) : delta.my !== undefined ? delta.my : view.my;
   return {
     ...view,
+    phase: stagePhase(delta.stage),
     stage: delta.stage,
     cursor: delta.stageCursor,
     checkpoint: delta.checkpoint,
@@ -72,6 +74,8 @@ function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
     games: mergeLeagueGames(view.games, delta.games),
     standings,
     my,
+    awards: delta.awards !== undefined ? delta.awards : view.awards,
+    playin: delta.playin !== undefined ? delta.playin : view.playin,
     playoffs: delta.playoffs !== undefined ? delta.playoffs : view.playoffs,
   };
 }

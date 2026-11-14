@@ -200,6 +200,8 @@ export interface LeagueDelta {
   standings?: StandingView[] | null;
   rows?: [number, number, number, number | null][];
   my?: MyLeagueView | null;
+  awards?: LeagueView['awards'];
+  playin?: LeagueView['playin'];
   playoffs?: SeriesView[] | null;
 }
 

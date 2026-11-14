@@ -73,7 +73,38 @@ export function LeaguePanel(props: Props) {
   if (!league) return null;
   const my = league.my;
   const myTeam = my?.team ?? null;
-  const allGames = [...league.games].sort((a, b) => b.gameNo - a.gameNo);
+  const humanTeams = new Set((league.standings ?? []).filter((row) => row.humanName).map((row) => row.team));
+  const playoffGames: LeagueGameView[] = (league.playoffs ?? []).flatMap((series, seriesIndex) =>
+    series.games.map((game) => ({
+      gameNo: series.round * 1000 + seriesIndex * 10 + game.index,
+      stage: series.round + 5,
+      home: game.home,
+      away: game.away,
+      homeScore: game.homeScore,
+      awayScore: game.awayScore,
+      winner: game.winner,
+      mine: game.home === myTeam || game.away === myTeam,
+      friends: humanTeams.has(game.home) && humanTeams.has(game.away),
+    })),
+  );
+  const playinGames: LeagueGameView[] = (league.playin ?? []).map((game, index) => ({
+    gameNo: 5000 + index,
+    stage: 5,
+    home: game.home,
+    away: game.away,
+    homeScore: game.homeScore,
+    awayScore: game.awayScore,
+    winner: game.winner,
+    mine: game.home === myTeam || game.away === myTeam,
+    friends: humanTeams.has(game.home) && humanTeams.has(game.away),
+  }));
+  const visibleGames =
+    league.phase === 'playoffs' && playoffGames.length
+      ? playoffGames
+      : league.phase === 'playin' && playinGames.length
+        ? playinGames
+        : [...league.games];
+  const allGames = visibleGames.sort((a, b) => b.gameNo - a.gameNo);
   const highlighted = allGames.filter((game) => game.mine || game.friends).slice(0, 6);
   const recent = allGames.filter((game) => !game.mine && !game.friends).slice(0, 4);
   const games = [...highlighted, ...recent].sort((a, b) => b.gameNo - a.gameNo).slice(0, 8);
@@ -164,7 +195,14 @@ export function LeaguePanel(props: Props) {
             {my.seed ? ` · #${my.seed}` : ''}
           </div>
           <div class="tiny muted">
-            {my.finish ?? (my.madePlayoffs === null ? 'Season in progress' : my.madePlayoffs ? 'In the playoffs' : 'Out')}
+            {my.finish ??
+              (my.madePlayoffs === null
+                ? my.seed !== null
+                  ? `#${my.seed} seed`
+                  : 'Season in progress'
+                : my.madePlayoffs
+                  ? 'In the playoffs'
+                  : 'Out')}
             {my.mvp ? ' · MVP' : ''}
             {my.dpoy ? ' · DPOY' : ''}
             {my.champion ? ' · Champion' : ''}

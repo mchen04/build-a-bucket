@@ -5,6 +5,7 @@ import {
   isCheckpoint,
   playoffViewsFrom,
   stageGamesTotalFrom,
+  stageTotalFrom,
   type LeagueClock,
   type LeagueGameView,
   type LeagueView,
@@ -315,6 +316,8 @@ export interface LeagueDeltaData {
   standings?: StandingView[] | null;
   rows?: [number, number, number, number | null][];
   my?: MyLeagueView | null;
+  awards?: LeagueView['awards'];
+  playin?: LeagueView['playin'];
   playoffs?: SeriesView[] | null;
 }
 
@@ -359,7 +362,7 @@ export async function readLeagueDelta(
       stageCursor: clamped,
       checkpoint: isCheckpoint(clamped, total),
       stageName: STAGE_NAMES[stage] ?? 'Season',
-      stageTotal: total,
+      stageTotal: stageTotalFrom(clock, stage),
       games: [],
       playoffs: playoffViewsFrom(data, stage, clamped),
     };
@@ -485,8 +488,10 @@ export async function readLeagueDelta(
     stageName: full.stageName,
     stageTotal: full.stageTotal,
     games,
-    standings: stage < 4 ? full.standings : undefined,
-    my: stage < 4 ? full.my : undefined,
+    standings: full.standings,
+    my: full.my,
+    awards: full.awards,
+    playin: stage >= 5 ? full.playin : undefined,
     playoffs: stage >= 6 ? full.playoffs : undefined,
   };
 }
