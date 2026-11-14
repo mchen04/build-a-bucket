@@ -217,6 +217,33 @@ async function ui() {
       else if (verb === 'repeat') { const [n, ...inner] = arg.split('|'); for (let i = 0; i < Number(n); i++) { const [v2, ...a2] = inner.join('|').split(':'); if (v2 === 'click') { const el = target(a2.join(':')); if (await el.isVisible().catch(() => false)) await el.click(); } } }
       else if (verb === 'overflow') { const m = await page.evaluate(() => ({ scrollHeight: document.documentElement.scrollHeight, innerHeight: window.innerHeight, scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth })); log.push({ step, ...m }); if (m.scrollHeight > m.innerHeight + 1 || m.scrollWidth > m.innerWidth + 1) throw new Error(`overflow ${JSON.stringify(m)}`); continue; }
       else if (verb === 'shot') { await page.screenshot({ path: path.join(ev, `${arg}.png`) }); fs.writeFileSync(path.join(ev, `${arg}.aria.txt`), await page.locator('body').ariaSnapshot()); }
+      else if (verb === 'scroll') { await target(arg).evaluate((element) => element.scrollIntoView({ block: 'start' })); await page.waitForTimeout(300); }
+      else if (verb === 'cover') {
+        const m = await target(arg).evaluate((element) => {
+          const rows = [...element.querySelectorAll('.table-row:not(.head)')];
+          const visible = rows.filter((row) => {
+            const rect = row.getBoundingClientRect();
+            const box = row.closest('.table')?.getBoundingClientRect();
+            const top = Math.max(0, box ? box.top : 0);
+            const bottom = Math.min(window.innerHeight, box ? box.bottom : window.innerHeight);
+            return rect.top >= top && rect.bottom <= bottom;
+          });
+          const hits = visible.map((row) => {
+            const rect = row.getBoundingClientRect();
+            const hit = document.elementFromPoint(rect.left + Math.min(20, rect.width / 2), rect.top + rect.height / 2);
+            return hit !== null && !row.contains(hit) ? { hit, row } : null;
+          });
+          const covered = hits.filter((hit) => hit !== null);
+          const byHeader = covered.filter((entry) => entry.hit.closest('.table-row.head') !== null).length;
+          const others = covered
+            .filter((entry) => entry.hit.closest('.table-row.head') === null)
+            .map((entry) => `${entry.row.innerText.replace(/\s+/g, ' ').slice(0, 18)} <- ${entry.hit.tagName.toLowerCase()}.${String(entry.hit.className)}`);
+          return { rows: rows.length, visible: visible.length, coveredByHeader: byHeader, coveredByOther: covered.length - byHeader, covers: others };
+        });
+        log.push({ step, ...m });
+        if (m.coveredByOther > 0) throw new Error(`covered rows ${JSON.stringify(m)}`);
+        continue;
+      }
       else if (verb === 'storage') { const dump = await page.evaluate(() => Object.fromEntries(Object.keys(localStorage).map((k) => [k, localStorage.getItem(k)]))); fs.writeFileSync(path.join(ev, `${arg || 'storage'}.json`), JSON.stringify(dump, null, 2)); }
       else throw new Error(`unknown step ${step}`);
       log.push({ step, ms: Date.now() - t0 });
@@ -300,9 +327,16 @@ async function leagueRun() {
     const context = await browser.newContext({ ...ctxOpts, viewport });
     const page = await context.newPage();
     const errors = [];
+    const http = [];
     page.on('pageerror', (error) => errors.push(String(error).slice(0, 200)));
     page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text().slice(0, 200)); });
-    seats.push({ index, seat: index + 1, name: names[index], context, page, errors, closed: false });
+    page.on('response', (response) => {
+      if (response.status() < 400) return;
+      const entry = { status: response.status(), method: response.request().method(), url: response.url(), body: '' };
+      http.push(entry);
+      response.text().then((text) => { entry.body = text.slice(0, 300); }).catch(() => {});
+    });
+    seats.push({ index, seat: index + 1, name: names[index], context, page, errors, http, closed: false });
   }
   const active = () => seats.filter((seat) => !seat.closed);
   const clean = (text) => text.replace(/YOU/g, '').replace(/\s+/g, ' ').trim();
@@ -555,6 +589,34 @@ async function leagueRun() {
       const record = await verifyStage(`checkpoint-${checkpoint}`);
       stages.push(record);
       for (const seat of active()) await snap(seat, `checkpoint-${checkpoint}`);
+      if (checkpoint === 0) {
+        for (const seat of active()) {
+          const card = seat.page.getByTestId('standings');
+          if (!(await card.isVisible().catch(() => false))) continue;
+          await card.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+          await seat.page.waitForTimeout(400);
+          const cover = await card.evaluate((element) => {
+            const rows = [...element.querySelectorAll('.table-row:not(.head)')];
+            const visible = rows.filter((row) => {
+              const rect = row.getBoundingClientRect();
+              const box = row.closest('.table')?.getBoundingClientRect();
+              const top = Math.max(0, box ? box.top : 0);
+              const bottom = Math.min(window.innerHeight, box ? box.bottom : window.innerHeight);
+              return rect.top >= top && rect.bottom <= bottom;
+            });
+            const hits = visible.map((row) => {
+              const rect = row.getBoundingClientRect();
+              const hit = document.elementFromPoint(rect.left + Math.min(20, rect.width / 2), rect.top + rect.height / 2);
+              return hit !== null && !row.contains(hit) ? hit : null;
+            });
+            const covered = hits.filter((hit) => hit !== null);
+            const byHeader = covered.filter((hit) => hit.closest('.table-row.head') !== null).length;
+            return { rows: rows.length, visible: visible.length, coveredByHeader: byHeader, coveredByOther: covered.length - byHeader };
+          });
+          stages.push({ label: `standings-scrolled`, seat: seat.seat, ...cover });
+          await snap(seat, 'standings-scrolled');
+        }
+      }
       if (record.phase === 'Recap') break;
       if (!chaosDone && checkpoint === 0) {
         chaosDone = true;
@@ -653,6 +715,7 @@ async function leagueRun() {
       playAgain,
       rematchNote,
       errors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, errors: seat.errors })),
+      httpErrors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, responses: seat.http })),
       evidence: ev,
     };
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));

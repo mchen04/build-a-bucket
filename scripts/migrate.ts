@@ -8,8 +8,24 @@ const sql = neonClient();
 for (const statement of statements) {
   await sql.query(statement);
 }
+const expected = [
+  'actions',
+  'events',
+  'league_slice_checkpoints',
+  'league_slice_games',
+  'league_slices',
+  'lobby_teams',
+  'lobbies',
+  'participants',
+];
 const check = await sql.query<{ table_name: string }>(
-  "select table_name from information_schema.tables where table_schema = 'public' and table_name in ('lobbies','participants','lobby_teams','events','actions') order by table_name",
+  `select table_name from information_schema.tables where table_schema = 'public' and table_name in (${expected.map((name) => `'${name}'`).join(',')}) order by table_name`,
 );
 console.log(`db/schema.sql applied: ${statements.length} statements`);
-console.log(`tables present: ${check.map((row) => row.table_name).join(', ')}`);
+const present = check.map((row) => row.table_name);
+console.log(`tables present: ${present.join(', ')}`);
+const missing = expected.filter((name) => !present.includes(name));
+if (missing.length) {
+  console.error(`missing tables: ${missing.join(', ')}`);
+  process.exitCode = 1;
+}
