@@ -120,10 +120,14 @@ export async function fetchLobbyRequest(
   token: string,
   events: number,
   waiting: boolean,
+  cursor: number | null,
+  stage: number | null,
 ): Promise<LobbyUpdate | null> {
   const query = new URLSearchParams({ since: String(since), events: String(events) });
   if (token) query.set('token', token);
   if (waiting) query.set('waiting', '1');
+  if (cursor !== null) query.set('cursor', String(cursor));
+  if (stage !== null) query.set('stage', String(stage));
   const response = await request(`/api/lobby/${code}?${query.toString()}`, { headers: authHeaders(secret) }, 0);
   if (response.status === 204) return null;
   return parseUpdate(response);

@@ -51,7 +51,7 @@ import {
   type SalaryBoard,
 } from './league.js';
 import { db, isUniqueViolation, serverError } from './db.js';
-import { readLeagueClock, readLeagueView, writeLeagueSlice } from './leagueSlice.js';
+import { readLeagueClock, readLeagueDelta, readLeagueView, writeLeagueSlice } from './leagueSlice.js';
 
 export type Outcome = { ok: true; view: LobbyView } | { ok: false; status: number; error: ApiErrorBody };
 export type LeaveOutcome = { ok: true; view: LobbyView | null } | { ok: false; status: number; error: ApiErrorBody };
@@ -409,6 +409,22 @@ from (
 ) e
 `;
 
+const DELTA_EVENTS_SQL = `
+select coalesce(json_agg(json_build_object(
+  'id', e.id, 'kind', e.kind,
+  'seat', coalesce((e.payload->>'seat')::int, p.seat),
+  'name', coalesce(e.payload->>'name', p.name),
+  'detail', e.payload->>'detail',
+  'at', e.created_at
+) order by e.id desc), '[]'::json) as events
+from (
+  select * from events where lobby_id = (select id from lobbies where code = $1)
+    and (id > $2 or id = (select max(id) from events where lobby_id = (select id from lobbies where code = $1)))
+  order by id desc limit ${EVENT_LIMIT}
+) e
+left join participants p on p.id = e.participant_id
+`;
+
 const PROBE_SQL = `
 with l as (select * from lobbies where code = $1),
 hb as (
@@ -510,7 +526,8 @@ export type PollOutcome =
   | { kind: 'read' }
   | { kind: 'not_found' }
   | { kind: 'forbidden' }
-  | { kind: 'clock'; view: LobbyView };
+  | { kind: 'clock'; view: LobbyView }
+  | { kind: 'league_delta'; delta: LobbyDelta };
 
 interface ProbeOk {
   kind: 'ok';
@@ -734,10 +751,32 @@ function compactFacts(row: CompactProbeData): MaintenanceFacts {
   };
 }
 
+interface CompactProbeOk {
+  kind: 'ok';
+  code: string;
+  version: number;
+  token: string;
+  maintenance: boolean;
+  lobby: {
+    id: string;
+    phase: LobbyPhase;
+    stage: number;
+    stage_cursor: number;
+    stage_started_at: string | null;
+    version: number;
+    league_version: number;
+  };
+  participants: CompactPart[];
+  sliceClock: LeagueClock | null;
+  onlyClock: boolean;
+  clockMoved: boolean;
+  ev: number;
+}
+
 async function probeCompact(input: {
   code: string;
   secret: string;
-}): Promise<{ kind: 'not_found' } | { kind: 'forbidden' } | { kind: 'ok'; version: number; token: string; maintenance: boolean }> {
+}): Promise<{ kind: 'not_found' } | { kind: 'forbidden' } | CompactProbeOk> {
   const tokenHash = await hashSecret(input.secret);
   const rows = await db().query<{ probe: CompactProbeData | null }>(COMPACT_PROBE_SQL, [input.code, tokenHash]);
   const row = rows[0]?.probe;
@@ -755,11 +794,28 @@ async function probeCompact(input: {
       clock = full ? clockFromLeague(full) : null;
     }
   }
+  const stage = Number(row.st);
+  const startedAt = row.ss ? Date.parse(row.ss) : null;
   return {
     kind: 'ok',
+    code: input.code,
     version: Number(row.v),
     token: compactToken(row),
     maintenance: needsMaintenance(facts, now, clock),
+    lobby: {
+      id: row.id,
+      phase: row.ph as LobbyPhase,
+      stage,
+      stage_cursor: Number(row.sc),
+      stage_started_at: row.ss,
+      version: Number(row.v),
+      league_version: Number(row.lv),
+    },
+    participants: parts,
+    sliceClock: clock,
+    onlyClock: clock !== null && onlyClockMaintenance(facts, clock, now),
+    clockMoved: clock !== null && stageCursorAtFrom(clock, stage, startedAt, now) > Number(row.sc),
+    ev: Number(row.ev),
   };
 }
 
@@ -769,6 +825,8 @@ export async function pollLobby(input: {
   since: number;
   events: number;
   token: string | null;
+  cursor: number | null;
+  stage: number | null;
 }, waiting = false): Promise<PollOutcome> {
   if (input.since <= 0) return { kind: 'read' };
   try {
@@ -779,21 +837,72 @@ export async function pollLobby(input: {
       if (probe.version > input.since) return { kind: 'read' };
       return probe.maintenance ? { kind: 'read' } : { kind: 'no_content' };
     }
-    const probe = await probeLobby(input);
+    if (input.cursor === null || input.stage === null) {
+      const probe = await probeLobby(input);
+      if (probe.kind !== 'ok') return probe;
+      if (input.token === null || probe.token !== input.token) return { kind: 'read' };
+      const versionChanged = Number(probe.lobby.version) > input.since;
+      if (!probe.onlyClock) {
+        if (!versionChanged && !probe.maintenance) return { kind: 'no_content' };
+        return { kind: 'read' };
+      }
+      if (!versionChanged && !probe.clockMoved) return { kind: 'no_content' };
+      const view = await buildClockView(probe, input.events);
+      if (!view) return { kind: 'read' };
+      return { kind: 'clock', view };
+    }
+    const probe = await probeCompact(input);
     if (probe.kind !== 'ok') return probe;
     if (input.token === null || probe.token !== input.token) return { kind: 'read' };
-    const versionChanged = Number(probe.lobby.version) > input.since;
+    const versionChanged = probe.version > input.since;
     if (!probe.onlyClock) {
       if (!versionChanged && !probe.maintenance) return { kind: 'no_content' };
       return { kind: 'read' };
     }
     if (!versionChanged && !probe.clockMoved) return { kind: 'no_content' };
-    const view = await buildClockView(probe, input.events);
-    if (!view) return { kind: 'read' };
-    return { kind: 'clock', view };
+    if (input.stage !== probe.lobby.stage) return { kind: 'read' };
+    const delta = await buildLeagueDelta(probe, input.cursor, input.events);
+    if (!delta) return { kind: 'read' };
+    return { kind: 'league_delta', delta };
   } catch {
     return { kind: 'read' };
   }
+}
+
+async function buildLeagueDelta(probe: CompactProbeOk, sinceCursor: number, sinceEvent: number): Promise<LobbyDelta | null> {
+  const raw = probe.lobby;
+  const clock = probe.sliceClock;
+  if (!clock) return null;
+  const now = Date.now();
+  const stage = raw.stage;
+  const startedAt = raw.stage_started_at ? Date.parse(raw.stage_started_at) : null;
+  const oldCursor = raw.stage_cursor;
+  const cursor = Math.max(oldCursor, stageCursorAtFrom(clock, stage, startedAt, now));
+  if (cursor <= sinceCursor) return null;
+  let version = raw.version;
+  let stageCursor = oldCursor;
+  if (cursor > oldCursor) {
+    const updated = await db().query<{ version: number | string; stage_cursor: number | string }>(
+      `update lobbies set stage_cursor = greatest(stage_cursor, $2), version = version + 1, updated_at = now()
+       where id = $1::uuid and stage = $3 returning version, stage_cursor`,
+      [raw.id, cursor, stage],
+    );
+    if (!updated[0]) return null;
+    version = Number(updated[0].version);
+    stageCursor = Number(updated[0].stage_cursor);
+  }
+  const me = probe.participants.find((entry) => entry[7]);
+  if (!me) return null;
+  const league = await readLeagueDelta(raw.id, stage, stageCursor, sinceCursor, me[5] || null, clock);
+  if (!league) return null;
+  const events =
+    probe.ev > sinceEvent ? ((await db().query<{ events: EventView[] }>(DELTA_EVENTS_SQL, [probe.code, sinceEvent]))[0]?.events ?? []) : [];
+  return {
+    version,
+    serverTime: new Date(now).toISOString(),
+    events,
+    league,
+  };
 }
 
 const HOST_SQL = `
@@ -1837,9 +1946,9 @@ export async function advanceLobby(input: { code: string; secret: string; action
       season_secret: string;
       mode: string;
       era: string;
-      league: unknown;
+      league_version: number | string;
     }>(
-      `select id, phase, stage, stage_cursor, stage_started_at, host_participant, season_secret, mode, era, league
+      `select id, phase, stage, stage_cursor, stage_started_at, host_participant, season_secret, mode, era, league_version
        from lobbies where code = $1`,
       [input.code],
     );
@@ -1964,10 +2073,13 @@ export async function advanceLobby(input: { code: string; secret: string; action
       return { ok: false, status: 409, error: { error: 'This league is not at a checkpoint.', reason: 'conflict' } };
     }
     if (input.stage !== Number(lobby.stage)) return readLobby({ code: input.code, secret: input.secret });
-    const parsed = parseLeague(lobby.league);
-    if (!parsed) return { ok: false, status: 409, error: { error: 'The season has not started.', reason: 'conflict' } };
+    let clock = await readLeagueClock(lobby.id);
+    if (!clock) {
+      const full = await leagueFor(lobby.id, Number(lobby.league_version));
+      clock = full ? clockFromLeague(full) : null;
+    }
+    if (!clock) return { ok: false, status: 409, error: { error: 'The season has not started.', reason: 'conflict' } };
     const stage = Number(lobby.stage);
-    const clock = clockFromLeague(parsed);
     const cursor = Math.max(
       Number(lobby.stage_cursor),
       stageCursorAtFrom(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null, Date.now()),

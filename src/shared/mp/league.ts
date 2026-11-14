@@ -347,7 +347,7 @@ function seriesView(series: SeriesResult, revealedGames: number): SeriesView {
   };
 }
 
-function playoffViewsFrom(data: RevealData, stage: number, cursor: number): SeriesView[] {
+export function playoffViewsFrom(data: RevealData, stage: number, cursor: number): SeriesView[] {
   const currentRound = stage - 5;
   const out: SeriesView[] = [];
   for (let round = 1; round <= 4; round++) {

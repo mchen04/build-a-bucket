@@ -9,8 +9,11 @@ import {
   assembleLeagueView,
   revealLeague,
   stageGamesTotal,
+  type LeagueGameView,
   type LeagueView,
 } from '../src/shared/mp/league';
+import { mergeDelta } from '../src/shared/mp/progress';
+import type { LeagueDelta, LobbyView } from '../src/shared/mp/types';
 import {
   buildLeagueSlice,
   revealDataFromSlice,
@@ -88,6 +91,30 @@ function sliceView(slice: LeagueSlice, stage: number, cursor: number, meParticip
   return assembleLeagueView(data, stage, cursor, meParticipantId);
 }
 
+function deltaGames(slice: LeagueSlice, stage: number, sinceCursor: number, cursor: number, meTeam: string | null): LeagueGameView[] {
+  const sinceRevealed = revealedAt(slice, stage, sinceCursor);
+  const revealed = revealedAt(slice, stage, cursor);
+  const meIndex = meTeam ? LEAGUE_TEAMS.indexOf(meTeam) : -1;
+  const humanTeams = new Set(slice.meta.humans.map((entry) => entry.team));
+  return slice.games
+    .filter((game) => game.gameNo > sinceRevealed && game.gameNo <= revealed)
+    .map((game) => ({
+      gameNo: game.gameNo,
+      stage: game.stage,
+      home: LEAGUE_TEAMS[game.home] ?? '',
+      away: LEAGUE_TEAMS[game.away] ?? '',
+      homeScore: game.homeScore,
+      awayScore: game.awayScore,
+      winner: LEAGUE_TEAMS[game.winner] ?? '',
+      mine: game.home === meIndex || game.away === meIndex,
+      friends: humanTeams.has(LEAGUE_TEAMS[game.home] ?? '') && humanTeams.has(LEAGUE_TEAMS[game.away] ?? ''),
+    }));
+}
+
+function lobbyWith(league: LeagueView): LobbyView {
+  return { league, participants: [], events: [], me: null } as unknown as LobbyView;
+}
+
 describe('league slice views', () => {
   for (const mode of ['normal', 'salary', 'squad'] as const) {
     for (const seed of ['slice-a', 'slice-b', 'slice-c']) {
@@ -111,6 +138,40 @@ describe('league slice views', () => {
       });
     }
   }
+
+  it('merges a league delta into the previous view', () => {
+    const result = league('slice-delta', 'normal');
+    const slice = buildLeagueSlice(result);
+    for (let stage = 0; stage <= 10; stage++) {
+      const total = stageGamesTotal(result, stage);
+      const pairs: [number, number][] = [
+        [0, 1],
+        [0, Math.floor(total / 2)],
+        [Math.floor(total / 2), total],
+        [0, total],
+      ];
+      for (const [sinceCursor, cursor] of pairs) {
+        if (cursor <= sinceCursor) continue;
+        for (const human of result.humans) {
+          const prev = sliceView(slice, stage, sinceCursor, human.participantId);
+          const next = sliceView(slice, stage, cursor, human.participantId);
+          const delta: LeagueDelta = {
+            stage,
+            stageCursor: cursor,
+            checkpoint: next.checkpoint,
+            stageName: next.stageName,
+            stageTotal: next.stageTotal,
+            games: deltaGames(slice, stage, sinceCursor, cursor, human.team),
+            standings: stage < 4 ? next.standings : undefined,
+            my: stage < 4 ? next.my : undefined,
+            playoffs: stage >= 6 ? next.playoffs : undefined,
+          };
+          const merged = mergeDelta(lobbyWith(prev), { version: 1, serverTime: '', events: [], league: delta });
+          expect(merged.league).toEqual(next);
+        }
+      }
+    }
+  });
 
   it('stores a checkpoint for every regular cursor', () => {
     const result = league('slice-checkpoints', 'normal');

@@ -165,7 +165,7 @@ function absorb(target, result) {
     target.events = lobby.events[0]?.id ?? 0;
     target.participants = lobby.participants;
     target.waiting = lobby.league?.checkpoint === true || ['lobby', 'draw', 'building', 'preview', 'rematch', 'recap'].includes(lobby.phase);
-    target.cursor = lobby.league?.stageCursor ?? target.cursor;
+    target.cursor = lobby.league?.cursor ?? target.cursor;
     target.stage = lobby.stage ?? target.stage;
   } else if (delta) {
     target.version = delta.version;

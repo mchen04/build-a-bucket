@@ -145,13 +145,6 @@ const ParticipantProgressSchema = v.object({
   ready: v.boolean(),
 });
 
-export const LobbyDeltaSchema = v.object({
-  version: v.number(),
-  serverTime: v.string(),
-  participants: v.array(ParticipantProgressSchema),
-  events: v.array(EventViewSchema),
-});
-
 const TeamAssignmentSchema = v.object({
   seat: v.number(),
   name: v.string(),
@@ -284,6 +277,26 @@ const LeagueViewSchema = v.object({
   playoffs: v.nullable(v.array(SeriesSchema)),
   my: v.nullable(MyLeagueSchema),
   recap: v.nullable(RecapSchema),
+});
+
+const LeagueDeltaSchema = v.object({
+  stage: v.number(),
+  stageCursor: v.number(),
+  checkpoint: v.boolean(),
+  stageName: v.string(),
+  stageTotal: v.number(),
+  games: v.array(LeagueGameSchema),
+  standings: v.optional(v.nullable(v.array(StandingSchema))),
+  my: v.optional(v.nullable(MyLeagueSchema)),
+  playoffs: v.optional(v.nullable(v.array(SeriesSchema))),
+});
+
+export const LobbyDeltaSchema = v.object({
+  version: v.number(),
+  serverTime: v.string(),
+  participants: v.optional(v.array(ParticipantProgressSchema)),
+  events: v.array(EventViewSchema),
+  league: v.optional(LeagueDeltaSchema),
 });
 
 const ReadyViewSchema = v.object({

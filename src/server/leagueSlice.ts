@@ -1,9 +1,16 @@
-import { LEAGUE_TEAMS, type HumanSeason, type LeagueResult } from '../shared/engine/league.js';
+import { LEAGUE_TEAMS, type HumanSeason, type LeagueResult, type SeriesResult } from '../shared/engine/league.js';
 import {
+  STAGE_NAMES,
   assembleLeagueView,
+  isCheckpoint,
+  playoffViewsFrom,
   stageGamesTotalFrom,
   type LeagueClock,
+  type LeagueGameView,
   type LeagueView,
+  type MyLeagueView,
+  type SeriesView,
+  type StandingView,
 } from '../shared/mp/league.js';
 import {
   buildLeagueSlice,
@@ -138,7 +145,11 @@ select
   case when $2 >= 4 then west else null end as west,
   case when $2 >= 4 then awards else null end as awards,
   case when $2 >= 5 then playin else null end as playin,
-  case when $2 >= 6 then series else null end as series,
+  case when $2 >= 6 then (
+    select coalesce(jsonb_agg(entry order by ord), '[]'::jsonb)
+    from jsonb_array_elements(series) with ordinality as t(entry, ord)
+    where (entry->>'round')::int <= $2 - 5
+  ) else null end as series,
   case when $2 >= 10 then champion else null end as champion,
   case when $2 >= 10 then h2h else null end as h2h
 from league_slices where lobby_id = $1::uuid
@@ -163,6 +174,21 @@ where lobby_id = $1::uuid and game_no <= $2
       order by game_no desc limit 20
     )
   )
+`;
+
+const GAMES_AFTER_READ = `
+select coalesce(json_agg(json_build_array(game_no, stage, home, away, home_score, away_score, winner, friends) order by game_no), '[]'::json) as games
+from league_slice_games
+where lobby_id = $1::uuid and game_no > $2 and game_no <= $3
+`;
+
+const SERIES_READ = `
+select case when $2 >= 6 then (
+  select coalesce(jsonb_agg(entry order by ord), '[]'::jsonb)
+  from jsonb_array_elements(series) with ordinality as t(entry, ord)
+  where (entry->>'round')::int <= $2 - 5
+) else null end as series
+from league_slices where lobby_id = $1::uuid
 `;
 
 export async function readLeagueClock(lobbyId: string): Promise<LeagueClock | null> {
@@ -247,4 +273,153 @@ export async function readLeagueView(
     stage,
   );
   return { view: assembleLeagueView(data, stage, Number(cursor), meParticipantId), humans, clock };
+}
+
+export interface LeagueDeltaData {
+  stage: number;
+  stageCursor: number;
+  checkpoint: boolean;
+  stageName: string;
+  stageTotal: number;
+  games: LeagueGameView[];
+  standings?: StandingView[] | null;
+  my?: MyLeagueView | null;
+  playoffs?: SeriesView[] | null;
+}
+
+export async function readLeagueDelta(
+  lobbyId: string,
+  stage: number,
+  cursor: number,
+  sinceCursor: number,
+  meTeam: string | null,
+  clock: LeagueClock,
+): Promise<LeagueDeltaData | null> {
+  const total = stageGamesTotalFrom(clock, stage);
+  const clamped = Math.max(0, Math.min(Number(cursor), total));
+  if (stage >= 6) {
+    let series: SeriesResult[] | null;
+    try {
+      const rows = await db().query<{ series: SeriesResult[] | null }>(SERIES_READ, [lobbyId, stage]);
+      series = rows[0]?.series ?? null;
+    } catch (error) {
+      if (missingTable(error)) return null;
+      throw error;
+    }
+    if (series === null) return null;
+    const data = {
+      games: [],
+      gamesTotal: 0,
+      stageCounts: clock.counts,
+      playinCount: clock.playin,
+      seriesCounts: clock.seriesCounts,
+      seriesGames: clock.seriesGames,
+      standings: null,
+      partial: null,
+      humans: [],
+      awards: null,
+      playin: null,
+      series,
+      champion: null,
+      h2h: null,
+    };
+    return {
+      stage,
+      stageCursor: clamped,
+      checkpoint: isCheckpoint(clamped, total),
+      stageName: STAGE_NAMES[stage] ?? 'Season',
+      stageTotal: total,
+      games: [],
+      playoffs: playoffViewsFrom(data, stage, clamped),
+    };
+  }
+  let metaRows: MetaRow[];
+  try {
+    metaRows = await db().query<MetaRow>(META_READ, [lobbyId, stage]);
+  } catch (error) {
+    if (missingTable(error)) return null;
+    throw error;
+  }
+  const meta = metaRows[0];
+  if (!meta) return null;
+  const humans =
+    stage < 4
+      ? (meta.humans as unknown as [string, string, string, number][]).map((row) => ({
+          participantId: row[0],
+          team: row[1],
+          name: row[2],
+          seat: row[3],
+        })) as HumanSeason[]
+      : meta.humans;
+  const meParticipantId = humans.find((entry) => entry.team === meTeam)?.participantId ?? null;
+  let checkpoint: LeagueSliceCheckpoint | null = null;
+  if (stage < 4) {
+    const rows = await db().query<{ visible: number; records: LeagueSliceCheckpoint['records'] }>(CHECKPOINT_READ, [
+      lobbyId,
+      stage,
+      clamped,
+    ]);
+    if (rows[0]) checkpoint = { stage, cursor: clamped, visible: Number(rows[0].visible), records: rows[0].records };
+  }
+  const prefix = clock.counts.slice(0, Math.min(stage, 4)).reduce((sum, count) => sum + count, 0);
+  const revealed = stage >= 4 ? clock.counts.reduce((sum, count) => sum + count, 0) : prefix + clamped;
+  const sinceRevealed = stage >= 4 ? revealed : prefix + Math.max(0, Math.min(Number(sinceCursor), total));
+  let newGames: LeagueSliceGame[] = [];
+  if (stage < 4 && revealed > sinceRevealed) {
+    const rows = await db().query<{ games: [number, number, number, number, number, number, number, boolean][] }>(
+      GAMES_AFTER_READ,
+      [lobbyId, sinceRevealed, revealed],
+    );
+    newGames = (rows[0]?.games ?? []).map((row) => ({
+      gameNo: row[0],
+      stage: row[1],
+      home: row[2],
+      away: row[3],
+      homeScore: row[4],
+      awayScore: row[5],
+      winner: row[6],
+      friends: row[7],
+    }));
+  }
+  const data = revealDataFromSlice(
+    {
+      humans,
+      east: meta.east,
+      west: meta.west,
+      clock,
+      awards: meta.awards,
+      playin: meta.playin,
+      series: meta.series,
+      champion: meta.champion,
+      h2h: meta.h2h,
+    },
+    [],
+    checkpoint,
+    stage,
+  );
+  const full = assembleLeagueView(data, stage, clamped, meParticipantId);
+  const humanTeams = new Set(humans.map((entry) => entry.team));
+  const meIndex = meTeam ? LEAGUE_TEAMS.indexOf(meTeam) : -1;
+  const games: LeagueGameView[] = newGames.map((game) => ({
+    gameNo: game.gameNo,
+    stage: game.stage,
+    home: LEAGUE_TEAMS[game.home] ?? '',
+    away: LEAGUE_TEAMS[game.away] ?? '',
+    homeScore: game.homeScore,
+    awayScore: game.awayScore,
+    winner: LEAGUE_TEAMS[game.winner] ?? '',
+    mine: game.home === meIndex || game.away === meIndex,
+    friends: humanTeams.has(LEAGUE_TEAMS[game.home] ?? '') && humanTeams.has(LEAGUE_TEAMS[game.away] ?? ''),
+  }));
+  return {
+    stage,
+    stageCursor: clamped,
+    checkpoint: full.checkpoint,
+    stageName: full.stageName,
+    stageTotal: full.stageTotal,
+    games,
+    standings: stage < 4 ? full.standings : undefined,
+    my: stage < 4 ? full.my : undefined,
+    playoffs: stage >= 6 ? full.playoffs : undefined,
+  };
 }

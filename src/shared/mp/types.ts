@@ -1,6 +1,6 @@
 import type { SpinRecord } from '../engine/spin.js';
 import type { Era, Pick, Position } from '../engine/types.js';
-import type { LeagueView } from './league.js';
+import type { LeagueGameView, LeagueView, MyLeagueView, SeriesView, StandingView } from './league.js';
 
 export type LobbyPhase =
   | 'lobby'
@@ -182,8 +182,21 @@ export interface ParticipantProgress {
 export interface LobbyDelta {
   version: number;
   serverTime: string;
-  participants: ParticipantProgress[];
+  participants?: ParticipantProgress[];
   events: EventView[];
+  league?: LeagueDelta;
+}
+
+export interface LeagueDelta {
+  stage: number;
+  stageCursor: number;
+  checkpoint: boolean;
+  stageName: string;
+  stageTotal: number;
+  games: LeagueGameView[];
+  standings?: StandingView[] | null;
+  my?: MyLeagueView | null;
+  playoffs?: SeriesView[] | null;
 }
 
 export interface ApiErrorBody {
