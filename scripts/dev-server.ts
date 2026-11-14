@@ -78,6 +78,7 @@ async function send(res: ServerResponse, response: Response): Promise<void> {
 }
 
 function apiMiddleware(vite: ViteDevServer) {
+  const modules = new Map<string, Promise<Record<string, unknown>>>();
   return (req: IncomingMessage, res: ServerResponse, next: () => void): void => {
     if (!req.url || !req.url.startsWith('/api/')) return next();
     void (async () => {
@@ -88,7 +89,13 @@ function apiMiddleware(vite: ViteDevServer) {
           await send(res, new Response(JSON.stringify({ error: 'Unknown endpoint', reason: 'not_found' }), { status: 404 }));
           return;
         }
-        const module = (await vite.ssrLoadModule(file)) as Record<string, unknown>;
+        let loading = modules.get(file);
+        if (!loading) {
+          loading = vite.ssrLoadModule(file) as Promise<Record<string, unknown>>;
+          modules.set(file, loading);
+          loading.catch(() => modules.delete(file));
+        }
+        const module = await loading;
         const handler = module[request.method.toUpperCase()];
         if (typeof handler !== 'function') {
           await send(res, new Response(JSON.stringify({ error: 'Method not allowed', reason: 'invalid' }), { status: 405 }));

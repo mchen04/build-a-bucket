@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -117,18 +118,42 @@ function seat() {
   return { secret: randomBytes(16).toString('hex'), version: 0, events: 0, token: '', participants: [], waiting: false, statuses: {} };
 }
 
-async function api(base, method, route, secret, body) {
+const apiAgent = new http.Agent({ keepAlive: true, maxSockets: 64 });
+
+function api(base, method, route, secret, body) {
   const started = performance.now();
-  const response = await fetch(base + route, {
-    method,
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(30000),
+  const url = new URL(base + route);
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: url.hostname,
+        port: url.port,
+        path: `${url.pathname}${url.search}`,
+        method,
+        agent: apiAgent,
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          const result = {
+            ms: performance.now() - started,
+            status: response.statusCode ?? 0,
+            bytes: Buffer.byteLength(text, 'utf8'),
+            json: text ? JSON.parse(text) : null,
+          };
+          apiCalls.push({ t: Date.now(), ms: result.ms, bytes: result.bytes });
+          resolve(result);
+        });
+      },
+    );
+    request.setTimeout(30_000, () => request.destroy(new Error('api timeout')));
+    request.on('error', reject);
+    if (body) request.write(JSON.stringify(body));
+    request.end();
   });
-  const text = await response.text();
-  const result = { ms: performance.now() - started, status: response.status, bytes: Buffer.byteLength(text, 'utf8'), json: text ? JSON.parse(text) : null };
-  apiCalls.push({ t: Date.now(), ms: result.ms, bytes: result.bytes });
-  return result;
 }
 
 function absorb(target, result) {
