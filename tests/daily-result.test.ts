@@ -126,6 +126,13 @@ describe('daily result', () => {
     expect(view.finish).toBe('Conference Finals');
   });
 
+  it('keeps the stored seed when a strong record lands in a deep conference', () => {
+    const day = fullDay();
+    const view = dailyResult({ ...day, run: { ...day.run!, season: { ...season(), wins: 62, losses: 20, seed: 8 } } });
+    expect(view.record).toBe('62-20');
+    expect(view.seed).toBe(8);
+  });
+
   it('falls back for an old save without a run', () => {
     const view = dailyResult({ ...fullDay(), run: null });
     expect(view.hasResult).toBe(true);
