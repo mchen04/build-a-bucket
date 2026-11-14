@@ -41,10 +41,41 @@ Preconditions:
 - **Capacity and API side.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs lobby-load --players 8 --extra 4 --seconds 10`: `distinctSeats` is 8 and `joinStatuses` shows 7 successes and 4 refusals.
 - **Full scripted proof.** `npm run e2e -- e2e/lobby.spec.ts --project=mobile-chromium` drives two contexts from invite code to recap and rematch (needs port 4173 free).
 
+## Full league through the phone UI
+
+`node .claude/skills/verify-build-a-bucket/scripts/control.mjs league --players 2 --mode normal` is the end-to-end
+proof for a shared league. It opens one real browser context per seat (2 to 8), creates the lobby, reads the displayed
+invite link, has every other seat open that link and join by name, draws and rerolls, builds in `--mode`
+(`normal` ten spins, `salary` one card per column plus the Scout power, `squad` five complete builds), previews, and
+then at every checkpoint:
+
+- reads `standings` from every active seat and fails unless the top ten of each conference agree;
+- reads `my-team` and fails unless that seat's record and seed match its own standings row;
+- fails if a seed appears during the season, or awards, play-in, playoffs or the champion appear before their stage;
+- writes one screenshot and aria snapshot per active seat, then has every seat Ready and the host Advance.
+
+It ends at the recap, compares the champion text across seats, then does Play Again: every retained seat readies, the
+host opens the draw, and the second game's `draw-team` must appear. `evidence/league/summary.json` holds the code,
+mode, era, each checkpoint's visible standings and each seat's record/seed, the champion, Play Again and any page or
+console errors.
+
+Chaos options, applied at the first checkpoint:
+
+- `--reload 2` reloads seat 2 mid-season, waits for the lobby to come back, and re-compares the standings.
+- `--away 2` closes seat 2's browser context; the host must still advance and the remaining seats must agree.
+- `--host-leave` taps Leave lobby on the host; another seat must receive Advance and carry the league.
+
+The season reveal is real time. A two-seat league takes about 7 to 9 minutes because each quarter reveals roughly 300
+league games; run it in the background. The command has no internal setters or database jumps.
+
 ## Gotchas
 
 - Sessions share nothing but the server: a player only reconnects with the same `--session`.
 - The host must lock the teams; the draw does not advance on its own, so rerolls stay available.
+- The draw auto-locks as soon as every active seat has a team. Reroll before the last seat draws, or the phase moves
+  to building and the reroll button is gone.
+- The invite link is displayed lowercase and the code inside it is uppercase; both the Copy button and the displayed
+  text work. Typing the link by hand with an uppercase `/J/` would miss the invite route.
 - On a loaded host (load average above about 10) client requests can exceed their 8 s budget and show "reconnecting"; check `uptime` before calling it a regression.
 - Lobbies made against a deployed stack are not deleted by cleanup.
 - Away (unseen for 60 s) and left players never block a checkpoint; the host role moves to the earliest joined present player when the host is away for 45 s or leaves.
