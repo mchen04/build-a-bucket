@@ -1,8 +1,7 @@
 import { useState } from 'preact/hooks';
 import type { Catalog } from '../../shared/data/loader';
-import { mulberry32, randomSeed } from '../../shared/engine/rng';
-import { rollStats } from '../../shared/engine/season';
-import { honorsFor, squadSeason, squadStarters, squadStrength } from '../../shared/engine/squad';
+import { randomSeed } from '../../shared/engine/rng';
+import { honorsFor, squadLines, squadSeason, squadStarters, squadStrength } from '../../shared/engine/squad';
 import { newSquadState, readSquad, saveSquad, type SquadStage, type SquadState } from '../../shared/squadStore';
 import { createRun } from '../../shared/run';
 import { Builder } from '../screens/Builder';
@@ -80,6 +79,7 @@ export function SquadMode({ catalog, onExit }: Props) {
   const builds = squad.slots
     .filter((entry) => entry.run)
     .map((entry) => ({
+      id: entry.id,
       pos: entry.pos,
       values: Object.fromEntries(Object.entries(entry.run?.picks ?? {}).map(([attr, pick]) => [attr, pick.val])),
     }));
@@ -91,12 +91,7 @@ export function SquadMode({ catalog, onExit }: Props) {
     const strength = squadStrength(squad.team, teamStarters, builds);
     const seasonNumber = squad.season + 1;
     const season = squadSeason(`${squad.seed}-season-${seasonNumber}`, squad.team, strength);
-    const lines = squad.slots
-      .filter((entry) => entry.run)
-      .map((entry, index) => {
-        const rolled = rollStats(builds[index]?.values ?? {}, entry.pos, mulberry32(0));
-        return { id: entry.id, ppg: rolled.ppg, rpg: rolled.rpg, apg: rolled.apg, spg: rolled.spg, bpg: rolled.bpg };
-      });
+    const lines = squadLines(squad.seed, seasonNumber, builds);
     const result: SquadOutcome = { strength, season, honors: honorsFor(lines, season.wins), lines };
     put({ ...squad, season: seasonNumber, result, stage: 'season' });
     setOutcome(result);

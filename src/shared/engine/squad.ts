@@ -9,6 +9,7 @@ import {
 } from './rules.js';
 import { mulberry32, seededRng, type Rng } from './rng.js';
 import { ovrFromValues } from './ovr.js';
+import { rollStats } from './season.js';
 import type { Player, Position } from './types.js';
 
 export interface SquadSlot {
@@ -321,6 +322,26 @@ export function squadSeason(
 
 export function honorScore(line: { ppg: number; rpg: number; apg: number; spg: number; bpg: number }, wins: number): number {
   return line.ppg + 1.2 * line.rpg + 1.5 * line.apg + 2 * (line.spg + line.bpg) + (wins - 41) * 0.08;
+}
+
+export interface SquadLine {
+  id: string;
+  ppg: number;
+  rpg: number;
+  apg: number;
+  spg: number;
+  bpg: number;
+}
+
+export function squadLines(
+  seed: string,
+  season: number,
+  slots: { id: string; pos: Position; values: Record<string, number> }[],
+): SquadLine[] {
+  return slots.map((slot) => {
+    const rolled = rollStats(slot.values, slot.pos, seededRng(`${seed}:${slot.id}:${season}`));
+    return { id: slot.id, ppg: rolled.ppg, rpg: rolled.rpg, apg: rolled.apg, spg: rolled.spg, bpg: rolled.bpg };
+  });
 }
 
 export function honorsFor(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SquadRound, SquadSeasonResult } from '../src/shared/engine/squad';
+import { squadLines } from '../src/shared/engine/squad';
 import type { SquadStage } from '../src/shared/squadStore';
 import { squadFinish, squadFinishVisible, squadRoundLabel, squadRoundResult } from '../src/app/mp/squadResult';
 
@@ -57,5 +58,28 @@ describe('squad result', () => {
   it('keeps losses in the standings', () => {
     const result = season();
     expect(result.standings[0]).toMatchObject({ short: 'DAL', wins: 45, losses: 37, isUs: true });
+  });
+
+  it('gives each slot its own line even when the builds match', () => {
+    const values = {
+      jumpShot: 8,
+      finishing: 7,
+      playmaking: 8,
+      handles: 7,
+      passing: 8,
+      perimeterDefense: 6,
+      speed: 8,
+      size: 6,
+      basketballIQ: 8,
+      clutch: 7,
+    };
+    const lines = squadLines('b-e2e-squad', 1, [
+      { id: 'PG', pos: 'guard', values },
+      { id: 'SG', pos: 'guard', values },
+      { id: 'SF', pos: 'guard', values },
+      { id: 'PF', pos: 'big', values },
+      { id: 'C', pos: 'big', values },
+    ]);
+    expect(new Set(lines.map((line) => `${line.ppg}:${line.rpg}:${line.apg}:${line.spg}:${line.bpg}`)).size).toBe(5);
   });
 });
