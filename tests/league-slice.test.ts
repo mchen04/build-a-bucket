@@ -115,6 +115,16 @@ function lobbyWith(league: LeagueView): LobbyView {
   return { league, participants: [], events: [], me: null } as unknown as LobbyView;
 }
 
+function deltaRows(slice: LeagueSlice, stage: number, cursor: number): [number, number, number, number | null][] {
+  const checkpoint = checkpointAt(slice, stage, cursor);
+  if (!checkpoint) return [];
+  const rows: [number, number, number, number | null][] = [];
+  for (let index = 0; index + 2 < checkpoint.records.length; index += 3) {
+    rows.push([checkpoint.records[index] as number, checkpoint.records[index + 1] as number, checkpoint.records[index + 2] as number, null]);
+  }
+  return rows;
+}
+
 describe('league slice views', () => {
   for (const mode of ['normal', 'salary', 'squad'] as const) {
     for (const seed of ['slice-a', 'slice-b', 'slice-c']) {
@@ -165,6 +175,38 @@ describe('league slice views', () => {
             standings: stage < 4 ? next.standings : undefined,
             my: stage < 4 ? next.my : undefined,
             playoffs: stage >= 6 ? next.playoffs : undefined,
+          };
+          const merged = mergeDelta(lobbyWith(prev), { version: 1, serverTime: '', events: [], league: delta });
+          expect(merged.league).toEqual(next);
+        }
+      }
+    }
+  });
+
+  it('merges a compact regular delta into the previous view', () => {
+    const result = league('slice-rows', 'normal');
+    const slice = buildLeagueSlice(result);
+    for (let stage = 0; stage < 4; stage++) {
+      const total = stageGamesTotal(result, stage);
+      const pairs: [number, number][] = [
+        [0, 1],
+        [0, Math.floor(total / 2)],
+        [Math.floor(total / 2), total],
+        [0, total],
+      ];
+      for (const [sinceCursor, cursor] of pairs) {
+        if (cursor <= sinceCursor) continue;
+        for (const human of result.humans) {
+          const prev = sliceView(slice, stage, sinceCursor, human.participantId);
+          const next = sliceView(slice, stage, cursor, human.participantId);
+          const delta: LeagueDelta = {
+            stage,
+            stageCursor: cursor,
+            checkpoint: next.checkpoint,
+            stageName: next.stageName,
+            stageTotal: next.stageTotal,
+            games: deltaGames(slice, stage, sinceCursor, cursor, human.team),
+            rows: deltaRows(slice, stage, cursor),
           };
           const merged = mergeDelta(lobbyWith(prev), { version: 1, serverTime: '', events: [], league: delta });
           expect(merged.league).toEqual(next);

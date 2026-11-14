@@ -7,6 +7,8 @@ import {
   type ParticipantView,
 } from './types.js';
 import type { LeagueGameView, LeagueView } from './league.js';
+import { LEAGUE_TEAMS } from '../engine/league.js';
+import { EAST_SET } from '../engine/rules.js';
 
 export function progressToken(view: Pick<LobbyView, 'events' | 'participants'>): string {
   const latest = view.events[0]?.id ?? 0;
@@ -50,6 +52,8 @@ function mergeLeagueGames(current: LeagueGameView[], incoming: LeagueGameView[])
 }
 
 function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
+  const standings = delta.rows ? rowsToStandings(delta.rows, view) : delta.standings !== undefined ? delta.standings : view.standings;
+  const my = delta.rows ? myFromRows(delta.rows, view) : delta.my !== undefined ? delta.my : view.my;
   return {
     ...view,
     stage: delta.stage,
@@ -58,8 +62,33 @@ function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
     stageName: delta.stageName,
     stageTotal: delta.stageTotal,
     games: mergeLeagueGames(view.games, delta.games),
-    standings: delta.standings !== undefined ? delta.standings : view.standings,
-    my: delta.my !== undefined ? delta.my : view.my,
+    standings,
+    my,
     playoffs: delta.playoffs !== undefined ? delta.playoffs : view.playoffs,
   };
+}
+
+function rowsToStandings(rows: [number, number, number, number | null][], view: LeagueView): LeagueView['standings'] {
+  const meTeam = view.my?.team ?? null;
+  const previous = new Map((view.standings ?? []).map((row) => [row.team, row]));
+  return rows.map(([index, wins, losses, seed]) => {
+    const team = LEAGUE_TEAMS[index] ?? '';
+    return {
+      team,
+      conference: EAST_SET.has(team) ? 'east' : 'west',
+      wins,
+      losses,
+      seed,
+      isMine: team === meTeam,
+      humanName: previous.get(team)?.humanName ?? null,
+    };
+  });
+}
+
+function myFromRows(rows: [number, number, number, number | null][], view: LeagueView): LeagueView['my'] {
+  const current = view.my;
+  if (!current) return current;
+  const row = rows.find(([index]) => LEAGUE_TEAMS[index] === current.team);
+  if (!row) return current;
+  return { ...current, wins: row[1], losses: row[2], seed: row[3] };
 }

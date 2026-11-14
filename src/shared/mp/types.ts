@@ -195,6 +195,7 @@ export interface LeagueDelta {
   stageTotal: number;
   games: LeagueGameView[];
   standings?: StandingView[] | null;
+  rows?: [number, number, number, number | null][];
   my?: MyLeagueView | null;
   playoffs?: SeriesView[] | null;
 }

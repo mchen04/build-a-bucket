@@ -182,13 +182,43 @@ from league_slice_games
 where lobby_id = $1::uuid and game_no > $2 and game_no <= $3
 `;
 
+async function readGamesAfter(lobbyId: string, after: number, upTo: number): Promise<LeagueSliceGame[]> {
+  const rows = await db().query<{ games: [number, number, number, number, number, number, number, boolean][] }>(GAMES_AFTER_READ, [
+    lobbyId,
+    after,
+    upTo,
+  ]);
+  return (rows[0]?.games ?? []).map((row) => ({
+    gameNo: row[0],
+    stage: row[1],
+    home: row[2],
+    away: row[3],
+    homeScore: row[4],
+    awayScore: row[5],
+    winner: row[6],
+    friends: row[7],
+  }));
+}
+
 const SERIES_READ = `
-select case when $2 >= 6 then (
-  select coalesce(jsonb_agg(entry order by ord), '[]'::jsonb)
-  from jsonb_array_elements(series) with ordinality as t(entry, ord)
-  where (entry->>'round')::int <= $2 - 5
-) else null end as series
-from league_slices where lobby_id = $1::uuid
+with s as (
+  select entry, ord, jsonb_array_length(entry->'games') as len
+  from league_slices, jsonb_array_elements(series) with ordinality as t(entry, ord)
+  where lobby_id = $1::uuid and (entry->>'round')::int <= $2 - 5
+), r as (
+  select entry, ord, len,
+    coalesce(sum(len) over (order by ord rows between unbounded preceding and 1 preceding), 0) as before
+  from s
+)
+select coalesce(jsonb_agg(
+  jsonb_set(entry, '{games}', (
+    select coalesce(jsonb_agg(g order by gord), '[]'::jsonb)
+    from jsonb_array_elements(entry->'games') with ordinality as gt(g, gord)
+    where gord <= greatest(0, least(len, $3 - before))
+  ))
+  order by ord
+), '[]'::jsonb) as series
+from r
 `;
 
 export async function readLeagueClock(lobbyId: string): Promise<LeagueClock | null> {
@@ -283,6 +313,7 @@ export interface LeagueDeltaData {
   stageTotal: number;
   games: LeagueGameView[];
   standings?: StandingView[] | null;
+  rows?: [number, number, number, number | null][];
   my?: MyLeagueView | null;
   playoffs?: SeriesView[] | null;
 }
@@ -300,7 +331,7 @@ export async function readLeagueDelta(
   if (stage >= 6) {
     let series: SeriesResult[] | null;
     try {
-      const rows = await db().query<{ series: SeriesResult[] | null }>(SERIES_READ, [lobbyId, stage]);
+      const rows = await db().query<{ series: SeriesResult[] | null }>(SERIES_READ, [lobbyId, stage, clamped]);
       series = rows[0]?.series ?? null;
     } catch (error) {
       if (missingTable(error)) return null;
@@ -331,6 +362,42 @@ export async function readLeagueDelta(
       stageTotal: total,
       games: [],
       playoffs: playoffViewsFrom(data, stage, clamped),
+    };
+  }
+  if (stage < 4) {
+    const compact = await db().query<{ visible: number; records: number[] }>(CHECKPOINT_READ, [lobbyId, stage, clamped]);
+    const checkpoint: LeagueSliceCheckpoint | null = compact[0]
+      ? { stage, cursor: clamped, visible: Number(compact[0].visible), records: compact[0].records }
+      : null;
+    const prefix = clock.counts.slice(0, stage).reduce((sum, count) => sum + count, 0);
+    const revealed = prefix + clamped;
+    const sinceRevealed = prefix + Math.max(0, Math.min(Number(sinceCursor), total));
+    const newGames = revealed > sinceRevealed ? await readGamesAfter(lobbyId, sinceRevealed, revealed) : [];
+    const meIndex = meTeam ? LEAGUE_TEAMS.indexOf(meTeam) : -1;
+    const games: LeagueGameView[] = newGames.map((game) => ({
+      gameNo: game.gameNo,
+      stage: game.stage,
+      home: LEAGUE_TEAMS[game.home] ?? '',
+      away: LEAGUE_TEAMS[game.away] ?? '',
+      homeScore: game.homeScore,
+      awayScore: game.awayScore,
+      winner: LEAGUE_TEAMS[game.winner] ?? '',
+      mine: game.home === meIndex || game.away === meIndex,
+      friends: game.friends,
+    }));
+    const records = checkpoint?.records ?? [];
+    const rows: [number, number, number, number | null][] = [];
+    for (let index = 0; index + 2 < records.length; index += 3) {
+      rows.push([records[index] as number, records[index + 1] as number, records[index + 2] as number, null]);
+    }
+    return {
+      stage,
+      stageCursor: clamped,
+      checkpoint: isCheckpoint(clamped, total),
+      stageName: STAGE_NAMES[stage] ?? 'Season',
+      stageTotal: total,
+      games,
+      rows,
     };
   }
   let metaRows: MetaRow[];

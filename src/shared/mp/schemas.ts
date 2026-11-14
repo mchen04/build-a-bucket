@@ -287,6 +287,7 @@ const LeagueDeltaSchema = v.object({
   stageTotal: v.number(),
   games: v.array(LeagueGameSchema),
   standings: v.optional(v.nullable(v.array(StandingSchema))),
+  rows: v.optional(v.array(v.tuple([v.number(), v.number(), v.number(), v.nullable(v.number())]))),
   my: v.optional(v.nullable(MyLeagueSchema)),
   playoffs: v.optional(v.nullable(v.array(SeriesSchema))),
 });
