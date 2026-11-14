@@ -31,6 +31,13 @@ function dynamicChild(dir: string, segment: string): string | null {
   return null;
 }
 
+function dynamicFile(dir: string): string | null {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.startsWith('[') && entry.name.endsWith('].ts')) return path.join(dir, entry.name);
+  }
+  return null;
+}
+
 function resolveApiFile(pathname: string): string | null {
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length < 2 || segments[0] !== 'api') return null;
@@ -45,9 +52,11 @@ function resolveApiFile(pathname: string): string | null {
       const indexFile = path.join(dir, segment, 'index.ts');
       if (existsSync(indexFile)) return indexFile;
       const dynamic = dynamicChild(dir, segment);
-      if (!dynamic) return null;
-      const dynamicIndex = path.join(dynamic, 'index.ts');
-      return existsSync(dynamicIndex) ? dynamicIndex : null;
+      if (dynamic) {
+        const dynamicIndex = path.join(dynamic, 'index.ts');
+        if (existsSync(dynamicIndex)) return dynamicIndex;
+      }
+      return dynamicFile(dir);
     }
     const next = dynamicChild(dir, segment);
     if (!next) return null;

@@ -2,17 +2,20 @@ import { afterAll, describe, expect, it } from 'vitest';
 import * as v from 'valibot';
 import { POST as createHandler } from '../api/lobby/index';
 import { GET as viewHandler } from '../api/lobby/[code]/index';
-import { POST as joinHandler } from '../api/lobby/[code]/join';
-import { POST as startHandler } from '../api/lobby/[code]/start';
-import { POST as drawHandler } from '../api/lobby/[code]/draw';
-import { POST as rerollHandler } from '../api/lobby/[code]/reroll';
-import { POST as lockHandler } from '../api/lobby/[code]/lock';
-import { POST as buildHandler } from '../api/lobby/[code]/build';
-import { POST as readyHandler } from '../api/lobby/[code]/ready';
-import { POST as advanceHandler } from '../api/lobby/[code]/advance';
-import { POST as rematchHandler } from '../api/lobby/[code]/rematch';
-import { POST as powerHandler } from '../api/lobby/[code]/power';
-import { POST as removeHandler } from '../api/lobby/[code]/remove';
+import {
+  advanceAction as advanceHandler,
+  buildAction as buildHandler,
+  drawAction as drawHandler,
+  joinAction as joinHandler,
+  leaveAction,
+  lockAction as lockHandler,
+  powerAction as powerHandler,
+  readyAction as readyHandler,
+  rematchAction as rematchHandler,
+  removeAction as removeHandler,
+  rerollAction as rerollHandler,
+  startAction as startHandler,
+} from '../src/server/actions';
 import { loadLocalEnv } from '../scripts/lib.ts';
 import { db } from '../src/server/db';
 import { computeLeagueFor, unchangedPoll } from '../src/server/lobby';
@@ -455,7 +458,7 @@ describeDb('shared league API', () => {
   it('rejoins the same seat after leaving once the draw is over', async () => {
     const { code, seats } = await setupBuilding('normal', 2);
     const guest = seats[1] as Seat;
-    const leave = await import('../api/lobby/[code]/leave').then((module) => module.POST);
+    const leave = leaveAction;
     const response = await leave(authed(guest.secret, `lobby/${code}/leave`, { actionId: newActionId() }));
     expect(response.status).toBe(200);
     const left = await view(code, seats[0]!.secret);
@@ -504,7 +507,7 @@ describeDb('shared league API', () => {
   it('does not count a departed player against the rematch gate', async () => {
     const { code, seats } = await runLeague('normal', 2);
     expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
-    const leave = await import('../api/lobby/[code]/leave').then((module) => module.POST);
+    const leave = leaveAction;
     expect((await leave(authed(seats[1]!.secret, `lobby/${code}/leave`, { actionId: newActionId() }))).status).toBe(200);
     await ready(code, seats[0]!.secret, 0);
     const drawn = await advance(code, seats[0]!.secret, 0);
@@ -736,7 +739,7 @@ describeDb('shared league API', () => {
     const guest = seats[1] as Seat;
     const lobby = await view(code, guest.secret);
     await submitOk(code, guest.secret, await buildFor('normal', lobby, 1));
-    const leave = await import('../api/lobby/[code]/leave').then((module) => module.POST);
+    const leave = leaveAction;
     expect((await leave(authed(guest.secret, `lobby/${code}/leave`, { actionId: newActionId() }))).status).toBe(200);
     const rejoined = await joinHandler(authed(guest.secret, `lobby/${code}/join`, { name: 'Guest', actionId: newActionId() }));
     expect(rejoined.status).toBe(200);
@@ -757,7 +760,7 @@ describeDb('shared league API', () => {
     for (const seat of seats) await ready(code, seat.secret, 0);
     expect((await view(code, seats[0]!.secret)).phase).toBe('season');
     const guest = seats[1] as Seat;
-    const leave = await import('../api/lobby/[code]/leave').then((module) => module.POST);
+    const leave = leaveAction;
     expect((await leave(authed(guest.secret, `lobby/${code}/leave`, { actionId: newActionId() }))).status).toBe(200);
     await db().query("update lobbies set phase = 'recap' where code = $1", [code]);
     expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
@@ -846,7 +849,7 @@ describeDb('shared league API', () => {
   it('rejects a left player on the full read', async () => {
     const { code, seats } = await setupBuilding('normal', 2);
     const guest = seats[1] as Seat;
-    const leave = await import('../api/lobby/[code]/leave').then((module) => module.POST);
+    const leave = leaveAction;
     expect((await leave(authed(guest.secret, `lobby/${code}/leave`, { actionId: newActionId() }))).status).toBe(200);
     expect((await viewHandler(poll(guest.secret, code))).status).toBe(403);
   }, 60_000);
