@@ -11,11 +11,12 @@ const MAX_CONNECTIONS = Number(process.env.BAB_DB_MAX ?? 24);
 let pending = [];
 let flushTimer = null;
 
-function flush() {
+function flush(sync = false) {
   if (!LOG || !pending.length) return;
   const chunk = pending.map((entry) => entry + '\n').join('');
   pending = [];
-  fs.appendFileSync(LOG, chunk);
+  if (sync) fs.appendFileSync(LOG, chunk);
+  else fs.appendFile(LOG, chunk, () => {});
 }
 
 function record(entry) {
@@ -29,9 +30,9 @@ function record(entry) {
   }
 }
 
-process.on('exit', flush);
-process.on('beforeExit', flush);
-for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { flush(); process.exit(0); });
+process.on('exit', () => flush(true));
+process.on('beforeExit', () => flush(true));
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => { flush(true); process.exit(0); });
 
 function quote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;

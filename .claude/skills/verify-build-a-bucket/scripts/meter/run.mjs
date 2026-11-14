@@ -136,6 +136,7 @@ function absorb(target, result) {
   const delta = result.json?.delta;
   if (lobby) {
     target.version = lobby.version;
+    target.seat = lobby.me?.seat ?? target.seat;
     target.events = lobby.events[0]?.id ?? 0;
     target.participants = lobby.participants;
     target.waiting = lobby.league?.checkpoint === true || ['lobby', 'draw', 'building', 'preview', 'rematch', 'recap'].includes(lobby.phase);
@@ -263,7 +264,7 @@ async function freshnessJourney(base) {
       const view = result.json?.lobby ?? null;
       const delta = result.json?.delta ?? null;
       if (seen(view, delta)) return Date.now() - started;
-      await sleep(1000);
+      await sleep(500);
     }
     return null;
   };
