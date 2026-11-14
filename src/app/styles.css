@@ -1720,6 +1720,7 @@ button {
 .mp-share .invite-link {
   overflow-wrap: anywhere;
   word-break: break-word;
+  text-transform: none;
 }
 
 @media (max-width: 360px) {

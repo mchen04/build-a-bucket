@@ -75,7 +75,7 @@ export function LobbySquad(props: Props) {
           const ready = run ? isBuildComplete(run) : false;
           const ovr = run ? computeOvr(run.picks, run.position) : 0;
           return (
-            <button class="home-item" key={entry.id} onClick={() => openSlot(entry.id)}>
+            <button class="home-item" key={entry.id} data-testid={`lobby-squad-slot-${entry.id}`} onClick={() => openSlot(entry.id)}>
               <span style={{ flex: 1, textAlign: 'left' }}>
                 <span class="name">
                   {entry.label} · {entry.pos === 'guard' ? 'Guard' : 'Big'}
@@ -90,6 +90,7 @@ export function LobbySquad(props: Props) {
       <div class="bottom">
         <button
           class="btn"
+          data-testid="lobby-squad-submit"
           disabled={!complete || props.busy}
           onClick={() => props.onSubmit(players.filter((entry): entry is SquadPlayerBuild => entry !== null))}
         >

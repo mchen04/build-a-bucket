@@ -137,6 +137,7 @@ export function LobbySalary(props: Props) {
                   <button
                     class={`chip${active ? ' on' : ''}`}
                     key={card.id}
+                    data-testid={`lobby-salary-card-${columnIndex}-${column.indexOf(card)}`}
                     aria-pressed={active}
                     onClick={() => choose(columnIndex, card)}
                     style={{ flex: '1 1 30%', minWidth: '92px' }}
@@ -165,6 +166,7 @@ export function LobbySalary(props: Props) {
       <div class="bottom">
         <button
           class="btn"
+          data-testid="lobby-salary-submit"
           disabled={!complete || remaining < 0 || props.busy}
           onClick={() => props.onSubmit(picked.filter((card): card is SalaryCardPick => card !== null))}
         >
