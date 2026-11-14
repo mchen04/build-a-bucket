@@ -110,23 +110,27 @@ export function Home(props: Props) {
         <div class="tiny muted">Quick play</div>
         <div class="card home-modes">
           <div class="seg">
-            <button aria-pressed={position === 'guard'} onClick={() => setPosition('guard')}>
+            <button
+              data-testid="quick-position-guard"
+              aria-pressed={position === 'guard'}
+              onClick={() => setPosition('guard')}
+            >
               Guard
             </button>
-            <button aria-pressed={position === 'big'} onClick={() => setPosition('big')}>
+            <button data-testid="quick-position-big" aria-pressed={position === 'big'} onClick={() => setPosition('big')}>
               Big
             </button>
           </div>
           <div class="seg">
-            <button aria-pressed={era === 'current'} onClick={() => setEra('current')}>
+            <button data-testid="quick-era-current" aria-pressed={era === 'current'} onClick={() => setEra('current')}>
               Current
             </button>
-            <button aria-pressed={era === 'alltime'} onClick={() => setEra('alltime')}>
+            <button data-testid="quick-era-alltime" aria-pressed={era === 'alltime'} onClick={() => setEra('alltime')}>
               All-Time
             </button>
           </div>
         </div>
-        <button class="btn" onClick={() => props.onStart(position, era)}>
+        <button class="btn" data-testid="quick-play" onClick={() => props.onStart(position, era)}>
           Play
         </button>
       </div>

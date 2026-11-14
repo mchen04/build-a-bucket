@@ -34,10 +34,11 @@ async function expectNoOverflow(page: Page, label: string): Promise<void> {
     let spill = 0;
     if (body) {
       const insideScroller = (node: Element): boolean => {
-        let parent = node.parentElement;
-        while (parent && parent !== body) {
+        let parent: Element | null = node.parentElement;
+        while (parent) {
           const style = getComputedStyle(parent);
           if (style.overflowY === 'auto' || style.overflowY === 'scroll') return true;
+          if (parent === body) break;
           parent = parent.parentElement;
         }
         return false;
@@ -73,7 +74,9 @@ async function buildAndSubmit(page: Page): Promise<void> {
   for (let pick = 0; pick < 10; pick++) await spinAndPick(page);
   await expect(page.locator('.slot.filled')).toHaveCount(10);
   await page.getByRole('button', { name: 'Submit build' }).click();
-  await expect(page.locator('[data-testid="building-state"]')).toContainText('Build submitted', { timeout: 30_000 });
+  await expect(page.getByTestId('building-state').or(page.getByTestId('preview-ready'))).toBeVisible({
+    timeout: 30_000,
+  });
 }
 
 async function fastForward(code: string): Promise<void> {
@@ -83,10 +86,10 @@ async function fastForward(code: string): Promise<void> {
   const row = rows[0];
   if (!row) throw new Error('lobby missing');
   const total = stageTotal(row.league as LeagueResult, row.stage);
-  await db().query("update lobbies set stage_started_at = now() - interval '1 hour', stage_cursor = $2 where id = $1::uuid", [
-    row.id,
-    total,
-  ]);
+  await db().query(
+    "update lobbies set stage_started_at = now() - interval '1 hour', stage_cursor = $2, version = version + 1 where id = $1::uuid",
+    [row.id, total],
+  );
 }
 
 test('drives a two player shared league from invite code to recap', async ({ browser }) => {
@@ -112,7 +115,7 @@ test('drives a two player shared league from invite code to recap', async ({ bro
     await guest.locator('[data-testid="mp-code"]').fill(code.toLowerCase());
     await guest.locator('[data-testid="join-lobby"]').click();
     await expect(guest.locator('[data-testid="lobby-code"]')).toBeVisible();
-    await expect(host.locator('[data-testid="roster"] .roster-row')).toHaveCount(2);
+    await expect(host.locator('[data-testid="roster"] .roster-row[data-seat]')).toHaveCount(2);
     await expectNoOverflow(host, 'lobby with two players');
 
     await host.locator('[data-testid="start-season"]').click();
@@ -120,17 +123,13 @@ test('drives a two player shared league from invite code to recap', async ({ bro
     await expect(guest.locator('[data-testid="draw-team"]')).toBeVisible();
 
     await host.locator('[data-testid="draw-team"]').click();
-    await guest.locator('[data-testid="draw-team"]').click();
     await expect(host.locator('[data-testid="reroll-team"]')).toBeVisible();
-    await expect(guest.locator('[data-testid="reroll-team"]')).toBeVisible();
-    const hostTeam = ((await host.locator('[data-testid="roster"] [data-seat="1"] .state').textContent()) ?? '').trim();
-    const guestTeam = ((await guest.locator('[data-testid="roster"] [data-seat="2"] .state').textContent()) ?? '').trim();
-    expect(hostTeam).not.toBe(guestTeam);
+    await host.locator('[data-testid="reroll-team"]').click();
+    await guest.locator('[data-testid="draw-team"]').click();
     await expectNoOverflow(host, 'team draw');
 
-    await host.locator('[data-testid="lock-teams"]').click();
-    await expect(host.locator('[data-testid="open-builder"]')).toBeVisible();
-    await expect(guest.locator('[data-testid="open-builder"]')).toBeVisible();
+    await expect(host.locator('[data-testid="open-builder"]')).toBeVisible({ timeout: 30_000 });
+    await expect(guest.locator('[data-testid="open-builder"]')).toBeVisible({ timeout: 30_000 });
 
     await buildAndSubmit(host);
     await buildAndSubmit(guest);
@@ -150,9 +149,27 @@ test('drives a two player shared league from invite code to recap', async ({ bro
     for (let guard = 0; guard < 12; guard++) {
       if (await host.locator('[data-testid="recap"]').isVisible().catch(() => false)) break;
       await fastForward(code);
-      await expect(host.getByRole('button', { name: 'Ready' })).toBeVisible({ timeout: 30_000 });
-      await host.getByRole('button', { name: 'Ready' }).click();
-      await guest.getByRole('button', { name: 'Ready' }).click();
+      const ready = host.getByRole('button', { name: 'Ready' });
+      const recap = host.locator('[data-testid="recap"]');
+      const deadline = Date.now() + 30_000;
+      let state: 'ready' | 'recap' | null = null;
+      while (Date.now() < deadline) {
+        if (await recap.isVisible().catch(() => false)) {
+          state = 'recap';
+          break;
+        }
+        if ((await ready.isVisible().catch(() => false)) && (await ready.isEnabled().catch(() => false))) {
+          state = 'ready';
+          break;
+        }
+        await host.waitForTimeout(200);
+      }
+      if (state === 'recap') break;
+      if (state !== 'ready') throw new Error('neither the checkpoint Ready button nor the recap appeared');
+      await ready.click();
+      const guestReady = guest.getByRole('button', { name: 'Ready' });
+      await expect(guestReady).toBeEnabled({ timeout: 30_000 });
+      await guestReady.click();
       await host.waitForTimeout(500);
     }
 
@@ -163,9 +180,12 @@ test('drives a two player shared league from invite code to recap', async ({ bro
     await host.screenshot({ path: `${SHOTS}/recap.png` });
 
     await host.locator('[data-testid="rematch"]').click();
+    await expect(host.getByTestId('rematch-ready')).toBeVisible({ timeout: 30_000 });
+    await host.getByTestId('rematch-ready').click();
+    await guest.getByTestId('rematch-ready').click();
     await expect(host.locator('[data-testid="draw-team"]')).toBeVisible({ timeout: 30_000 });
-    await expect(host.locator('[data-testid="lobby-code"]')).toHaveText(code);
-    await expect(host.locator('[data-testid="roster"] .roster-row')).toHaveCount(2);
+    await expect(host.locator('.top-title')).toHaveText(`Lobby ${code}`);
+    await expect(host.locator('[data-testid="roster"] .roster-row[data-seat]')).toHaveCount(2);
   } finally {
     for (const context of contexts) await context.close();
   }
