@@ -735,35 +735,33 @@ async function lobbyLoad() {
   const seat = () => ({ secret: randomBytes(16).toString('hex'), version: 0, token: '', events: 0, away: new Map(), filled: new Map() });
   const GUARD_ATTRS = ['jumpShot', 'finishing', 'passing', 'handles', 'perimeterDefense', 'speed', 'bounce', 'size', 'basketballIQ', 'clutch'];
   const guardPool = await loadGuardPool();
-  const pickFor = (attr) => {
-    const player = guardPool.find((entry) => entry.attrs && entry.attrs[attr] !== undefined);
-    if (!player) throw new Error(`no current guard has ${attr}`);
-    return { attr, val: player.attrs[attr], playerName: player.name, playerShort: player.short ?? player.name, team: player.team };
+  let engine = null;
+  let spinTarget = null;
+  const loadEngine = async () => {
+    if (spinTarget) return spinTarget;
+    engine = await (await import('vite')).createServer({ configFile: false, root: repo, server: { middlewareMode: true }, appType: 'custom', logLevel: 'silent' });
+    spinTarget = (await engine.ssrLoadModule('/src/shared/engine/spin.ts')).spinTarget;
+    return spinTarget;
   };
-  const draftFor = (tick) => {
-    const count = Math.min(1 + Math.floor(tick / 3), GUARD_ATTRS.length);
+  const buildFor = (participant) => {
+    if (!participant.buildSeed) return null;
     const picks = {};
-    for (let n = 0; n < count; n++) {
-      const attr = GUARD_ATTRS[n];
-      picks[attr] = pickFor(attr);
+    const spins = [];
+    for (let index = 0; index < GUARD_ATTRS.length; index++) {
+      const target = spinTarget(guardPool, participant.buildSeed, index, false, 0, `${participant.buildSeed}:r`);
+      if (!target) return null;
+      const attr = GUARD_ATTRS[index];
+      picks[attr] = { attr, val: target.player.attrs[attr] ?? 0, playerName: target.player.name, playerShort: target.player.short ?? target.player.name, team: target.player.team };
+      spins.push({ attr, team: target.team, playerName: target.player.name, teamRespin: false, playerRespin: false });
     }
-    const last = picks[GUARD_ATTRS[count - 1]];
-    return {
-      position: 'guard',
-      era: 'current',
-      picks,
-      spinIndex: tick,
-      teamRespinUsed: false,
-      playerRespinUsed: false,
-      current: null,
-      team: null,
-      latest: { attr: last.attr, playerName: last.playerName },
-    };
+    return { kind: 'normal', position: 'guard', era: 'current', picks, spins };
   };
   const absorb = (p, lobby, delta) => {
     if (lobby) {
       p.version = lobby.version;
       p.events = lobby.events[0]?.id ?? 0;
+      if (lobby.me?.seat) p.seat = lobby.me.seat;
+      if (lobby.me?.buildSeed) p.buildSeed = lobby.me.buildSeed;
       for (const entry of lobby.participants) {
         p.away.set(entry.seat, Boolean(entry.away));
         p.filled.set(entry.seat, entry.summary?.filled ?? 0);
@@ -789,25 +787,39 @@ async function lobbyLoad() {
   const seated = [host, ...guests.filter((_, i) => joins[i].status < 300)];
   const seatNumbers = [created.json.lobby.me.seat, ...joins.filter((j) => j.status < 300).map((j) => j.json.lobby.me.seat)];
   const joinStatuses = joins.reduce((acc, j) => ({ ...acc, [j.status]: (acc[j.status] ?? 0) + 1 }), {});
-  const started = await api(base, 'POST', `/api/lobby/${code}/start`, host.secret, { actionId: randomUUID(), settings: { era: 'current', positions: ['guard', 'big'], revealSeconds: 4 } });
+  const started = await api(base, 'POST', `/api/lobby/${code}/start`, host.secret, { actionId: randomUUID(), settings: { era: 'current', mode: 'normal' } });
   add('start', started);
+  if (started.status >= 300) throw new Error(`start ${started.status} ${JSON.stringify(started.json)}`);
+  const draws = await Promise.all(seated.map((p) => api(base, 'POST', `/api/lobby/${code}/draw`, p.secret, { actionId: randomUUID() })));
+  for (const draw of draws) if (draw.status >= 300) throw new Error(`draw ${draw.status} ${JSON.stringify(draw.json)}`);
+  const locked = await api(base, 'POST', `/api/lobby/${code}/lock`, host.secret, { actionId: randomUUID() });
+  if (locked.status >= 300) throw new Error(`lock ${locked.status} ${JSON.stringify(locked.json)}`);
+  absorb(host, locked.json?.lobby);
   const stopAt = Date.now() + seconds * 1000;
-  await Promise.all(seated.map(async (p, idx) => {
-    let draftTick = 0;
-    while (Date.now() < stopAt) {
-      const query = new URLSearchParams({ since: String(p.version), events: String(p.events) });
-      if (p.token) query.set('token', p.token);
-      const r = await api(base, 'GET', `/api/lobby/${code}?${query.toString()}`, p.secret);
-      add(r.status === 204 ? 'poll-204' : r.json?.delta ? 'poll-200-delta' : 'poll-200', r);
-      absorb(p, r.json?.lobby, r.json?.delta);
-      if (o.drafts !== 'off' && ++draftTick % 3 === idx % 3) {
-        const d = await api(base, 'POST', `/api/lobby/${code}/build`, p.secret, { actionId: randomUUID(), draft: draftFor(draftTick) });
-        add('build-sync', d);
-        absorb(p, d.json?.lobby);
+  if (o.drafts !== 'off') await loadEngine();
+  try {
+    await Promise.all(seated.map(async (p, idx) => {
+      let draftTick = 0;
+      while (Date.now() < stopAt) {
+        const query = new URLSearchParams({ since: String(p.version), events: String(p.events) });
+        if (p.token) query.set('token', p.token);
+        const r = await api(base, 'GET', `/api/lobby/${code}?${query.toString()}`, p.secret);
+        add(r.status === 204 ? 'poll-204' : r.json?.delta ? 'poll-200-delta' : 'poll-200', r);
+        absorb(p, r.json?.lobby, r.json?.delta);
+        if (o.drafts !== 'off' && p.buildSeed && p.filled.get(p.seat) !== 10 && ++draftTick % 3 === idx % 3) {
+          const build = buildFor(p);
+          if (build) {
+            const d = await api(base, 'POST', `/api/lobby/${code}/build`, p.secret, { actionId: randomUUID(), build });
+            add('build-sync', d);
+            absorb(p, d.json?.lobby);
+          }
+        }
+        await sleep(pollMs);
       }
-      await sleep(pollMs);
-    }
-  }));
+    }));
+  } finally {
+    if (engine) await engine.close();
+  }
   for (const p of seated) add('leave', await api(base, 'POST', `/api/lobby/${code}/leave`, p.secret, { actionId: randomUUID() }));
   const summary = Object.fromEntries(Object.entries(samples).map(([k, v]) => [k, { n: v.ms.length, p50: median(v.ms), p95: pct(v.ms, 95), max: Math.round(Math.max(...v.ms)), bytesTotal: v.bytes.reduce((a, b) => a + b, 0), bytesP50: median(v.bytes), status: v.status }]));
   const poll = (() => {
