@@ -1,7 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -108,7 +107,7 @@ async function stopServer(server) {
       resolve();
     }, 5000);
     server.child.once('exit', () => {
-      clearTimeout(timer);
+      globalThis.clearTimeout(timer);
       resolve();
     });
   });
@@ -195,7 +194,7 @@ function fastForward(code) {
 }
 
 async function idleJourney(base, seconds) {
-  const { code, host, seats } = await createLobby(base, 'Idle0', { era: 'current', mode: 'normal' });
+  const { code, seats } = await createLobby(base, 'Idle0', { era: 'current', mode: 'normal' });
   await joinSeats(base, code, seats, 8);
   const stopAt = Date.now() + seconds * 1000;
   const polls = [];
