@@ -128,6 +128,7 @@ export const RunSchema = v.object({
   picks: v.record(v.string(), PickSchema),
   spinIndex: v.number(),
   teamRespinUsed: v.boolean(),
+  teamAssignRespinUsed: v.optional(v.boolean(), false),
   playerRespinUsed: v.boolean(),
   currentRespin: v.optional(v.nullable(v.object({ team: v.boolean(), player: v.boolean() })), null),
   history: v.optional(

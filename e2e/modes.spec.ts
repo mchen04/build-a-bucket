@@ -62,6 +62,37 @@ async function spinAndPick(page: Page): Promise<void> {
   await expect(page.locator('.slot.filled')).toHaveCount(before + 1);
 }
 
+async function expectSingleTeamRespin(page: Page): Promise<string> {
+  const spinButton = page.locator('.spin-big');
+  await expect(spinButton).toHaveText('SPIN');
+  await spinButton.click();
+  await expect(spinButton).toHaveText('RESPIN · 1 LEFT');
+  const first = ((await page.locator('.reel-value').textContent()) ?? '').trim();
+  await page.locator('.seg button').nth(1).click();
+  await expect(page.locator('.team-btn[aria-pressed="true"]')).toHaveText(first);
+  expect(await page.locator('.team-btn:enabled').count()).toBe(0);
+  await page.locator('.seg button').first().click();
+  await expect(spinButton).toHaveText('RESPIN · 1 LEFT');
+  await spinButton.click();
+  await expect(spinButton).toHaveText('RESPIN USED');
+  const final = ((await page.locator('.reel-value').textContent()) ?? '').trim();
+  expect(final).not.toBe(first);
+  await expect(spinButton).toBeDisabled();
+  await page.locator('.seg button').nth(1).click();
+  await expect(page.locator('.team-btn[aria-pressed="true"]')).toHaveText(final);
+  expect(await page.locator('.team-btn:enabled').count()).toBe(0);
+  await page.locator('.seg button').first().click();
+  await page.reload();
+  await expect(page.locator('.spin-big')).toBeDisabled();
+  await expect(page.locator('.spin-big')).toHaveText('RESPIN USED');
+  await expect(page.locator('.reel-value')).toHaveText(final);
+  await page.locator('.seg button').nth(1).click();
+  await expect(page.locator('.team-btn[aria-pressed="true"]')).toHaveText(final);
+  expect(await page.locator('.team-btn:enabled').count()).toBe(0);
+  await page.locator('.seg button').first().click();
+  return final;
+}
+
 async function finishSeason(page: Page): Promise<void> {
   for (let guard = 0; guard < 8; guard++) {
     const card = page.locator('[data-testid="moment-card"]');
@@ -146,6 +177,16 @@ function strongRun(id: string, keys: string[], position: 'guard' | 'big'): unkno
   };
 }
 
+test('solo team spin allows one respin and locks the team across reload', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await page.evaluate((value) => localStorage.setItem('bab:v1', JSON.stringify(value)), savedRun('solo', GUARD_KEYS, 'guard'));
+  await page.reload();
+  await page.getByRole('button', { name: 'Spin for Team' }).click();
+  await expectSingleTeamRespin(page);
+  await expect(page.getByRole('button', { name: 'Simulate Season' })).toBeEnabled();
+});
+
 test('daily challenge plays to its end state, resumes after reload and locks the day', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-10-24T18:00:00Z'));
   await page.goto('/');
@@ -172,7 +213,7 @@ test('daily challenge plays to its end state, resumes after reload and locks the
 
   for (let index = 2; index < 10; index++) await spinAndPick(page);
   await page.getByRole('button', { name: 'Spin for Team' }).click();
-  await page.locator('.spin-big').click();
+  await expectSingleTeamRespin(page);
   await expect(page.getByRole('button', { name: 'Simulate Season' })).toBeEnabled();
   await page.getByRole('button', { name: 'Simulate Season' }).click();
   await expect(page.getByText('Record')).toBeVisible();

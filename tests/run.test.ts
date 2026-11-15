@@ -2,7 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { GENERIC_DARK, GENERIC_LIGHT, photoFor, type Catalog } from '../src/shared/data/loader';
 import { heightLabel, valueLabel, weightLabel } from '../src/shared/engine/rules';
 import type { Player } from '../src/shared/engine/types';
-import { createRun, heightWeightFor, openOptions, pickOptions, placePick } from '../src/shared/run';
+import { loadRun, saveRun, STORAGE_KEY } from '../src/shared/persistence';
+import {
+  canRespinTeam,
+  createRun,
+  heightWeightFor,
+  openOptions,
+  pickOptions,
+  pickTeam,
+  placePick,
+  spinTeam,
+  type RunState,
+} from '../src/shared/run';
 import { GUARD_KEYS } from './fixtures/pool';
 
 const player: Player = {
@@ -25,6 +36,34 @@ const catalog: Catalog = {
   salaryLegends: [],
   headshots: { 'Fixture Player': '12345' },
 };
+
+class MemoryStorage implements Storage {
+  private data = new Map<string, string>();
+
+  get length(): number {
+    return this.data.size;
+  }
+
+  clear(): void {
+    this.data.clear();
+  }
+
+  getItem(key: string): string | null {
+    return this.data.get(key) ?? null;
+  }
+
+  key(index: number): string | null {
+    return [...this.data.keys()][index] ?? null;
+  }
+
+  removeItem(key: string): void {
+    this.data.delete(key);
+  }
+
+  setItem(key: string, value: string): void {
+    this.data.set(key, value);
+  }
+}
 
 describe('pick options', () => {
   it('offers every still-empty trait with that player value', () => {
@@ -101,5 +140,67 @@ describe('player photos', () => {
     expect(photoFor(catalog, { ...unknownName, skin: '#101010' })).toBe(GENERIC_DARK);
     expect(photoFor(catalog, { ...unknownName, skin: undefined })).toBe(GENERIC_DARK);
     expect(photoFor(catalog, { ...unknownName, skin: '#fff' })).toBe(GENERIC_LIGHT);
+  });
+});
+
+describe('team assignment respin', () => {
+  it('starts every new game with the respin allowance unused', () => {
+    expect(createRun('b-team', 'guard', 'current').teamAssignRespinUsed).toBe(false);
+  });
+
+  it('assigns a team for free on the first spin', () => {
+    const next = spinTeam(createRun('b-team', 'guard', 'current'), ['BOS', 'CLE'], () => 0);
+    expect(next.team).toBe('BOS');
+    expect(next.teamAssignRespinUsed).toBe(false);
+    expect(canRespinTeam(next, ['BOS', 'CLE'])).toBe(true);
+  });
+
+  it('takes exactly one respin from the candidates without the current team', () => {
+    const run: RunState = { ...createRun('b-team', 'guard', 'current'), team: 'BOS' };
+    const next = spinTeam(run, ['BOS', 'CLE'], () => 0);
+    expect(next.team).toBe('CLE');
+    expect(next.teamAssignRespinUsed).toBe(true);
+    expect(canRespinTeam(next, ['BOS', 'CLE'])).toBe(false);
+    expect(spinTeam(next, ['BOS', 'CLE'], () => 0)).toBe(next);
+  });
+
+  it('refuses a respin when the pool only holds the current team', () => {
+    const run: RunState = { ...createRun('b-team', 'guard', 'current'), team: 'BOS' };
+    expect(canRespinTeam(run, ['BOS'])).toBe(false);
+    expect(spinTeam(run, ['BOS'], () => 0)).toBe(run);
+  });
+
+  it('round-trips a used respin through storage', () => {
+    const storage = new MemoryStorage();
+    const run: RunState = { ...createRun('b-team', 'guard', 'current'), team: 'BOS', teamAssignRespinUsed: true };
+    expect(saveRun(run, storage)).toBe(true);
+    const loaded = loadRun(storage);
+    expect(loaded.status).toBe('ok');
+    if (loaded.status !== 'ok') return;
+    expect(loaded.run.team).toBe('BOS');
+    expect(loaded.run.teamAssignRespinUsed).toBe(true);
+    expect(canRespinTeam(loaded.run, ['BOS', 'CLE'])).toBe(false);
+  });
+
+  it('loads a stored legacy run without the field as unused', () => {
+    const storage = new MemoryStorage();
+    const legacy: Record<string, unknown> = { ...createRun('b-team', 'guard', 'current'), team: 'BOS' };
+    delete legacy.teamAssignRespinUsed;
+    storage.setItem(STORAGE_KEY, JSON.stringify(legacy));
+    const loaded = loadRun(storage);
+    expect(loaded.status).toBe('ok');
+    if (loaded.status !== 'ok') return;
+    expect(loaded.run.teamAssignRespinUsed).toBe(false);
+    expect(canRespinTeam(loaded.run, ['BOS', 'CLE'])).toBe(true);
+  });
+
+  it('picks a team for free and then refuses to change it', () => {
+    const first = pickTeam(createRun('b-team', 'guard', 'current'), 'BOS');
+    expect(first.team).toBe('BOS');
+    expect(first.teamAssignRespinUsed).toBe(false);
+    expect(pickTeam(first, 'CLE')).toBe(first);
+    const respun = spinTeam(first, ['BOS', 'CLE'], () => 0);
+    expect(respun.team).toBe('CLE');
+    expect(pickTeam(respun, 'BOS')).toBe(respun);
   });
 });

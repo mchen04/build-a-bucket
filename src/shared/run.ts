@@ -13,6 +13,7 @@ export interface RunState {
   picks: Record<string, Pick>;
   spinIndex: number;
   teamRespinUsed: boolean;
+  teamAssignRespinUsed: boolean;
   playerRespinUsed: boolean;
   currentRespin: { team: boolean; player: boolean } | null;
   history: SpinRecord[];
@@ -33,6 +34,7 @@ export function createRun(seed: string, position: Position, era: Era): RunState 
     picks: {},
     spinIndex: 0,
     teamRespinUsed: false,
+    teamAssignRespinUsed: false,
     playerRespinUsed: false,
     currentRespin: null,
     history: [],
@@ -122,4 +124,26 @@ export function isBuildComplete(run: RunState): boolean {
 
 export function suppliedTeams(run: RunState): string[] {
   return [...new Set(Object.values(run.picks).map((pick) => pick.team))].sort((a, b) => a.localeCompare(b));
+}
+
+export function teamRespinPool(run: RunState, candidates: readonly string[]): string[] {
+  return run.team ? candidates.filter((team) => team !== run.team) : [...candidates];
+}
+
+export function canRespinTeam(run: RunState, candidates: readonly string[]): boolean {
+  if (run.team && run.teamAssignRespinUsed) return false;
+  return teamRespinPool(run, candidates).length > 0;
+}
+
+export function spinTeam(run: RunState, candidates: readonly string[], rng: () => number): RunState {
+  if (!canRespinTeam(run, candidates)) return run;
+  const pool = teamRespinPool(run, candidates);
+  const picked = pool[Math.min(pool.length - 1, Math.floor(rng() * pool.length))];
+  if (!picked) return run;
+  return { ...run, team: picked, teamAssignRespinUsed: run.team !== null };
+}
+
+export function pickTeam(run: RunState, team: string): RunState {
+  if (run.team !== null) return run;
+  return { ...run, team };
 }
