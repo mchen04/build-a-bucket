@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { Catalog } from '../../shared/data/loader';
 import { CURRENT_TEAMS, ALLTIME_TEAMS } from '../../shared/engine/rules';
-import { suppliedTeams, type RunState } from '../../shared/run';
+import { canRespinTeam, pickTeam, spinTeam, suppliedTeams, teamRespinPool, type RunState } from '../../shared/run';
 import { TopBar } from '../components';
 
 interface Props {
@@ -24,6 +24,7 @@ export function TeamSpin(props: Props) {
   const [reel, setReel] = useState(run.team ?? '—');
   const timer = useRef<number | null>(null);
   const ticker = useRef<number | null>(null);
+  const busy = useRef(false);
 
   useEffect(() => () => {
     if (timer.current) window.clearTimeout(timer.current);
@@ -33,19 +34,26 @@ export function TeamSpin(props: Props) {
   const table = run.era === 'alltime' ? ALLTIME_TEAMS : CURRENT_TEAMS;
   const team = run.team ? catalog.teams.find((entry) => entry.short === run.team) : null;
   const row = run.team ? table[run.team] : null;
+  const locked = run.team !== null && run.teamAssignRespinUsed;
+  const canSpin = canRespinTeam(run, candidates);
+  const label = spinning ? 'SPINNING' : locked ? 'RESPIN USED' : run.team ? 'RESPIN · 1 LEFT' : 'SPIN';
 
   const spin = () => {
-    if (spinning || candidates.length === 0) return;
+    if (busy.current || !canSpin) return;
+    const next = spinTeam(run, candidates, Math.random);
+    if (next === run) return;
+    busy.current = true;
     setSpinning(true);
+    props.onChange(next);
     ticker.current = window.setInterval(() => {
-      setReel(candidates[Math.floor(Math.random() * candidates.length)] ?? '—');
+      const pool = teamRespinPool(run, candidates);
+      setReel(pool[Math.floor(Math.random() * pool.length)] ?? '—');
     }, 55);
     timer.current = window.setTimeout(() => {
       if (ticker.current) window.clearInterval(ticker.current);
-      const picked = candidates[Math.floor(Math.random() * candidates.length)] ?? candidates[0];
+      busy.current = false;
       setSpinning(false);
-      setReel(picked ?? '—');
-      if (picked) props.onChange({ ...run, team: picked });
+      setReel(next.team ?? '—');
     }, 620);
   };
 
@@ -70,8 +78,8 @@ export function TeamSpin(props: Props) {
                 {reel}
               </span>
             </div>
-            <button class="spin-big" disabled={spinning} onClick={spin}>
-              {spinning ? 'SPINNING' : 'SPIN'}
+            <button class="spin-big" disabled={spinning || !canSpin} onClick={spin}>
+              {label}
             </button>
             <p class="tiny muted center" style={{ margin: 0 }}>
               Teams that supplied your traits
@@ -84,7 +92,8 @@ export function TeamSpin(props: Props) {
                 class="team-btn"
                 key={entry.short}
                 aria-pressed={run.team === entry.short}
-                onClick={() => props.onChange({ ...run, team: entry.short })}
+                disabled={run.team !== null}
+                onClick={() => props.onChange(pickTeam(run, entry.short))}
               >
                 {entry.short}
               </button>
