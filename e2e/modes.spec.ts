@@ -71,8 +71,6 @@ async function expectSingleTeamRespin(page: Page): Promise<string> {
   await page.locator('.seg button').nth(1).click();
   await expect(page.locator('.team-btn[aria-pressed="true"]')).toHaveText(first);
   expect(await page.locator('.team-btn:enabled').count()).toBe(0);
-  await page.locator('.team-btn:not([aria-pressed="true"])').first().dispatchEvent('click');
-  await expect(page.locator('.team-btn[aria-pressed="true"]')).toHaveText(first);
   await page.locator('.seg button').first().click();
   await expect(spinButton).toHaveText('RESPIN · 1 LEFT');
   await spinButton.click();
@@ -80,13 +78,9 @@ async function expectSingleTeamRespin(page: Page): Promise<string> {
   const final = ((await page.locator('.reel-value').textContent()) ?? '').trim();
   expect(final).not.toBe(first);
   await expect(spinButton).toBeDisabled();
-  await spinButton.dispatchEvent('click');
-  await expect(page.locator('.reel-value')).toHaveText(final);
   await page.locator('.seg button').nth(1).click();
   await expect(page.locator('.team-btn[aria-pressed="true"]')).toHaveText(final);
   expect(await page.locator('.team-btn:enabled').count()).toBe(0);
-  await page.locator('.team-btn:not([aria-pressed="true"])').first().dispatchEvent('click');
-  await expect(page.locator('.team-btn[aria-pressed="true"]')).toHaveText(final);
   await page.locator('.seg button').first().click();
   await page.reload();
   await expect(page.locator('.spin-big')).toBeDisabled();

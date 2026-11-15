@@ -36,7 +36,15 @@ export function TeamSpin(props: Props) {
   const row = run.team ? table[run.team] : null;
   const locked = run.team !== null && run.teamAssignRespinUsed;
   const canSpin = canRespinTeam(run, candidates);
-  const label = spinning ? 'SPINNING' : locked ? 'RESPIN USED' : run.team ? 'RESPIN · 1 LEFT' : 'SPIN';
+  const label = spinning
+    ? 'SPINNING'
+    : locked
+      ? 'RESPIN USED'
+      : !run.team
+        ? 'SPIN'
+        : canSpin
+          ? 'RESPIN · 1 LEFT'
+          : 'NO RESPIN';
 
   const spin = () => {
     if (busy.current || !canSpin) return;

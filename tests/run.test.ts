@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { GENERIC_DARK, GENERIC_LIGHT, photoFor, type Catalog } from '../src/shared/data/loader';
 import { heightLabel, valueLabel, weightLabel } from '../src/shared/engine/rules';
 import type { Player } from '../src/shared/engine/types';
+import { loadRun, saveRun, STORAGE_KEY } from '../src/shared/persistence';
 import {
   canRespinTeam,
   createRun,
@@ -35,6 +36,34 @@ const catalog: Catalog = {
   salaryLegends: [],
   headshots: { 'Fixture Player': '12345' },
 };
+
+class MemoryStorage implements Storage {
+  private data = new Map<string, string>();
+
+  get length(): number {
+    return this.data.size;
+  }
+
+  clear(): void {
+    this.data.clear();
+  }
+
+  getItem(key: string): string | null {
+    return this.data.get(key) ?? null;
+  }
+
+  key(index: number): string | null {
+    return [...this.data.keys()][index] ?? null;
+  }
+
+  removeItem(key: string): void {
+    this.data.delete(key);
+  }
+
+  setItem(key: string, value: string): void {
+    this.data.set(key, value);
+  }
+}
 
 describe('pick options', () => {
   it('offers every still-empty trait with that player value', () => {
@@ -141,12 +170,28 @@ describe('team assignment respin', () => {
     expect(spinTeam(run, ['BOS'], () => 0)).toBe(run);
   });
 
-  it('treats a saved run without the field as unused', () => {
-    const saved: Record<string, unknown> = { ...createRun('b-team', 'guard', 'current'), team: 'BOS' };
-    delete saved.teamAssignRespinUsed;
-    const run = saved as unknown as RunState;
-    expect(canRespinTeam(run, ['BOS', 'CLE'])).toBe(true);
-    expect(spinTeam(run, ['BOS', 'CLE'], () => 0).teamAssignRespinUsed).toBe(true);
+  it('round-trips a used respin through storage', () => {
+    const storage = new MemoryStorage();
+    const run: RunState = { ...createRun('b-team', 'guard', 'current'), team: 'BOS', teamAssignRespinUsed: true };
+    expect(saveRun(run, storage)).toBe(true);
+    const loaded = loadRun(storage);
+    expect(loaded.status).toBe('ok');
+    if (loaded.status !== 'ok') return;
+    expect(loaded.run.team).toBe('BOS');
+    expect(loaded.run.teamAssignRespinUsed).toBe(true);
+    expect(canRespinTeam(loaded.run, ['BOS', 'CLE'])).toBe(false);
+  });
+
+  it('loads a stored legacy run without the field as unused', () => {
+    const storage = new MemoryStorage();
+    const legacy: Record<string, unknown> = { ...createRun('b-team', 'guard', 'current'), team: 'BOS' };
+    delete legacy.teamAssignRespinUsed;
+    storage.setItem(STORAGE_KEY, JSON.stringify(legacy));
+    const loaded = loadRun(storage);
+    expect(loaded.status).toBe('ok');
+    if (loaded.status !== 'ok') return;
+    expect(loaded.run.teamAssignRespinUsed).toBe(false);
+    expect(canRespinTeam(loaded.run, ['BOS', 'CLE'])).toBe(true);
   });
 
   it('picks a team for free and then refuses to change it', () => {
