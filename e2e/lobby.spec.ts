@@ -78,7 +78,7 @@ async function buildAndSubmit(page: Page): Promise<void> {
   for (let pick = 0; pick < 10; pick++) await spinAndPick(page);
   await expect(page.locator('.slot.filled')).toHaveCount(10);
   await page.getByRole('button', { name: 'Submit build' }).click();
-  await expect(page.getByTestId('building-state').or(page.getByTestId('preview-ready'))).toBeVisible({
+  await expect(page.getByTestId('building-state').or(page.getByTestId('draw-team'))).toBeVisible({
     timeout: 30_000,
   });
 }
