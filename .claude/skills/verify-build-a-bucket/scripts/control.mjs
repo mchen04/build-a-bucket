@@ -386,6 +386,21 @@ async function leagueRun() {
         [...table.querySelectorAll('.table-row:not(.head)')].map((row) => (row.innerText || '').replace(/YOU/g, '').replace(/\s+/g, ' ').trim()),
       ),
     );
+  const readStandingsRevision = async (seat) =>
+    seat.page.evaluate(() => {
+      const stage = document.querySelector('[data-testid="league-stage"]');
+      const lines = (stage?.innerText ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+      const revision = `${lines[0] ?? ''}:${lines[1] ?? ''}`;
+      const tables = [...document.querySelectorAll('[data-testid="standings"] .table')].map((table) =>
+        [...table.querySelectorAll('.table-row:not(.head)')]
+          .map((row) => (row.innerText || '').replace(/YOU/g, '').replace(/\s+/g, ' ').trim())
+          .filter((row) => {
+            const seed = /^(\d+)\s/.exec(row);
+            return seed !== null && Number(seed[1]) <= 10;
+          }),
+      );
+      return { revision, tables };
+    });
   const parseRow = (text) => {
     const head = /^(\d+|—)\s+([A-Z]{2,3})\b/.exec(text);
     if (!head) return null;
@@ -813,19 +828,31 @@ async function leagueRun() {
             const seat = seats[reloadSeat - 1];
             await seat.page.reload({ waitUntil: 'load' });
             await waitStage(seat);
-            let top = null;
-            for (let attempt = 0; attempt < 6; attempt++) {
-              const labels = await Promise.all(active().map(async (entry) => `${await phaseOf(entry)}:${await stageName(entry)}`));
-              if (new Set(labels).size === 1) {
-                const tables = [];
-                for (const entry of active()) tables.push(await readTables(entry));
-                top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
-                if (top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) break;
+            await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
+            let common = null;
+            for (let attempt = 0; attempt < 40; attempt++) {
+              const reads = await Promise.all(active().map(async (entry) => ({ seat: entry, ...(await readStandingsRevision(entry)) })));
+              const byRevision = new Map();
+              for (const read of reads) {
+                if (!byRevision.has(read.revision)) byRevision.set(read.revision, []);
+                byRevision.get(read.revision).push(read);
               }
-              await host.page.waitForTimeout(500);
+              for (const [revision, group] of byRevision) {
+                if (group.length < 2) continue;
+                const mine = group.find((entry) => entry.seat === seat);
+                if (!mine) continue;
+                const top = group.map((entry) => entry.tables.map((conference) => conference.map((rows) => rows.slice(0, 10))));
+                if (top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) {
+                  common = { revision, standings: top[0], seats: group.map((entry) => `${entry.seat.seat}:${entry.seat.name}`) };
+                  break;
+                }
+                throw new Error(`standings differ at revision ${revision}: ${JSON.stringify(top)}`);
+              }
+              if (common) break;
+              await host.page.waitForTimeout(250);
             }
-            if (!top || !top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) throw new Error('standings differ after reload');
-            stages.push({ label: 'after-reload', phase: await phaseOf(seat), standings: top[0] });
+            if (!common) throw new Error('no common standings revision after reload');
+            stages.push({ label: 'after-reload', phase: await phaseOf(seat), revision: common.revision, seats: common.seats, standings: common.standings });
             await snap(seat, 'after-reload');
           }
           if (awaySeat !== null) {
