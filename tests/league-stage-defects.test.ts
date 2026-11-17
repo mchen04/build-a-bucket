@@ -593,6 +593,6 @@ describeDb('shared league stage behavior', () => {
     const finals = { ...clock, series: [{ round: 4, name: 'NBA Finals', high: 'POR', low: 'LAC', winner: 'LAC', wins: 2, losses: 4, games: [] }] } as unknown as LeagueClock;
     expect(stageEvents(9, finals).filter((entry) => entry.kind === 'advance')).toHaveLength(0);
     expect(stageEvents(9, finals).filter((entry) => entry.kind === 'champion')).toHaveLength(1);
-    expect(stageEvents(6, clock, 0, 'Ava').find((entry) => entry.kind === 'playoff_start')?.detail).toBe('Ava started the playoffs');
+    expect(stageEvents(6, clock, 0, { kind: 'host', name: 'Ava' }).find((entry) => entry.kind === 'playoff_start')?.detail).toBe('Ava started the playoffs');
   });
 });

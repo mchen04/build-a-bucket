@@ -10,6 +10,7 @@ import {
   isCheckpoint,
   isStageCheckpoint,
   limitPlayoffs,
+  playoffRoundHeld,
   nextStageFrom,
   revealLeague,
   seasonEndsAt,
@@ -17,6 +18,7 @@ import {
   stageGamesTotal,
   stageTotal,
   type SeriesView,
+  type LeagueClock,
 } from '../src/shared/mp/league';
 
 function humans(count = 8): HumanTeamInput[] {
@@ -263,6 +265,23 @@ describe('reveal pacing', () => {
     expect(last?.losses).toBe(3);
     expect(last?.winner).toBe('NYK');
     expect(last?.complete).toBe(true);
+  });
+
+  it('holds every playoff round with a human series for one game step', () => {
+    const clock = {
+      counts: [0, 0, 0, 0],
+      playin: 0,
+      seriesCounts: [1, 1, 1, 1],
+      seriesGames: [7, 7, 7, 7],
+      units: [[], [], [], [], [], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1]],
+      humanSeasons: [{ participantId: 'p1', name: 'Me', team: 'BOS', wins: 50, losses: 32, seed: 1 }],
+      series: [1, 2, 3, 4].map((round) => ({ round, name: `Round ${round}`, conference: 'east' as const, high: 'BOS', low: 'NYK', winner: 'BOS', wins: 4, losses: 3 })),
+    } as unknown as LeagueClock;
+    const total = 7 * 700;
+    for (const stage of [6, 7, 8, 9]) {
+      expect(playoffRoundHeld(clock, stage, 0, total)).toBe(true);
+      expect(playoffRoundHeld(clock, stage, 0, total + 700)).toBe(false);
+    }
   });
 
   it('keeps the old pace for a saved clock without pacing units', () => {

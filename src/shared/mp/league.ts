@@ -122,6 +122,18 @@ export function isStageCheckpoint(clock: LeagueClock, stage: number, cursor: num
   return isCheckpoint(cursor, stageGamesTotalFrom(clock, stage));
 }
 
+export function playoffRoundHeld(clock: LeagueClock, stage: number, startedAt: number | null, now: number): boolean {
+  if (stage < 6 || stage > 9 || startedAt === null) return false;
+  const total = stageGamesTotalFrom(clock, stage);
+  if (total <= 0 || stageCursorAtFrom(clock, stage, startedAt, now) < total) return false;
+  const round = stage - 5;
+  const humans = new Set((clock.humanSeasons ?? []).map((entry) => entry.team));
+  const humanRound = (clock.series ?? []).some(
+    (series) => series.round === round && (humans.has(series.high) || humans.has(series.low)),
+  );
+  return humanRound && stageCursorAtFrom(clock, stage, startedAt, now - PLAYOFF_GAME_MS) < total;
+}
+
 export interface LeagueClock {
   counts: number[];
   playin: number;

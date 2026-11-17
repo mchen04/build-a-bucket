@@ -12,7 +12,7 @@ import { scoutGrade, shuffleColumn, shuffleRow, type ShuffleTarget } from '../sh
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
 import {
   nextStage,
-  PLAYOFF_GAME_MS,
+  playoffRoundHeld,
   clockFromLeague,
   isStageCheckpoint,
   revealLeague,
@@ -284,7 +284,9 @@ export interface StageEvent {
   key: string;
 }
 
-export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, startReason: string | null = null): StageEvent[] {
+type PlayoffStartReason = { kind: 'host'; name: string } | { kind: 'all-ready' } | { kind: 'idle'; name: string } | null;
+
+export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, startReason: PlayoffStartReason = null): StageEvent[] {
   const humans = clock.humanSeasons ?? [];
   const byTeam = new Map(humans.map((entry) => [entry.team, entry]));
   const qualified = new Set(clock.qualified ?? []);
@@ -391,12 +393,12 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, sta
         participantId: null,
         kind: 'playoff_start',
         detail:
-          startReason === 'all-ready'
+          startReason?.kind === 'all-ready'
             ? 'Everyone was ready, so the playoffs started'
-            : startReason?.startsWith('idle:')
-              ? `The playoffs started automatically after waiting for ${startReason.slice(5)}`
-              : startReason
-                ? `${startReason} started the playoffs`
+            : startReason?.kind === 'idle'
+              ? `The playoffs started automatically after waiting for ${startReason.name}`
+              : startReason?.kind === 'host'
+                ? `${startReason.name} started the playoffs`
                 : 'The playoffs started automatically',
         key: key(`${stage}:start`),
       });
@@ -414,7 +416,7 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, sta
   return events;
 }
 
-function uniqueStageEvents(stage: number, clock: LeagueClock, leagueNo: number, gateOnly = false, startReason: string | null = null): StageEvent[] {
+function uniqueStageEvents(stage: number, clock: LeagueClock, leagueNo: number, gateOnly = false, startReason: PlayoffStartReason = null): StageEvent[] {
   const source = gateOnly
     ? stageEvents(stage, clock, leagueNo, startReason).filter((entry) => entry.kind === 'playoff_start')
     : stageEvents(stage, clock, leagueNo, startReason);
@@ -1368,13 +1370,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
   }
   if (!isStageCheckpoint(clock, stage, cursor, startedAt)) {
     if (stage >= 6 && stage <= 9 && cursor >= stageGamesTotalFrom(clock, stage)) {
-      const round = stage - 5;
-      const humanTeams = new Set((clock.humanSeasons ?? []).map((entry) => entry.team));
-      const humanRound = (clock.series ?? []).some(
-        (series) => series.round === round && (humanTeams.has(series.high) || humanTeams.has(series.low)),
-      );
-      const held = humanRound && stageCursorAtFrom(clock, stage, startedAt, now - PLAYOFF_GAME_MS) < stageGamesTotalFrom(clock, stage);
-      if (!held) await advanceStage(raw.id, stage, clock, Number(raw.rematch));
+      if (!playoffRoundHeld(clock, stage, startedAt, now)) await advanceStage(raw.id, stage, clock, Number(raw.rematch));
     }
     return;
   }
@@ -1392,13 +1388,14 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
       Number(host.ready_stage) < 6 &&
       now - Date.parse(raw.updated_at) >= CHECKPOINT_IDLE_MS
     ) {
-      await startPlayoffRound(raw.id, clock, Number(raw.rematch), `idle:${host.name}`);
+      await startPlayoffRound(raw.id, clock, Number(raw.rematch), { kind: 'idle', name: host.name });
       return;
     }
     if (activeQualified.length > 0 && activeQualified.some((entry) => Number(entry.ready_stage) < 6)) return;
-    await startPlayoffRound(raw.id, clock, Number(raw.rematch), activeQualified.length > 0 ? 'all-ready' : null);
+    await startPlayoffRound(raw.id, clock, Number(raw.rematch), activeQualified.length > 0 ? { kind: 'all-ready' } : null);
     return;
   }
+  if (stage >= 6 && stage <= 9 && playoffRoundHeld(clock, stage, startedAt, now)) return;
   await advanceStage(raw.id, stage, clock, Number(raw.rematch));
 }
 
@@ -1503,7 +1500,7 @@ async function advanceStage(lobbyId: string, stage: number, clock: LeagueClock, 
   return Boolean(updated[0]?.id);
 }
 
-async function startPlayoffRound(lobbyId: string, clock: LeagueClock, leagueNo: number, startReason: string | null = null): Promise<boolean> {
+async function startPlayoffRound(lobbyId: string, clock: LeagueClock, leagueNo: number, startReason: PlayoffStartReason = null): Promise<boolean> {
   const events = uniqueStageEvents(6, clock, leagueNo, true, startReason);
   const updated = await db().query<{ id: string }>(
     `with updated as (
@@ -2439,7 +2436,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
       return { ok: false, status: 403, error: { error: 'Only the host can advance the league.', reason: 'forbidden' } };
     }
     if (stage === 6) {
-      await startPlayoffRound(lobby.id, clock, Number(lobby.rematch), hostRow.host_name);
+      await startPlayoffRound(lobby.id, clock, Number(lobby.rematch), hostRow.host_name ? { kind: 'host', name: hostRow.host_name } : null);
       return readLobby({ code: input.code, secret: input.secret });
     }
     const cursor = Math.max(
@@ -2447,6 +2444,9 @@ export async function advanceLobby(input: { code: string; secret: string; action
       stageCursorAtFrom(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null, Date.now()),
     );
     if (!isStageCheckpoint(clock, stage, cursor, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null)) {
+      return readLobby({ code: input.code, secret: input.secret });
+    }
+    if (playoffRoundHeld(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null, Date.now())) {
       return readLobby({ code: input.code, secret: input.secret });
     }
     await advanceStage(lobby.id, stage, clock, Number(lobby.rematch));
