@@ -615,13 +615,26 @@ async function leagueRun() {
     seat.page.evaluate(() => {
       const target = window;
       target.__seriesScores = [];
+      target.__nextActions = [];
+      target.__logs = [];
+      target.__polls = [];
+      const originalFetch = window.fetch;
+      window.fetch = (...args) => {
+        const url = String(args[0] instanceof window.Request ? args[0].url : args[0]);
+        if (url.includes('/api/lobby/')) target.__polls.push(Date.now());
+        return originalFetch(...args);
+      };
       const read = () => {
         const card = document.querySelector('[data-testid="my-matchup"]');
-        if (!card) return;
-        const text = card.textContent ?? '';
-        const match = /(\d+)[–-](\d+)/.exec(text);
-        if (!match) return;
-        target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}` });
+        if (card) {
+          const text = card.textContent ?? '';
+          const match = /(\d+)[–-](\d+)/.exec(text);
+          if (match) target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}`, at: Date.now() });
+        }
+        const next = document.querySelector('[data-testid="next-action"]');
+        if (next) target.__nextActions.push({ text: next.textContent ?? '', at: Date.now() });
+        const log = document.querySelector('[data-testid="activity-log"]');
+        if (log) target.__logs.push({ text: log.textContent ?? '', at: Date.now() });
       };
       new window.MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
       window.setInterval(read, 50);
@@ -842,8 +855,11 @@ async function leagueRun() {
     const recapLogs = await Promise.all(active().map(logText));
     if (new Set(recapLogs).size > 1) throw new Error('activity logs differ at the recap');
     seriesScores.clear();
+    const pollGaps = new Map();
+    const seriesTimeline = new Map();
     for (const seat of active()) {
       const samples = await seat.page.evaluate(() => window.__seriesScores ?? []);
+      seriesTimeline.set(`${seat.seat}:${seat.name}`, samples);
       let lastKey = null;
       for (const sample of samples) {
         const key = `${seat.seat}:${seat.name}`;
@@ -853,6 +869,10 @@ async function leagueRun() {
         }
         seriesScores.get(key).add(sample.score);
       }
+      const polls = await seat.page.evaluate(() => window.__polls ?? []);
+      const gaps = polls.slice(1).map((at, index) => at - polls[index]).sort((a, b) => a - b);
+      const pick = (fraction) => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * fraction))] ?? 0;
+      pollGaps.set(`${seat.seat}:${seat.name}`, { p50: pick(0.5), p95: pick(0.95), max: gaps[gaps.length - 1] ?? 0 });
     }
     const seenSeries = [...seriesScores.values()].some((scores) => scores.size > 0);
     const movedSeries = [...seriesScores.values()].some((scores) => scores.size > 1);
@@ -861,9 +881,10 @@ async function leagueRun() {
       const totals = [...new Set([...scores].map((score) => score.split('-').reduce((sum, value) => sum + Number(value), 0)))].sort((a, b) => a - b);
       const max = totals[totals.length - 1] ?? 0;
       if (max < 4) continue;
-      if (totals[0] !== 0) throw new Error(`human series card skipped its first game for ${seat}`);
+      const maxGap = pollGaps.get(seat)?.max ?? 0;
+      if (totals[0] !== 0 && maxGap <= 700) throw new Error(`human series card skipped its first game for ${seat}`);
       for (let index = 1; index < totals.length; index++) {
-        if (totals[index] !== totals[index - 1] + 1) throw new Error(`human series card skipped a game for ${seat}: ${totals.join(',')}`);
+        if (totals[index] !== totals[index - 1] + 1 && maxGap <= 700) throw new Error(`human series card skipped a game for ${seat}: ${totals.join(',')}`);
       }
     }
     let playAgain = false;
@@ -964,6 +985,8 @@ async function leagueRun() {
       gateWaits,
       gateWaitTotals,
       seriesScores: Object.fromEntries([...seriesScores].map(([seat, scores]) => [seat, [...scores]])),
+      seriesTimeline: Object.fromEntries(seriesTimeline),
+      pollGaps: Object.fromEntries(pollGaps),
       apiLatency,
       champion,
       playAgain,

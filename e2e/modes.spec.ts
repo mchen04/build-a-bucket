@@ -1,8 +1,25 @@
 import { mkdirSync } from 'node:fs';
 import { shotDir } from './shots';
 import { expect, test, type Page } from '@playwright/test';
+
 import { previewFor, type SalCard } from '../src/shared/engine/salary';
 import { gradeFor } from '../src/shared/engine/rules';
+
+async function advanceSquadRounds(
+  page: Page,
+  rounds: ReturnType<Page['getByTestId']>,
+  banner: ReturnType<Page['getByTestId']>,
+  expected: number,
+) {
+  for (let step = 0; step < 60; step++) {
+    const count = await rounds.count();
+    expect(count).toBeLessThanOrEqual(expected);
+    if (count === expected) return;
+    if (expected < 4) await expect(banner).toHaveCount(0);
+    await page.clock.runFor(50);
+  }
+  expect(await rounds.count()).toBe(expected);
+}
 
 const SHOTS = shotDir('modes');
 const GUARD_KEYS = [
@@ -495,12 +512,12 @@ test('squad builder fills five slots, simulates the season and survives a reload
     await standingsNext.click();
     await expect(page.getByTestId('squad-playoffs')).toBeVisible();
     const rounds = page.getByTestId('squad-playoff-rounds').locator('.round');
-    await expect(page.getByTestId('squad-playoff-banner')).toHaveCount(0);
-    await page.clock.runFor(650);
-    await expect(rounds).toHaveCount(1);
+    const banner = page.getByTestId('squad-playoff-banner');
+    await expect(banner).toHaveCount(0);
+    await advanceSquadRounds(page, rounds, banner, 1);
     await shot(page, 'squad-playoffs-first-round');
-    await page.clock.runFor(5 * 520);
-    await expect(page.getByTestId('squad-playoff-banner')).toBeVisible();
+    await advanceSquadRounds(page, rounds, banner, 4);
+    await expect(banner).toBeVisible();
     expect(await rounds.count()).toBeGreaterThan(0);
     await shot(page, 'squad-playoffs');
     await page.getByTestId('squad-recap-next').click();
@@ -560,13 +577,12 @@ test('squad playoff walkthrough reveals every round before the recap', async ({ 
   await expect(rounds).toHaveCount(0);
   await expect(banner).toHaveCount(0);
   for (let index = 1; index <= 3; index++) {
-    await page.clock.runFor(520);
-    await expect(rounds).toHaveCount(index);
+    await advanceSquadRounds(page, rounds, banner, index);
     await expect(banner).toHaveCount(0);
     stamp(`rounds=${index}`);
     await shot(page, `squad-playoffs-${index}`);
   }
-  await page.clock.runFor(520);
+  await advanceSquadRounds(page, rounds, banner, 4);
   expect(await rounds.count(), 'fixture seed scan-0 must reach and win all four rounds; re-run the seed scan if this stops holding').toBe(4);
   await expect(banner).toBeVisible();
   stamp(`all-rounds-banner rounds=${await rounds.count()}`);
