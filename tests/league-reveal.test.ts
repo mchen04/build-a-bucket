@@ -280,7 +280,8 @@ describe('reveal pacing', () => {
     const total = 7 * 700;
     for (const stage of [6, 7, 8, 9]) {
       expect(playoffRoundHeld(clock, stage, 0, total)).toBe(true);
-      expect(playoffRoundHeld(clock, stage, 0, total + 700)).toBe(false);
+      expect(playoffRoundHeld(clock, stage, 0, total + 700)).toBe(true);
+      expect(playoffRoundHeld(clock, stage, 0, total + 1400)).toBe(false);
     }
   });
 

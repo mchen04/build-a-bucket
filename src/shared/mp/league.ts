@@ -131,7 +131,7 @@ export function playoffRoundHeld(clock: LeagueClock, stage: number, startedAt: n
   const humanRound = (clock.series ?? []).some(
     (series) => series.round === round && (humans.has(series.high) || humans.has(series.low)),
   );
-  return humanRound && stageCursorAtFrom(clock, stage, startedAt, now - PLAYOFF_GAME_MS) < total;
+  return humanRound && stageCursorAtFrom(clock, stage, startedAt, now - PLAYOFF_GAME_MS * 2) < total;
 }
 
 export interface LeagueClock {
