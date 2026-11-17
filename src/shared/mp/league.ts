@@ -280,6 +280,19 @@ export interface SeriesView {
   complete: boolean;
 }
 
+export function limitPlayoffs(playoffs: SeriesView[] | null | undefined, limit: number): SeriesView[] | null {
+  if (!playoffs) return null;
+  let left = Math.max(0, limit);
+  return playoffs.map((series) => {
+    const games = series.games.slice(0, Math.max(0, left));
+    left -= games.length;
+    const wins = games.filter((game) => game.winner === series.high).length;
+    const losses = games.filter((game) => game.winner === series.low).length;
+    const complete = games.length === series.games.length && series.complete;
+    return { ...series, games, wins, losses, complete, winner: complete ? series.winner : null };
+  });
+}
+
 export interface PlayInView {
   id: string;
   conference: 'east' | 'west';

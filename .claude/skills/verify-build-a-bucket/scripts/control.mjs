@@ -702,6 +702,7 @@ async function leagueRun() {
     let lastLabel = '';
     const deadline = Date.now() + 240000;
     while (Date.now() < deadline) {
+      for (const seat of active()) await recordSeries(seat);
       if (await visible(host, 'recap')) {
         const record = await verifyStage(`recap-${checkpoint}`, null);
         stages.push(record);
@@ -820,6 +821,15 @@ async function leagueRun() {
     const seenSeries = [...seriesScores.values()].some((scores) => scores.size > 0);
     const movedSeries = [...seriesScores.values()].some((scores) => scores.size > 1);
     if (seenSeries && !movedSeries) throw new Error('human series card did not advance game by game');
+    for (const [seat, scores] of seriesScores) {
+      const totals = [...new Set([...scores].map((score) => score.split('-').reduce((sum, value) => sum + Number(value), 0)))].sort((a, b) => a - b);
+      const max = totals[totals.length - 1] ?? 0;
+      if (max < 4) continue;
+      if (totals[0] !== 0) throw new Error(`human series card skipped its first game for ${seat}`);
+      for (let index = 1; index < totals.length; index++) {
+        if (totals[index] !== totals[index - 1] + 1) throw new Error(`human series card skipped a game for ${seat}`);
+      }
+    }
     let playAgain = false;
     let rematchNote = null;
     let secondGameLog = null;

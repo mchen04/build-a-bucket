@@ -9,12 +9,14 @@ import {
   clockFromLeague,
   isCheckpoint,
   isStageCheckpoint,
+  limitPlayoffs,
   nextStageFrom,
   revealLeague,
   seasonEndsAt,
   stageCursorAtFrom,
   stageGamesTotal,
   stageTotal,
+  type SeriesView,
 } from '../src/shared/mp/league';
 
 function humans(count = 8): HumanTeamInput[] {
@@ -227,6 +229,40 @@ describe('reveal pacing', () => {
     }
     expect(new Set(scores).size).toBeGreaterThan(1);
     expect(scores).toEqual([...scores].sort((a, b) => a - b));
+  });
+
+  it('limits revealed playoff games one at a time without anticipating the winner', () => {
+    const series: SeriesView = {
+      id: 's1',
+      round: 1,
+      name: 'First Round',
+      conference: 'east',
+      high: 'BOS',
+      low: 'NYK',
+      highSeed: 1,
+      lowSeed: 8,
+      games: [
+        { index: 0, home: 'BOS', away: 'NYK', homeScore: 100, awayScore: 90, winner: 'BOS' },
+        { index: 1, home: 'NYK', away: 'BOS', homeScore: 100, awayScore: 90, winner: 'NYK' },
+        { index: 2, home: 'BOS', away: 'NYK', homeScore: 90, awayScore: 100, winner: 'NYK' },
+        { index: 3, home: 'NYK', away: 'BOS', homeScore: 100, awayScore: 90, winner: 'NYK' },
+      ],
+      winner: 'NYK',
+      wins: 1,
+      losses: 3,
+      complete: true,
+    };
+    const first = limitPlayoffs([series], 1)?.[0];
+    expect(first?.games).toHaveLength(1);
+    expect(first?.wins).toBe(1);
+    expect(first?.losses).toBe(0);
+    expect(first?.winner).toBeNull();
+    expect(first?.complete).toBe(false);
+    const last = limitPlayoffs([series], 4)?.[0];
+    expect(last?.wins).toBe(1);
+    expect(last?.losses).toBe(3);
+    expect(last?.winner).toBe('NYK');
+    expect(last?.complete).toBe(true);
   });
 
   it('keeps the old pace for a saved clock without pacing units', () => {
