@@ -83,6 +83,9 @@ describe('activity line', () => {
     expect(activityLine(event({ kind: 'draw', detail: 'drew a team' }))).toBe('Dev drew a team');
     expect(activityLine(event({ kind: 'checkpoint', name: null }))).toBe('reached a checkpoint');
     expect(activityLine(event({ kind: 'host_changed', name: 'Gus' }))).toBe('Gus is the new host');
+    expect(activityLine(event({ name: 'Cara', detail: "Cara's PHX missed the playoffs" }))).toBe("Cara's PHX missed the playoffs");
+    expect(activityLine(event({ name: 'Cara', detail: 'missed the playoffs with PHX' }))).toBe('Cara missed the playoffs with PHX');
+    expect(activityLine(event({ name: 'Fay', detail: 'lost to LAC in the Last spot play-in' }))).toBe('Fay lost to LAC in the Last spot play-in');
     expect(activityLine(undefined)).toBe('Waiting for the first move');
   });
 });

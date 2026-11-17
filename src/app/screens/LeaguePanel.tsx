@@ -1,7 +1,7 @@
 import type { LeagueGameView, PlayInView, SeriesView } from '../../shared/mp/league';
 import type { LobbyView } from '../../shared/mp/types';
 import { StatGrid, StandingsTable, YouTag } from '../components';
-import { readyLabel } from '../mp/format';
+import { activityLine } from '../mp/format';
 
 interface Props {
   view: LobbyView;
@@ -69,6 +69,10 @@ function SeriesRow(props: { series: SeriesView; myTeam: string | null }) {
 }
 
 export function LeaguePanel(props: Props) {
+  return <LeaguePanelView {...props} />;
+}
+
+function LeaguePanelView(props: Props) {
   const league = props.view.league;
   if (!league) return null;
   const my = league.my;
@@ -99,7 +103,7 @@ export function LeaguePanel(props: Props) {
     friends: humanTeams.has(game.home) && humanTeams.has(game.away),
   }));
   const visibleGames =
-    league.phase === 'playoffs' && playoffGames.length
+    (league.phase === 'playoffs' || league.phase === 'recap') && playoffGames.length
       ? playoffGames
       : league.phase === 'playin' && playinGames.length
         ? playinGames
@@ -120,16 +124,32 @@ export function LeaguePanel(props: Props) {
   const rounds = league.playoffs
     ? [...new Set(league.playoffs.map((entry) => entry.round))].sort((a, b) => a - b)
     : [];
-  const atCheckpoint = league.checkpoint && props.view.phase !== 'recap';
+  const gate = props.view.gate;
   const progress = league.stageTotal > 0 ? Math.min(league.cursor, league.stageTotal) : null;
   const status =
     league.phase === 'recap'
       ? 'Final'
-      : atCheckpoint
-        ? 'Checkpoint'
+      : gate?.active
+        ? 'Playoff gate'
         : league.phase === 'season' || league.phase === 'playoffs'
           ? 'Revealing'
           : 'Ready';
+  const nextAction =
+    gate?.active && gate
+      ? gate.nextAction
+      : league.phase === 'recap'
+        ? 'League complete'
+        : my?.eliminated
+          ? `Eliminated in the ${my.eliminatedRound ?? 'playoffs'}`
+          : league.phase === 'season'
+            ? 'Season resolving automatically'
+            : league.phase === 'awards'
+              ? 'Awards · play-in next'
+              : league.phase === 'playin'
+                ? 'Play-in resolving automatically'
+                : my?.madePlayoffs === false
+                  ? 'You are out · watching the playoffs'
+                  : 'Games resolve automatically';
   const myStats = my
     ? [
         my.ppg !== null ? { label: 'PPG', value: my.ppg.toFixed(1) } : null,
@@ -148,41 +168,68 @@ export function LeaguePanel(props: Props) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div class="tiny muted">{league.stageName}</div>
               <div style={{ fontWeight: 900, fontSize: 'var(--text-md)' }}>
-                {progress !== null ? `${progress} / ${league.stageTotal}` : 'Checkpoint'}
+                {gate?.active ? 'Game 1 next' : progress !== null ? `${progress} / ${league.stageTotal}` : 'Checkpoint'}
               </div>
             </div>
             <div class="tiny muted" style={{ textAlign: 'right' }}>
               {status}
             </div>
           </div>
+          <div class="tiny" style={{ marginTop: 'var(--space-2)' }} data-testid="next-action">
+            {nextAction}
+          </div>
           {progress !== null && league.stageTotal > 0 ? (
-            <div class="progress" style={{ marginTop: 'var(--space-2)' }}>
+            <div class="progress" key={league.stage} style={{ marginTop: 'var(--space-2)' }}>
               <div style={{ width: `${Math.round((progress / league.stageTotal) * 100)}%` }} />
             </div>
           ) : null}
         </div>
       ) : null}
 
-      {atCheckpoint ? (
-        <div class="card" data-testid="checkpoint">
+      {gate?.active ? (
+        <div class="card" data-testid="playoff-gate">
           <div class="row" style={{ alignItems: 'center' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: 'var(--text-sm)' }}>{readyLabel(props.view.ready)}</div>
+              <div style={{ fontWeight: 800, fontSize: 'var(--text-sm)' }}>
+                {gate.ready}/{gate.qualified} playoff teams ready
+              </div>
             </div>
-            {props.view.ready.mine ? (
-              <button class="btn btn-small" disabled>
-                Ready
-              </button>
-            ) : (
+            {gate.mine && !props.view.me.ready ? (
               <button class="btn btn-small" disabled={props.busy} onClick={props.onReady}>
                 Ready
               </button>
-            )}
-            {props.view.me.isHost ? (
-              <button class="btn btn-ghost btn-small" disabled={props.busy} onClick={props.onAdvance}>
-                Advance
+            ) : props.view.me.ready ? (
+              <button class="btn btn-small" disabled>
+                Ready
               </button>
             ) : null}
+            {gate.host ? (
+              <button class="btn btn-ghost btn-small" disabled={props.busy} onClick={props.onAdvance}>
+                Start playoffs
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {my?.series ? (
+        <div class="card" data-testid="my-matchup">
+          <div class="tiny muted">{my.series.name}</div>
+          <div style={{ fontWeight: 900, fontSize: 'var(--text-md)' }}>
+            {my.series.high} {my.series.wins}–{my.series.losses} {my.series.low}
+          </div>
+          <div class="tiny muted">
+            {my.series.wins + my.series.losses === 0
+              ? 'Series starts after the games ahead of it'
+              : `${my.series.wins + my.series.losses} game${my.series.wins + my.series.losses === 1 ? '' : 's'} played${
+                  my.series.complete
+                    ? my.series.advanced
+                      ? ' · advanced'
+                      : ' · eliminated'
+                    : my.series.winner
+                      ? ` · ${my.series.winner} advanced`
+                      : ' · in progress'
+                }`}
           </div>
         </div>
       ) : null}
@@ -221,6 +268,19 @@ export function LeaguePanel(props: Props) {
           </p>
         </div>
       ) : null}
+
+      <div class="card" data-testid="activity-log">
+        <div class="tiny muted">League activity</div>
+        {props.view.events.length ? (
+          props.view.events.slice(0, 12).map((event) => (
+            <div class="tiny" key={event.id} style={{ marginTop: '2px' }}>
+              {activityLine(event)}
+            </div>
+          ))
+        ) : (
+          <div class="tiny muted">No events yet</div>
+        )}
+      </div>
 
       {league.recap ? (
         <div class="card" data-testid="recap">

@@ -2,19 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { LEAGUE_TEAMS, simulateLeague, stageTotals, type HumanTeamInput, type LeagueResult } from '../src/shared/engine/league';
 import {
   CPU_SPEEDUP,
-  HUMAN_REGULAR_MS,
   PLAYOFF_GAME_MS,
   REGULAR_BATCH_MS,
   REGULAR_BATCH_SIZE,
   checkpointAtFrom,
   clockFromLeague,
   isCheckpoint,
+  isStageCheckpoint,
+  limitPlayoffs,
+  playoffRoundHeld,
   nextStageFrom,
   revealLeague,
   seasonEndsAt,
   stageCursorAtFrom,
   stageGamesTotal,
   stageTotal,
+  type SeriesView,
+  type LeagueClock,
 } from '../src/shared/mp/league';
 
 function humans(count = 8): HumanTeamInput[] {
@@ -123,9 +127,8 @@ describe('spoiler-free reveal', () => {
             if (series.winner !== null) expect(series.complete).toBe(true);
           }
 
-          expect(view.stageTotal).toBe(stageTotal(result, stage));
-          expect(view.stageTotal).toBeGreaterThanOrEqual(stageGamesTotal(result, stage));
-          expect(view.checkpoint).toBe(cursor >= stageGamesTotal(result, stage));
+          expect(view.stageTotal).toBe(stageGamesTotal(result, stage));
+          expect(view.checkpoint).toBe(isStageCheckpoint(clockFromLeague(result), stage, cursor));
           expect(isCheckpoint(cursor, stageGamesTotal(result, stage))).toBe(cursor >= stageGamesTotal(result, stage));
           expect(view.phase).toBe(stage <= 3 ? 'season' : stage === 4 ? 'awards' : stage === 5 ? 'playin' : stage <= 9 ? 'playoffs' : 'recap');
         }
@@ -133,14 +136,14 @@ describe('spoiler-free reveal', () => {
     }
   });
 
-  it('reports the same denominator for every seed, so series length cannot leak', () => {
+  it('reports the games actually played as the denominator', () => {
     const other = league('reveal-walk-two');
     for (let stage = 6; stage <= 9; stage++) {
-      expect(stageTotal(other, stage)).toBe(stageTotal(result, stage));
-      expect(stageTotal(result, stage)).toBe([56, 28, 14, 7][stage - 6]);
-      expect(stageGamesTotal(result, stage)).toBeLessThanOrEqual(stageTotal(result, stage));
+      expect(stageTotal(result, stage)).toBe(stageGamesTotal(result, stage));
+      expect(stageTotal(other, stage)).toBe(stageGamesTotal(other, stage));
+      expect(stageTotal(result, stage)).toBeLessThanOrEqual(7 * (stage === 6 ? 8 : stage === 7 ? 4 : stage === 8 ? 2 : 1));
     }
-    expect(stageTotal(result, 5)).toBe(6);
+    expect(stageTotal(result, 5)).toBe(stageGamesTotal(result, 5));
   });
 
   it('does not report a checkpoint before the last game of a playoff round is revealed', () => {
@@ -162,19 +165,18 @@ describe('reveal pacing', () => {
     expect(clock.counts).toEqual([1230, 0, 0, 0]);
     expect(seasonEndsAt(clock.counts, 0)).toBe(true);
     expect(nextStageFrom(clock.counts, 0)).toBe(4);
-    expect(nextStageFrom([300, 300, 300, 330], 0)).toBe(1);
+    expect(nextStageFrom([300, 300, 300, 330], 0)).toBe(4);
   });
 
-  it('gives each round with a human game the old per-game pace and the rest a fiftieth of it', () => {
+  it('gives each round with a human game the fast pace and resolves the rest quickly', () => {
     const rounds = new Map<number, boolean>();
     for (const game of solo.games) {
       rounds.set(game.round, (rounds.get(game.round) ?? false) || game.home === human || game.away === human);
     }
     const slow = [...rounds.values()].filter(Boolean).length;
-    const fast = rounds.size - slow;
     expect(slow).toBe(82);
-    const expected = slow * HUMAN_REGULAR_MS + fast * (HUMAN_REGULAR_MS / CPU_SPEEDUP);
-    expect(checkpointAtFrom(clock, 0, 0)).toBe(Math.ceil(expected));
+    expect(slow).toBeGreaterThan(0);
+    expect(checkpointAtFrom(clock, 0, 0)).toBeGreaterThan(0);
     expect(checkpointAtFrom(clock, 0, 0)! * 10).toBeLessThan(OLD_SEASON_MS);
   });
 
@@ -190,21 +192,119 @@ describe('reveal pacing', () => {
     expect(stageCursorAtFrom(clock, 0, 0, end)).toBe(1230);
   });
 
-  it('plays computer-only playoff games fifty times faster than a human series', () => {
+  it('resolves computer-only playoff games quickly', () => {
     for (let stage = 6; stage <= 9; stage++) {
       const series = solo.series.filter((entry) => entry.round === stage - 5);
       const expected = series.reduce((sum, entry) => {
-        const each = entry.high === human || entry.low === human ? PLAYOFF_GAME_MS : PLAYOFF_GAME_MS / CPU_SPEEDUP;
+        const each = entry.high === human || entry.low === human ? PLAYOFF_GAME_MS : CPU_SPEEDUP;
         return sum + each * entry.games.length;
       }, 0);
-      expect(checkpointAtFrom(clock, stage, 0)).toBe(Math.ceil(expected));
+      expect(checkpointAtFrom(clock, stage, 0)).toBe(stage === 6 ? 0 : Math.ceil(expected));
+    }
+  });
+
+  it('starts round one at zero and paces the first game', () => {
+    expect(stageCursorAtFrom(clock, 6, 1000, 1000)).toBe(0);
+    expect(stageCursorAtFrom(clock, 6, 1000, 1001)).toBeLessThanOrEqual(1);
+  });
+
+  it('keeps the gate closed after round one starts in the fallback view', () => {
+    const view = revealLeague(solo, 6, 0, solo.humans[0]!.participantId, Date.now());
+    expect(view.checkpoint).toBe(false);
+  });
+
+  it('advances a human series score with the cursor', () => {
+    const many = simulateLeague({ seed: 'pace', era: 'current', mode: 'normal', humans: humans(8) });
+    const human = many.humans.find((entry) =>
+      many.series.some((series) => series.round === 1 && (series.high === entry.team || series.low === entry.team)),
+    );
+    expect(human).toBeTruthy();
+    if (!human) return;
+    const series = many.series.find((entry) => entry.round === 1 && (entry.high === human.team || entry.low === human.team));
+    expect(series).toBeTruthy();
+    if (!series) return;
+    const scores: number[] = [];
+    for (let cursor = 0; cursor <= stageGamesTotal(many, 6); cursor++) {
+      const view = revealLeague(many, 6, cursor, human.participantId);
+      const current = view.playoffs?.find((entry) => entry.id === series.id);
+      if (current) scores.push(current.wins + current.losses);
+    }
+    expect(new Set(scores).size).toBeGreaterThan(1);
+    expect(scores).toEqual([...scores].sort((a, b) => a - b));
+  });
+
+  it('limits revealed playoff games one at a time without anticipating the winner', () => {
+    const series: SeriesView = {
+      id: 's1',
+      round: 1,
+      name: 'First Round',
+      conference: 'east',
+      high: 'BOS',
+      low: 'NYK',
+      highSeed: 1,
+      lowSeed: 8,
+      games: [
+        { index: 0, home: 'BOS', away: 'NYK', homeScore: 100, awayScore: 90, winner: 'BOS' },
+        { index: 1, home: 'NYK', away: 'BOS', homeScore: 100, awayScore: 90, winner: 'NYK' },
+        { index: 2, home: 'BOS', away: 'NYK', homeScore: 90, awayScore: 100, winner: 'NYK' },
+        { index: 3, home: 'NYK', away: 'BOS', homeScore: 100, awayScore: 90, winner: 'NYK' },
+      ],
+      winner: 'NYK',
+      wins: 1,
+      losses: 3,
+      complete: true,
+    };
+    const first = limitPlayoffs([series], 1)?.[0];
+    expect(first?.games).toHaveLength(1);
+    expect(first?.wins).toBe(1);
+    expect(first?.losses).toBe(0);
+    expect(first?.winner).toBeNull();
+    expect(first?.complete).toBe(false);
+    const last = limitPlayoffs([series], 4)?.[0];
+    expect(last?.wins).toBe(1);
+    expect(last?.losses).toBe(3);
+    expect(last?.winner).toBe('NYK');
+    expect(last?.complete).toBe(true);
+  });
+
+  it('holds every playoff round with a human series for one game step', () => {
+    const clock = {
+      counts: [0, 0, 0, 0],
+      playin: 0,
+      seriesCounts: [1, 1, 1, 1],
+      seriesGames: [7, 7, 7, 7],
+      units: [[], [], [], [], [], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1]],
+      humanSeasons: [{ participantId: 'p1', name: 'Me', team: 'BOS', wins: 50, losses: 32, seed: 1 }],
+      series: [1, 2, 3, 4].map((round) => ({ round, name: `Round ${round}`, conference: 'east' as const, high: 'BOS', low: 'NYK', winner: 'BOS', wins: 4, losses: 3 })),
+    } as unknown as LeagueClock;
+    const total = 7 * 700;
+    for (const stage of [6, 7, 8, 9]) {
+      const start = stage === 6 ? total + 1200 : total;
+      expect(playoffRoundHeld(clock, stage, 0, start)).toBe(true);
+      expect(playoffRoundHeld(clock, stage, 0, start + 700)).toBe(true);
+      expect(playoffRoundHeld(clock, stage, 0, start + 1400)).toBe(false);
+    }
+  });
+
+  it('shows a started first round at 0-0 to a gate-rate poll at any phase', () => {
+    const clock = {
+      counts: [0, 0, 0, 0],
+      playin: 0,
+      seriesCounts: [1, 1, 1, 1],
+      seriesGames: [7, 7, 7, 7],
+      units: [[], [], [], [], [], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1]],
+      humanSeasons: [{ participantId: 'p1', name: 'Me', team: 'BOS', wins: 50, losses: 32, seed: 1 }],
+      series: [{ round: 1, name: 'First Round', conference: 'east' as const, high: 'BOS', low: 'NYK', winner: 'BOS', wins: 4, losses: 3 }],
+    } as unknown as LeagueClock;
+    for (let offset = 0; offset < 1000; offset++) {
+      expect(stageCursorAtFrom(clock, 6, 0, offset)).toBe(0);
     }
   });
 
   it('keeps the old pace for a saved clock without pacing units', () => {
     const saved = { counts: [300, 310, 300, 320], playin: 6, seriesCounts: [8, 4, 2, 1], seriesGames: [40, 22, 11, 6] };
     expect(stageCursorAtFrom(saved, 0, 0, REGULAR_BATCH_MS)).toBe(REGULAR_BATCH_SIZE);
-    expect(stageCursorAtFrom(saved, 6, 0, PLAYOFF_GAME_MS * 2)).toBe(2);
-    expect(nextStageFrom(saved.counts, 0)).toBe(1);
+    expect(stageCursorAtFrom(saved, 7, 0, PLAYOFF_GAME_MS * 2)).toBe(2);
+    expect(nextStageFrom(saved.counts, 0)).toBe(4);
   });
 });

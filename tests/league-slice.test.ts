@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import * as v from 'valibot';
 import {
   LEAGUE_TEAMS,
   simulateLeague,
   type HumanTeamInput,
+  type HumanSeason,
   type LeagueResult,
   type SeriesResult,
 } from '../src/shared/engine/league';
@@ -15,7 +17,8 @@ import {
   type LeagueView,
 } from '../src/shared/mp/league';
 import { mergeDelta } from '../src/shared/mp/progress';
-import type { LeagueDelta, LobbyView } from '../src/shared/mp/types';
+import { LobbyDeltaSchema } from '../src/shared/mp/schemas';
+import type { LeagueDelta, LobbyDelta, LobbyView } from '../src/shared/mp/types';
 import { setRunner } from '../src/server/db';
 import { readLeagueDelta } from '../src/server/leagueSlice';
 import {
@@ -346,12 +349,46 @@ describe('league slice views', () => {
   describe('league delta totals', () => {
     afterEach(() => setRunner(null));
 
-    it('keeps the maximum series total while the checkpoint uses the actual total', async () => {
+    it('uses the actual series total for the checkpoint and the denominator', async () => {
       const series = [...seriesFixture(2, [7, 6, 5, 4]), ...seriesFixture(3, [7, 6])];
       setRunner({
         async query<Row>(text: string): Promise<Row[]> {
-          if (!text.includes('jsonb_array_elements(series)')) throw new Error(`unexpected query: ${text}`);
-          return [{ series }] as unknown as Row[];
+          if (text.includes('jsonb_array_elements(series)')) return [{ series }] as unknown as Row[];
+          return [{ humans: [{ participantId: 'delta-me', team: series[0]!.high, name: 'Me', seat: 1 }] as unknown as HumanSeason[], east: [], west: [], clock, awards: null, playin: null, series, champion: null, h2h: null }] as unknown as Row[];
+        },
+        async batch(): Promise<void> {},
+        async transaction<Row>(): Promise<Row[][]> {
+          return [];
+        },
+      });
+      const clock: LeagueClock = {
+        counts: [0, 0, 0, 0],
+        playin: 0,
+        seriesCounts: [8, 4, 2, 1],
+        seriesGames: [0, 22, 13, 6],
+        humanSeasons: [{ participantId: 'delta-me', name: 'Delta', team: 'DET', wins: 50, losses: 32, seed: 1 }],
+      };
+      const mid = await readLeagueDelta('delta-total', 7, 13, 0, 'DET', clock);
+      expect(mid?.stageTotal).toBe(22);
+      expect(mid?.checkpoint).toBe(false);
+      const done = await readLeagueDelta('delta-total', 7, 22, 0, 'DET', clock);
+      expect(done?.stageTotal).toBe(22);
+      expect(done?.checkpoint).toBe(true);
+      expect(done?.playoffs?.flatMap((entry) => entry.games)).toHaveLength(22);
+      const finalsMid = await readLeagueDelta('delta-total', 8, 12, 0, 'DET', clock);
+      expect(finalsMid?.stageTotal).toBe(13);
+      expect(finalsMid?.checkpoint).toBe(false);
+      const finalsDone = await readLeagueDelta('delta-total', 8, 13, 0, 'DET', clock);
+      expect(finalsDone?.stageTotal).toBe(13);
+      expect(finalsDone?.checkpoint).toBe(true);
+    });
+
+    it('keeps my series in step with the bracket through the client schema and merge', async () => {
+      const series = seriesFixture(2, [7, 6, 5, 4]);
+      setRunner({
+        async query<Row>(text: string): Promise<Row[]> {
+          if (text.includes('jsonb_array_elements(series)')) return [{ series }] as unknown as Row[];
+          return [{ humans: [{ participantId: 'delta-me', team: series[0]!.high, name: 'Me', seat: 1 }] as unknown as HumanSeason[], east: [], west: [], clock, awards: null, playin: null, series, champion: null, h2h: null }] as unknown as Row[];
         },
         async batch(): Promise<void> {},
         async transaction<Row>(): Promise<Row[][]> {
@@ -359,19 +396,62 @@ describe('league slice views', () => {
         },
       });
       const clock: LeagueClock = { counts: [0, 0, 0, 0], playin: 0, seriesCounts: [8, 4, 2, 1], seriesGames: [0, 22, 13, 6] };
-      const mid = await readLeagueDelta('delta-total', 7, 13, 0, 'DET', clock);
-      expect(mid?.stageTotal).toBe(28);
-      expect(mid?.checkpoint).toBe(false);
-      const done = await readLeagueDelta('delta-total', 7, 22, 0, 'DET', clock);
-      expect(done?.stageTotal).toBe(28);
-      expect(done?.checkpoint).toBe(true);
-      expect(done?.playoffs?.flatMap((entry) => entry.games)).toHaveLength(22);
-      const finalsMid = await readLeagueDelta('delta-total', 8, 12, 0, 'DET', clock);
-      expect(finalsMid?.stageTotal).toBe(14);
-      expect(finalsMid?.checkpoint).toBe(false);
-      const finalsDone = await readLeagueDelta('delta-total', 8, 13, 0, 'DET', clock);
-      expect(finalsDone?.stageTotal).toBe(14);
-      expect(finalsDone?.checkpoint).toBe(true);
+      const me = series[0]!.high;
+      const delta = await readLeagueDelta('delta-my', 7, 13, 0, me, clock);
+      expect(delta).toBeTruthy();
+      if (!delta) return;
+      const view = {
+        version: 1,
+        standings: [{ team: me, conference: 'east', wins: 50, losses: 32, seed: 1, isMine: true, humanName: 'Me' }],
+        my: { team: me, series: { id: series[0]!.id, wins: 0, losses: 0, complete: false, winner: null, advanced: false } },
+        playoffs: null,
+      } as unknown as LeagueView;
+      const payload = { version: 2, serverTime: new Date().toISOString(), phase: 'playoffs', events: [], participants: [], league: delta };
+      expect(v.safeParse(LobbyDeltaSchema, payload).success).toBe(true);
+      const merged = mergeDelta({ version: 1, league: view, participants: [], events: [] } as unknown as LobbyView, payload as unknown as LobbyDelta).league as LeagueView;
+      const bracket = delta.playoffs?.find((entry) => entry.id === series[0]!.id);
+      expect(merged.my?.series?.wins).toBe(bracket?.wins);
+      expect(merged.my?.series?.losses).toBe(bracket?.losses);
+      expect(merged.standings).toEqual(view.standings);
+    });
+
+    it('matches the full view my at every playoff cursor through deltas', async () => {
+      const result = league('delta-walk', 'normal');
+      const slice = buildLeagueSlice(result);
+      const clock = slice.meta.clock;
+      setRunner({
+        async query<Row>(text: string): Promise<Row[]> {
+          if (!text.includes('jsonb_array_elements(series)')) throw new Error(`unexpected query: ${text}`);
+          return [{ series: result.series }] as unknown as Row[];
+        },
+        async batch(): Promise<void> {},
+        async transaction<Row>(): Promise<Row[][]> {
+          return [];
+        },
+      });
+      for (const human of result.humans) {
+        let version = 1;
+        let view = sliceView(slice, 6, 0, human.participantId);
+        for (let stage = 6; stage <= 9; stage++) {
+          const total = stageGamesTotal(result, stage);
+          for (let cursor = 0; cursor <= total; cursor++) {
+            const delta = await readLeagueDelta('delta-walk', stage, cursor, 0, human.team, clock);
+            expect(delta).toBeTruthy();
+            if (!delta) continue;
+            const expected = sliceView(slice, stage, cursor, human.participantId);
+            expect(delta.playoffs).toEqual(expected.playoffs);
+            for (const series of delta.playoffs ?? []) {
+              if (!series.complete) expect(series.winner).toBeNull();
+              expect(series.wins + series.losses).toBeLessThanOrEqual(series.games.length);
+            }
+            const payload = { version: ++version, serverTime: new Date().toISOString(), phase: 'playoffs', events: [], participants: [], league: delta };
+            expect(v.safeParse(LobbyDeltaSchema, payload).success).toBe(true);
+            const merged = mergeDelta({ version: version - 1, league: view, participants: [], events: [] } as unknown as LobbyView, payload as unknown as LobbyDelta).league as LeagueView;
+            expect(merged.my).toEqual(expected.my);
+            view = merged;
+          }
+        }
+      }
     });
   });
 });

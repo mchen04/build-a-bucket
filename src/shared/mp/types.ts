@@ -146,6 +146,18 @@ export interface ReadyView {
   mine: boolean;
 }
 
+export interface LobbyGateView {
+  active: boolean;
+  stage: number;
+  qualified: number;
+  ready: number;
+  mine: boolean;
+  host: boolean;
+  waitingOn: string[];
+  nextAction: string;
+  actor: string | null;
+}
+
 export interface LobbyView {
   code: string;
   phase: LobbyPhase;
@@ -169,6 +181,7 @@ export interface LobbyView {
   salaryPowers: SalaryPowersView | null;
   league: LeagueView | null;
   ready: ReadyView;
+  gate: LobbyGateView | null;
   serverTime: string;
 }
 
@@ -189,6 +202,7 @@ export interface LobbyDelta {
   participants?: ParticipantProgress[];
   events: EventView[];
   league?: LeagueDelta;
+  gate?: LobbyGateView | null;
 }
 
 export interface LeagueDelta {

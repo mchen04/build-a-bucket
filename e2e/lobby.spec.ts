@@ -96,6 +96,11 @@ async function fastForward(code: string): Promise<void> {
   );
 }
 
+async function lobbyProgress(code: string): Promise<{ stage: number; cursor: number }> {
+  const rows = await db().query<{ stage: number; cursor: number }>('select stage, stage_cursor as cursor from lobbies where code = $1', [code]);
+  return { stage: Number(rows[0]?.stage ?? 0), cursor: Number(rows[0]?.cursor ?? 0) };
+}
+
 test('drives a two player shared league from invite code to recap', async ({ browser }) => {
   test.setTimeout(300_000);
   const contexts: BrowserContext[] = [];
@@ -170,37 +175,33 @@ test('drives a two player shared league from invite code to recap', async ({ bro
     await expect(host.locator('[data-testid="recap"]')).toHaveCount(0);
     await expectNoOverflow(host, 'season reveal');
 
-    let readyClicks = 0;
-    for (let guard = 0; guard < 12; guard++) {
+    for (let guard = 0; guard < 20; guard++) {
       if (await host.locator('[data-testid="recap"]').isVisible().catch(() => false)) break;
-      await fastForward(code);
-      const ready = host.getByRole('button', { name: 'Ready' });
-      const recap = host.locator('[data-testid="recap"]');
-      const deadline = Date.now() + 30_000;
-      let state: 'ready' | 'recap' | null = null;
-      while (Date.now() < deadline) {
-        if (await recap.isVisible().catch(() => false)) {
-          state = 'recap';
-          break;
-        }
-        if ((await ready.isVisible().catch(() => false)) && (await ready.isEnabled().catch(() => false))) {
-          state = 'ready';
-          break;
-        }
-        await host.waitForTimeout(200);
+      const gate = host.locator('[data-testid="playoff-gate"]');
+      if (await gate.isVisible().catch(() => false)) {
+        await expect(host.locator('[data-testid="next-action"]')).not.toBeEmpty();
+        await expect(guest.locator('[data-testid="next-action"]')).not.toBeEmpty();
+        await expect(host.locator('[data-testid="activity-log"]')).toBeVisible();
+        await expect(guest.locator('[data-testid="activity-log"]')).toBeVisible();
+        await expect(host.locator('[data-testid="checkpoint"]')).toHaveCount(0);
+        const start = host.getByRole('button', { name: 'Start playoffs' });
+        if (await start.isVisible().catch(() => false)) await start.click();
+        await host.waitForTimeout(500);
+        continue;
       }
-      if (state === 'recap') break;
-      if (state !== 'ready') throw new Error('neither the checkpoint Ready button nor the recap appeared');
-      await ready.click();
-      readyClicks += 1;
-      const guestReady = guest.getByRole('button', { name: 'Ready' });
-      await expect(guestReady).toBeEnabled({ timeout: 30_000 });
-      await guestReady.click();
+      const progress = await lobbyProgress(code);
+      if (progress.stage === 6 && progress.cursor === 0) {
+        await host.waitForTimeout(500);
+        continue;
+      }
+      await fastForward(code);
       await host.waitForTimeout(500);
     }
 
     await expect(host.locator('[data-testid="recap"]')).toBeVisible({ timeout: 60_000 });
-    expect(readyClicks).toBe(6);
+    await expect(host.locator('[data-testid="checkpoint"]')).toHaveCount(0);
+    await expect(host.locator('[data-testid="activity-log"]')).toContainText(/championship|won the/i);
+    await expect(guest.locator('[data-testid="activity-log"]')).toContainText(/championship|won the/i);
     await expect(host.locator('[data-testid="champion-banner"]')).toBeVisible();
     await expect(host.locator('[data-testid="recap"]')).toContainText('Head to head');
     await expectNoOverflow(host, 'recap');

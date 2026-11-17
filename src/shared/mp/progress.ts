@@ -7,7 +7,7 @@ import {
   type ParticipantView,
 } from './types.js';
 import type { LeagueGameView, LeagueView } from './league.js';
-import { stagePhase } from './league.js';
+import { playoffSeriesForTeam, stagePhase } from './league.js';
 import { LEAGUE_TEAMS } from '../engine/league.js';
 import { EAST_SET } from '../engine/rules.js';
 
@@ -23,6 +23,7 @@ export function progressToken(view: Pick<LobbyView, 'events' | 'participants'>):
 }
 
 export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
+  if (delta.version < view.version) return view;
   const progress = new Map<number, ParticipantProgress>((delta.participants ?? []).map((entry) => [entry.seat, entry]));
   const participants: ParticipantView[] = view.participants.map((entry) => {
     const next = progress.get(entry.seat);
@@ -37,6 +38,8 @@ export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
       season: 'season' in next ? next.season ?? null : entry.season,
     };
   });
+  const events = new Map<number, LobbyView['events'][number]>();
+  for (const event of [...delta.events, ...view.events]) events.set(event.id, event);
   return {
     ...view,
     version: delta.version,
@@ -44,8 +47,9 @@ export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
     phase: delta.phase ?? view.phase,
     participants,
     me: participants.find((entry) => entry.isMe) ?? view.me,
-    events: [...delta.events, ...view.events].slice(0, EVENT_LIMIT),
+    events: [...events.values()].sort((a, b) => b.id - a.id).slice(0, EVENT_LIMIT),
     league: delta.league && view.league ? mergeLeagueDelta(view.league, delta.league) : view.league,
+    gate: delta.gate !== undefined ? delta.gate : view.gate,
   };
 }
 
@@ -63,7 +67,30 @@ function mergeLeagueGames(current: LeagueGameView[], incoming: LeagueGameView[])
 
 function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
   const standings = delta.rows ? rowsToStandings(delta.rows, view) : delta.standings !== undefined ? delta.standings : view.standings;
-  const my = delta.rows ? myFromRows(delta.rows, view) : delta.my !== undefined ? delta.my : view.my;
+  const playoffs = delta.playoffs !== undefined ? delta.playoffs : view.playoffs;
+  let my = delta.rows ? myFromRows(delta.rows, view) : delta.my !== undefined ? delta.my : view.my;
+  if (my && playoffs) {
+    const picked = playoffSeriesForTeam(playoffs, my.team);
+    my = {
+      ...my,
+      series: picked.series
+        ? {
+            id: picked.series.id,
+            round: picked.series.round,
+            name: picked.series.name,
+            high: picked.series.high,
+            low: picked.series.low,
+            wins: picked.series.wins,
+            losses: picked.series.losses,
+            complete: picked.series.complete,
+            winner: picked.series.winner,
+            advanced: picked.series.complete && picked.series.winner === my.team,
+          }
+        : null,
+      eliminated: picked.eliminated,
+      eliminatedRound: picked.eliminatedRound,
+    };
+  }
   return {
     ...view,
     phase: stagePhase(delta.stage),
@@ -77,7 +104,7 @@ function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
     my,
     awards: delta.awards !== undefined ? delta.awards : view.awards,
     playin: delta.playin !== undefined ? delta.playin : view.playin,
-    playoffs: delta.playoffs !== undefined ? delta.playoffs : view.playoffs,
+    playoffs,
   };
 }
 

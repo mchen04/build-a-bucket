@@ -95,5 +95,7 @@ export function activityLine(event: EventView | undefined): string {
   const detail = event.detail ?? defaultDetail(event.kind);
   const who = event.name ?? '';
   if (!who) return detail;
-  return detail ? `${who} ${detail}` : who;
+  if (!detail) return who;
+  if (detail === who || detail.startsWith(`${who} `) || detail.startsWith(`${who}'s `)) return detail;
+  return `${who} ${detail}`;
 }

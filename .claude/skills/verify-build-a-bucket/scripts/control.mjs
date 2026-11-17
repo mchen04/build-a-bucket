@@ -323,6 +323,12 @@ async function leagueRun() {
   const ev = evidenceDir(dir, 'league');
   const names = ['Ava', 'Ben', 'Cara', 'Dev', 'Eli', 'Fay', 'Gus', 'Hana'];
   const seats = [];
+  const apiSamples = new Map();
+  const requestStarts = new WeakMap();
+  const apiKey = (method, url) => {
+    const pathname = new URL(url).pathname.replace(/\/api\/lobby\/[A-Za-z0-9]{6}(?=\/|$)/, '/api/lobby/:code');
+    return `${method} ${pathname}`;
+  };
   for (let index = 0; index < players; index++) {
     const context = await browser.newContext({ ...ctxOpts, viewport });
     const page = await context.newPage();
@@ -336,8 +342,23 @@ async function leagueRun() {
       http.push(entry);
       response.text().then((text) => { entry.body = text.slice(0, 300); }).catch(() => {});
     });
-    seats.push({ index, seat: index + 1, name: names[index], context, page, errors, http, closed: false });
+    page.on('request', (request) => {
+      if (request.url().includes('/api/')) requestStarts.set(request, Date.now());
+    });
+    page.on('response', (response) => {
+      const request = response.request();
+      if (!request.url().includes('/api/')) return;
+      const started = requestStarts.get(request);
+      if (started === undefined) return;
+      const key = apiKey(request.method(), request.url());
+      const sample = apiSamples.get(key) ?? { ms: [], status: {} };
+      sample.ms.push(Date.now() - started);
+      sample.status[response.status()] = (sample.status[response.status()] ?? 0) + 1;
+      apiSamples.set(key, sample);
+    });
+    seats.push({ index, seat: index + 1, name: names[index], context, page, errors, http, closed: false, actions: {} });
   }
+  const tap = (seat, name) => { seat.actions[name] = (seat.actions[name] ?? 0) + 1; };
   const active = () => seats.filter((seat) => !seat.closed);
   const clean = (text) => text.replace(/YOU/g, '').replace(/\s+/g, ' ').trim();
   const snap = async (seat, label) => {
@@ -377,40 +398,40 @@ async function leagueRun() {
   };
   const waitStage = async (seat, timeout = 150000) =>
     seat.page.waitForFunction(
-      () => document.querySelector('[data-testid="checkpoint"]') || document.querySelector('[data-testid="recap"]'),
+      () => document.querySelector('[data-testid="league-stage"]') || document.querySelector('[data-testid="recap"]'),
       null,
       { timeout },
     );
   const stageName = async (seat) => {
     const card = seat.page.getByTestId('league-stage');
     if (!(await card.isVisible().catch(() => false))) return null;
-    return clean(await card.locator('.tiny.muted').first().innerText());
+    return card
+      .locator('.tiny.muted')
+      .first()
+      .innerText({ timeout: 2000 })
+      .then(clean)
+      .catch(() => null);
   };
-  const waitAdvanced = async (seat, before, timeout = 20000) => {
-    try {
-      await seat.page.waitForFunction(
-        (previous) => {
-          if (document.querySelector('[data-testid="recap"]')) return true;
-          const card = document.querySelector('[data-testid="league-stage"]');
-          const name = card?.querySelector('.tiny.muted')?.textContent?.trim() ?? '';
-          return name !== '' && name !== previous;
-        },
-        before,
-        { timeout },
-      );
-      return true;
-    } catch {
-      return false;
-    }
+  const roundName = async (seat) => {
+    const playoffs = seat.page.getByTestId('playoffs');
+    if (!(await playoffs.isVisible().catch(() => false))) return null;
+    const names = await playoffs.locator('.round-name').allInnerTexts().catch(() => []);
+    return names.length ? clean(names[names.length - 1]) : null;
   };
   const clickReady = async (seat) => {
-    const button = seat.page.getByTestId('checkpoint').getByRole('button', { name: 'Ready', exact: true });
-    if ((await button.isVisible().catch(() => false)) && (await button.isEnabled().catch(() => false))) await button.click().catch(() => {});
+    const button = seat.page.getByTestId('playoff-gate').getByRole('button', { name: 'Ready', exact: true });
+    if ((await button.isVisible().catch(() => false)) && (await button.isEnabled().catch(() => false))) {
+      tap(seat, 'Ready');
+      await button.click().catch(() => {});
+      return true;
+    }
+    return false;
   };
-  const advanceSeat = async () => {
+  const startPlayoffs = async () => {
     for (const seat of active()) {
-      const button = seat.page.getByTestId('checkpoint').getByRole('button', { name: 'Advance', exact: true });
+      const button = seat.page.getByTestId('playoff-gate').getByRole('button', { name: 'Start playoffs', exact: true });
       if (await button.isVisible().catch(() => false)) {
+        tap(seat, 'Start playoffs');
         await button.click().catch(() => {});
         return seat;
       }
@@ -421,8 +442,19 @@ async function leagueRun() {
     for (const seat of active()) if (await visible(seat, testId)) return seat;
     return null;
   };
-  const verifyStageInner = async (label) => {
+  const verifyStageInner = async (label, previous) => {
     for (const seat of active()) await waitStage(seat);
+    if (previous) {
+      const deadline = Date.now() + 20000;
+      for (;;) {
+        if (await visible(active()[0], 'recap')) break;
+        const name = (await roundName(active()[0])) ?? (await stageName(active()[0]));
+        if (name !== previous) break;
+        if (Date.now() > deadline) throw new Error(`stage did not change from ${previous} at ${label}`);
+        await sleep(300);
+      }
+      for (const seat of active()) await waitStage(seat);
+    }
     let phases = [];
     let phase = '';
     const phaseDeadline = Date.now() + 30000;
@@ -459,8 +491,14 @@ async function leagueRun() {
       if (row.seed !== parsed.seed) throw new Error(`seed disagrees with standings at ${label} for seat ${seat.seat}`);
       mine.push({ seat: seat.seat, name: seat.name, ...parsed });
     }
-    const states = [];
+    let states = [];
     for (const seat of active()) states.push({ seat, phase: await phaseOf(seat), banner: await visible(seat, 'champion-banner') });
+    const livePhase = await phaseOf(active()[0]);
+    if (livePhase !== phase) {
+      phase = livePhase;
+      states = [];
+      for (const seat of active()) states.push({ seat, phase: await phaseOf(seat), banner: await visible(seat, 'champion-banner') });
+    }
     if (phase === 'Season running') {
       for (const state of states) {
         if (state.phase !== phase) continue;
@@ -511,11 +549,23 @@ async function leagueRun() {
       if (!banners.every((value) => value === banners[0])) throw new Error(`champion text differs at ${label}`);
       champion = banners[0];
     }
-    return { label, phase, stageName: await stageName(active()[0]), standings: top[0], mine, champion, at: Date.now() };
+    const cardName = await stageName(active()[0]);
+    const lastRound = await roundName(active()[0]);
+    return {
+      label,
+      phase,
+      stageName: cardName,
+      roundName: lastRound,
+      stageNameMismatch: phase === 'Playoffs' && cardName !== null && lastRound !== null && cardName !== lastRound,
+      standings: top[0],
+      mine,
+      champion,
+      at: Date.now(),
+    };
   };
-  const verifyStage = async (label) => {
+  const verifyStage = async (label, previous) => {
     try {
-      return await verifyStageInner(label);
+      return await verifyStageInner(label, previous);
     } catch (error) {
       const states = [];
       for (const seat of active()) {
@@ -529,33 +579,74 @@ async function leagueRun() {
     }
   };
   const stages = [];
-  const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
-  try {
-    const host = seats[0];
-    await host.page.goto(base);
-    await host.page.getByTestId('mp-name').waitFor({ timeout: 90000 });
-    await host.page.getByTestId('mp-name').fill(host.name);
-    await host.page.getByTestId('create-lobby').click();
-    await host.page.getByTestId('lobby-code').waitFor();
-    const code = (await host.page.getByTestId('lobby-code').innerText()).trim();
-    const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
-    if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
-    await snap(host, 'created');
-    for (const seat of seats.slice(1)) {
-      await seat.page.goto(link);
-      await seat.page.getByTestId('invite-code').waitFor({ timeout: 90000 });
-      await snap(seat, 'invite');
-      await seat.page.getByTestId('invite-name').fill(seat.name);
-      await seat.page.getByTestId('invite-join').click();
-      await seat.page.getByTestId('lobby-code').waitFor({ timeout: 90000 });
-      await snap(seat, 'joined');
+  const marks = [];
+  const gateWaits = [];
+  const mark = (label) => {
+    if (!marks.some((entry) => entry.label === label)) marks.push({ label, at: Date.now() });
+  };
+  const markRounds = async (seat, current) => {
+    const names = await seat.page.getByTestId('playoffs').locator('.round-name').allInnerTexts().catch(() => []);
+    const wanted = clean(current ?? '').toUpperCase();
+    const index = names.findIndex((name) => clean(name).toUpperCase() === wanted);
+    for (const name of names.slice(0, index + 1)) {
+      const label = `round:${clean(name).toUpperCase()}`;
+      if (!marks.some((entry) => entry.label === label)) mark(label);
     }
-    if (mode !== 'normal') await host.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
-    if (era !== 'current') await host.page.getByRole('button', { name: 'All-Time', exact: true }).click();
-    await host.page.getByTestId('start-season').click();
-    await host.page.getByTestId('open-builder').waitFor();
-    await host.page.waitForTimeout(800);
-    for (const seat of seats) {
+  };
+  const seriesScores = new Map();
+  const seriesKeys = new Map();
+  const recordSeries = async (seat) => {
+    const card = seat.page.getByTestId('my-matchup');
+    if (!(await card.isVisible().catch(() => false))) return;
+    const text = await card.innerText().catch(() => '');
+    const match = /(\d+)[–-](\d+)/.exec(text);
+    if (!match) return;
+    const key = `${seat.seat}:${seat.name}`;
+    const seriesKey = text.split('\n')[0];
+    if (seriesKeys.get(key) !== seriesKey) {
+      seriesKeys.set(key, seriesKey);
+      seriesScores.set(key, new Set());
+    }
+    if (!seriesScores.has(key)) seriesScores.set(key, new Set());
+    seriesScores.get(key).add(`${match[1]}-${match[2]}`);
+  };
+  const logText = async (seat) => seat.page.getByTestId('activity-log').innerText().catch(() => '');
+  const installSeriesObserver = async (seat) =>
+    seat.page.evaluate(() => {
+      const target = window;
+      performance.setResourceTimingBufferSize(10000);
+      target.__seriesScores = [];
+      target.__nextActions = [];
+      target.__logs = [];
+      const read = () => {
+        const card = document.querySelector('[data-testid="my-matchup"]');
+        if (card) {
+          const text = card.textContent ?? '';
+          const match = /(\d+)[–-](\d+)/.exec(text);
+          if (match) {
+            const teams = /([A-Z]{2,3})\s+\d+[–-]\d+\s+([A-Z]{2,3})/.exec(text)?.slice(1) ?? [];
+            const row = Array.from(document.querySelectorAll('.series')).find((entry) => teams.every((team) => (entry.textContent ?? '').includes(team)));
+            const bracketScore = row?.querySelector('.series-score')?.textContent?.replace('–', '-').trim() ?? null;
+            target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}`, teams, bracketScore, at: Date.now() });
+          }
+        }
+        const next = document.querySelector('[data-testid="next-action"]');
+        if (next) target.__nextActions.push({ text: next.textContent ?? '', at: Date.now() });
+        const log = document.querySelector('[data-testid="activity-log"]');
+        if (log) target.__logs.push({ text: log.textContent ?? '', at: Date.now() });
+      };
+      new window.MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
+      read();
+    });
+  const buildAndStart = async (hostSeat, activeSeats, recordMarks, chooseSettings) => {
+    if (chooseSettings) {
+      if (mode !== 'normal') await hostSeat.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
+      if (era !== 'current') await hostSeat.page.getByRole('button', { name: 'All-Time', exact: true }).click();
+      await hostSeat.page.getByTestId('start-season').click();
+    }
+    await hostSeat.page.getByTestId('open-builder').waitFor();
+    await hostSeat.page.waitForTimeout(800);
+    for (const seat of activeSeats) {
       await seat.page.getByTestId('open-builder').click();
       if (mode === 'salary') {
         await seat.page.getByTestId('lobby-salary-scout').click();
@@ -595,103 +686,240 @@ async function leagueRun() {
         { timeout: 30000 },
       );
     }
-    await host.page.getByTestId('draw-team').waitFor();
-    await host.page.getByTestId('draw-team').click();
-    await host.page.getByTestId('reroll-team').waitFor();
-    await host.page.getByTestId('reroll-team').click();
-    await host.page.waitForTimeout(500);
-    for (const seat of seats.slice(1)) {
+    if (recordMarks) mark('build-complete');
+    await hostSeat.page.getByTestId('draw-team').waitFor();
+    await hostSeat.page.getByTestId('draw-team').click();
+    await hostSeat.page.getByTestId('reroll-team').waitFor();
+    await hostSeat.page.getByTestId('reroll-team').click();
+    await hostSeat.page.waitForTimeout(500);
+    for (const seat of activeSeats.slice(1)) {
       await seat.page.getByTestId('draw-team').click();
       await seat.page.getByTestId('draw-team').waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
     }
-    const lock = host.page.getByTestId('lock-teams');
+    const lock = hostSeat.page.getByTestId('lock-teams');
     if (await lock.isVisible().catch(() => false)) await lock.click().catch(() => {});
-    await host.page.getByTestId('preview-ready').waitFor();
-    for (const seat of seats) {
+    await hostSeat.page.getByTestId('preview-ready').waitFor();
+    for (const seat of activeSeats) {
       const ready = seat.page.getByTestId('preview-ready');
       if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
     }
-    const startNow = host.page.getByTestId('start-season-now');
+    const startNow = hostSeat.page.getByTestId('start-season-now');
     if (await startNow.isVisible().catch(() => false)) await startNow.click().catch(() => {});
-    await host.page.getByTestId('league-stage').waitFor();
+    await hostSeat.page.getByTestId('league-stage').waitFor();
+    if (recordMarks) mark('season-start');
+  };
+  const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
+  try {
+    let host = seats[0];
+    await host.page.goto(base);
+    await host.page.getByTestId('mp-name').waitFor({ timeout: 90000 });
+    await host.page.getByTestId('mp-name').fill(host.name);
+    await host.page.getByTestId('create-lobby').click();
+    await host.page.getByTestId('lobby-code').waitFor();
+    const code = (await host.page.getByTestId('lobby-code').innerText()).trim();
+    const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
+    if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
+    await snap(host, 'created');
+    for (const seat of seats.slice(1)) {
+      await seat.page.goto(link);
+      await seat.page.getByTestId('invite-code').waitFor({ timeout: 90000 });
+      await snap(seat, 'invite');
+      await seat.page.getByTestId('invite-name').fill(seat.name);
+      await seat.page.getByTestId('invite-join').click();
+      await seat.page.getByTestId('lobby-code').waitFor({ timeout: 90000 });
+      await snap(seat, 'joined');
+    }
+    await buildAndStart(host, seats, true, true);
     let checkpoint = 0;
     let chaosDone = false;
-    for (;;) {
-      const record = await verifyStage(`checkpoint-${checkpoint}`);
-      stages.push(record);
-      for (const seat of active()) await snap(seat, `checkpoint-${checkpoint}`);
-      if (checkpoint === 0) {
+    let lastLabel = '';
+    const deadline = Date.now() + 240000;
+    while (Date.now() < deadline) {
+      for (const seat of active()) await recordSeries(seat);
+      if (await visible(host, 'recap')) {
+        const record = await verifyStage(`recap-${checkpoint}`, null);
+        stages.push(record);
+        mark('recap');
+        break;
+      }
+      if (await visible(host, 'playoff-gate')) {
+        const record = await verifyStage(`gate-${checkpoint}`, null);
+        stages.push(record);
+        if (!marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+        if (!marks.some((entry) => entry.label === 'playoff-gate')) mark('playoff-gate');
+        await markRounds(host, record.roundName ?? record.stageName);
         for (const seat of active()) {
-          const card = seat.page.getByTestId('standings');
-          if (!(await card.isVisible().catch(() => false))) continue;
-          await card.evaluate((element) => element.scrollIntoView({ block: 'start' }));
-          await seat.page.waitForTimeout(400);
-          const cover = await card.evaluate((element) => {
-            const rows = [...element.querySelectorAll('.table-row:not(.head)')];
-            const visible = rows.filter((row) => {
-              const rect = row.getBoundingClientRect();
-              const box = row.closest('.table')?.getBoundingClientRect();
-              const top = Math.max(0, box ? box.top : 0);
-              const bottom = Math.min(window.innerHeight, box ? box.bottom : window.innerHeight);
-              return rect.top >= top && rect.bottom <= bottom;
-            });
-            const hits = visible.map((row) => {
-              const rect = row.getBoundingClientRect();
-              const hit = document.elementFromPoint(rect.left + Math.min(20, rect.width / 2), rect.top + rect.height / 2);
-              return hit !== null && !row.contains(hit) ? hit : null;
-            });
-            const covered = hits.filter((hit) => hit !== null);
-            const byHeader = covered.filter((hit) => hit.closest('.table-row.head') !== null).length;
-            return { rows: rows.length, visible: visible.length, coveredByHeader: byHeader, coveredByOther: covered.length - byHeader };
+          if (await visible(seat, 'checkpoint')) throw new Error(`unexpected checkpoint at the playoff gate for seat ${seat.seat}`);
+          if (!(await visible(seat, 'activity-log'))) throw new Error(`activity log missing at the playoff gate for seat ${seat.seat}`);
+          const next = (await seat.page.getByTestId('next-action').innerText()).trim();
+          if (!next) throw new Error(`next action missing at the playoff gate for seat ${seat.seat}`);
+          await recordSeries(seat);
+          await snap(seat, `gate-${checkpoint}`);
+        }
+        const gateLogs = await Promise.all(active().map(logText));
+        if (new Set(gateLogs).size > 1) throw new Error('activity logs differ at the playoff gate');
+        for (const seat of active()) await installSeriesObserver(seat);
+        const gateAt = Date.now();
+        const readyAt = new Map();
+        for (const seat of active()) if (await clickReady(seat)) readyAt.set(seat.seat, Date.now());
+        await host.page.getByTestId('playoff-gate').waitFor({ state: 'hidden', timeout: 2000 }).catch(() => {});
+        if (await visible(host, 'playoff-gate')) await startPlayoffs();
+        await host.page.getByTestId('playoff-gate').waitFor({ state: 'hidden', timeout: 20000 });
+        const advancedAt = Date.now();
+        for (const seat of active()) {
+          gateWaits.push({
+            stage: 'Playoff gate',
+            phase: 'Playoffs',
+            seat: seat.seat,
+            name: seat.name,
+            gateMs: advancedAt - gateAt,
+            afterReadyMs: readyAt.has(seat.seat) ? advancedAt - readyAt.get(seat.seat) : null,
           });
-          stages.push({ label: `standings-scrolled`, seat: seat.seat, ...cover });
-          await snap(seat, 'standings-scrolled');
         }
+        checkpoint++;
+        lastLabel = '';
+        continue;
       }
-      if (record.phase === 'Recap') break;
-      if (!chaosDone && checkpoint === 0) {
-        chaosDone = true;
-        if (reloadSeat !== null) {
-          const seat = seats[reloadSeat - 1];
-          await seat.page.reload({ waitUntil: 'load' });
-          await waitStage(seat);
-          const tables = [];
-          for (const entry of active()) tables.push(await readTables(entry));
-          const top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
-          if (!top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) throw new Error('standings differ after reload');
-          stages.push({ label: 'after-reload', phase: await phaseOf(seat), standings: top[0] });
-          await snap(seat, 'after-reload');
+      const phase = await phaseOf(host).catch(() => '');
+      const card = await stageName(host);
+      const round = await roundName(host);
+      const label = `${phase}:${round ?? card ?? ''}`;
+      if (label !== lastLabel) {
+        const record = await verifyStage(`stage-${checkpoint}`, null);
+        stages.push(record);
+        const roundLabel = clean(record.roundName ?? record.stageName ?? '').toUpperCase();
+        if ((record.phase === 'Awards' || record.phase === 'Play-In' || record.phase === 'Playoffs') && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+        if (record.phase === 'Playoffs' && roundLabel === 'FIRST ROUND' && !marks.some((entry) => entry.label === 'playoff-gate')) mark('playoff-gate');
+        await markRounds(host, record.roundName ?? record.stageName);
+        if (record.phase === 'Awards' && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+        else if (record.phase === 'Play-In') {
+          if (!marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+          mark('play-in');
         }
-        if (awaySeat !== null) {
-          const seat = seats[awaySeat - 1];
-          await seat.context.close();
-          seat.closed = true;
-          stages.push({ label: 'away', seat: seat.seat, name: seat.name });
+        else if (record.phase === 'Playoffs') {
+          if (!marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+          if (roundLabel === 'FIRST ROUND' && !marks.some((entry) => entry.label === 'playoff-gate')) mark('playoff-gate');
+          else mark(`round:${roundLabel}`);
+        } else if (record.phase === 'Recap') mark('recap');
+        for (const seat of active()) {
+          if (await visible(seat, 'checkpoint')) throw new Error(`unexpected checkpoint at ${label} for seat ${seat.seat}`);
+          if (!(await visible(seat, 'activity-log'))) throw new Error(`activity log missing at ${label} for seat ${seat.seat}`);
+          await recordSeries(seat);
+          await snap(seat, `stage-${checkpoint}`);
         }
-        if (hostLeave) {
-          await host.page.getByTestId('quit-lobby').click();
-          await host.page.waitForTimeout(1500);
-          host.closed = true;
-          stages.push({ label: 'host-left', seat: host.seat, name: host.name });
+        if (!chaosDone && checkpoint === 0) {
+          chaosDone = true;
+          if (reloadSeat !== null) {
+            const seat = seats[reloadSeat - 1];
+            await seat.page.reload({ waitUntil: 'load' });
+            await waitStage(seat);
+            let top = null;
+            for (let attempt = 0; attempt < 6; attempt++) {
+              const labels = await Promise.all(active().map(async (entry) => `${await phaseOf(entry)}:${await stageName(entry)}`));
+              if (new Set(labels).size === 1) {
+                const tables = [];
+                for (const entry of active()) tables.push(await readTables(entry));
+                top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
+                if (top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) break;
+              }
+              await host.page.waitForTimeout(500);
+            }
+            if (!top || !top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) throw new Error('standings differ after reload');
+            stages.push({ label: 'after-reload', phase: await phaseOf(seat), standings: top[0] });
+            await snap(seat, 'after-reload');
+          }
+          if (awaySeat !== null) {
+            const seat = seats[awaySeat - 1];
+            await seat.context.close();
+            seat.closed = true;
+            stages.push({ label: 'away', seat: seat.seat, name: seat.name });
+          }
+          if (hostLeave) {
+            await host.page.getByTestId('quit-lobby').click();
+            await host.page.waitForTimeout(1500);
+            host.closed = true;
+            stages.push({ label: 'host-left', seat: host.seat, name: host.name });
+            host = active()[0];
+          }
         }
+        lastLabel = label;
+        checkpoint++;
       }
-      let moved = false;
-      for (let attempt = 0; attempt < 3 && !moved; attempt++) {
-        for (const seat of active()) await clickReady(seat);
-        await advanceSeat();
-        moved = await waitAdvanced(active()[0], record.stageName, 15000);
-        if (!moved) await host.page.waitForTimeout(1000);
-      }
-      if (!moved) throw new Error(`stage did not advance after ${record.stageName}`);
-      checkpoint++;
-      if (checkpoint > 30) throw new Error('league did not reach the recap');
+      await host.page.waitForTimeout(100);
     }
+    if (!marks.some((entry) => entry.label === 'recap')) throw new Error('league did not reach the recap');
     const champion = stages[stages.length - 1].champion;
     for (const seat of active()) await snap(seat, 'recap');
+    const recapLogs = await Promise.all(active().map(logText));
+    if (new Set(recapLogs).size > 1) throw new Error('activity logs differ at the recap');
+    seriesScores.clear();
+    const pollGaps = new Map();
+    const seriesTimeline = new Map();
+    for (const seat of active()) {
+      const samples = await seat.page.evaluate(() => window.__seriesScores ?? []);
+      seriesTimeline.set(`${seat.seat}:${seat.name}`, samples);
+      let lastKey = null;
+      for (const sample of samples) {
+        const key = `${seat.seat}:${seat.name}`;
+        if (sample.key !== lastKey) {
+          seriesScores.set(key, new Set());
+          lastKey = sample.key;
+        }
+        seriesScores.get(key).add(sample.score);
+      }
+      const polls = await seat.page.evaluate(() =>
+        performance.getEntriesByType('resource').filter((entry) => entry.name.includes('/api/lobby/')).map((entry) => entry.startTime + performance.timeOrigin),
+      );
+      const gaps = polls.slice(1).map((at, index) => at - polls[index]).sort((a, b) => a - b);
+      const pick = (fraction) => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * fraction))] ?? 0;
+      pollGaps.set(`${seat.seat}:${seat.name}`, { p50: pick(0.5), p95: pick(0.95), max: gaps[gaps.length - 1] ?? 0 });
+    }
+    const seenSeries = [...seriesScores.values()].some((scores) => scores.size > 0);
+    const movedSeries = [...seriesScores.values()].some((scores) => scores.size > 1);
+    if (seenSeries && !movedSeries) throw new Error('human series card did not advance game by game');
+    for (const [seat, scores] of seriesScores) {
+      const totals = [...new Set([...scores].map((score) => score.split('-').reduce((sum, value) => sum + Number(value), 0)))].sort((a, b) => a - b);
+      const max = totals[totals.length - 1] ?? 0;
+      if (max < 4) continue;
+      const samples = seriesTimeline.get(seat) ?? [];
+      for (let index = 1; index < samples.length; index++) {
+        if (samples[index].key !== samples[index - 1].key) continue;
+        const previous = samples[index - 1].score.split('-').reduce((sum, value) => sum + Number(value), 0);
+        const current = samples[index].score.split('-').reduce((sum, value) => sum + Number(value), 0);
+        if (current < previous) throw new Error(`human series card went backwards for ${seat}: ${samples[index - 1].score} -> ${samples[index].score}`);
+      }
+      for (let index = 1; index < samples.length; index++) {
+        if (samples[index].key === samples[index - 1].key) continue;
+        const previous = samples[index - 1].score.split('-').reduce((sum, value) => sum + Number(value), 0);
+        if (previous < 4) throw new Error(`human series card left an unfinished series for ${seat}: ${samples[index - 1].score}`);
+      }
+      const polls = await active().find((entry) => `${entry.seat}:${entry.name}` === seat)?.page.evaluate(() =>
+        performance.getEntriesByType('resource').filter((entry) => entry.name.includes('/api/lobby/')).map((entry) => entry.startTime + performance.timeOrigin),
+      ) ?? [];
+      const states = [];
+      for (const sample of samples) {
+        const total = sample.score.split('-').reduce((sum, value) => sum + Number(value), 0);
+        if (!states.length || states[states.length - 1].total !== total) states.push({ total, at: sample.at });
+      }
+      for (let index = 1; index < states.length; index++) {
+        if (states[index].total <= states[index - 1].total + 1) continue;
+        const between = polls.filter((at) => at >= states[index - 1].at && at <= states[index].at);
+        const gaps = [between[0] - states[index - 1].at, ...between.slice(1).map((at, i) => at - between[i]), states[index].at - between[between.length - 1]];
+        if (Math.max(...gaps) <= 700) throw new Error(`human series card skipped a game for ${seat}: ${totals.join(',')}`);
+      }
+      if (totals[0] !== 0) throw new Error(`human series card skipped its first game for ${seat}`);
+      for (const sample of samples) {
+        if (sample.bracketScore && sample.score !== '0-0' && sample.bracketScore !== sample.score) {
+          throw new Error(`my-matchup disagrees with the bracket for ${seat}: ${sample.score}`);
+        }
+      }
+    }
     let playAgain = false;
     let rematchNote = null;
+    let secondGameLog = null;
     const rematchHost = await findHost('rematch');
     if (rematchHost) {
+      tap(rematchHost, 'Play Again');
       await rematchHost.page.getByTestId('rematch').click();
       await rematchHost.page.getByTestId('rematch-ready').waitFor();
       if (awaySeat !== null) {
@@ -717,12 +945,26 @@ async function leagueRun() {
       } else {
         for (const seat of active()) {
           const ready = seat.page.getByTestId('rematch-ready');
-          if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
+          if (await ready.isEnabled().catch(() => false)) {
+            tap(seat, 'Rematch Ready');
+            await ready.click().catch(() => {});
+          }
         }
         const start = rematchHost.page.getByTestId('rematch-start');
-        if (await start.isEnabled().catch(() => false)) await start.click().catch(() => {});
+        if (await start.isEnabled().catch(() => false)) {
+          tap(rematchHost, 'Rematch Start');
+          await start.click().catch(() => {});
+        }
         await rematchHost.page.getByTestId('open-builder').waitFor({ timeout: 30000 });
         for (const seat of active()) await snap(seat, 'second-game');
+        await buildAndStart(rematchHost, active(), false, false);
+        const secondDeadline = Date.now() + 45000;
+        while (Date.now() < secondDeadline) {
+          if ((await visible(rematchHost, 'awards')) || (await visible(rematchHost, 'playoffs')) || (await visible(rematchHost, 'recap'))) break;
+          await rematchHost.page.waitForTimeout(250);
+        }
+        secondGameLog = await rematchHost.page.getByTestId('activity-log').innerText().catch(() => '');
+        for (const seat of active()) await snap(seat, 'second-game-events');
         playAgain = true;
       }
     }
@@ -732,6 +974,28 @@ async function leagueRun() {
       stage: entry.stageName,
       seconds: index + 1 < timed.length ? Math.round((timed[index + 1].at - entry.at) / 1000) : null,
     }));
+    const phaseDurations = marks.slice(1).map((entry, index) => ({
+      from: marks[index].label,
+      to: entry.label,
+      seconds: Math.round((entry.at - marks[index].at) / 1000),
+    }));
+    const actions = seats.map((seat) => ({ seat: seat.seat, name: seat.name, actions: seat.actions }));
+    const gateWaitTotals = seats.map((seat) => ({
+      seat: seat.seat,
+      name: seat.name,
+      gateMs: gateWaits.filter((entry) => entry.seat === seat.seat).reduce((sum, entry) => sum + entry.gateMs, 0),
+      afterReadyMs: gateWaits.filter((entry) => entry.seat === seat.seat).reduce((sum, entry) => sum + (entry.afterReadyMs ?? 0), 0),
+    }));
+    const apiLatency = [...apiSamples.entries()]
+      .map(([endpoint, sample]) => ({
+        endpoint,
+        count: sample.ms.length,
+        p50: median(sample.ms),
+        p95: pct(sample.ms, 95),
+        max: Math.max(...sample.ms),
+        status: sample.status,
+      }))
+      .sort((a, b) => a.endpoint.localeCompare(b.endpoint));
     const summary = {
       code,
       players,
@@ -742,15 +1006,25 @@ async function leagueRun() {
       chaos,
       stages,
       phaseTimings,
+      phaseDurations,
+      marks,
+      actions,
+      gateWaits,
+      gateWaitTotals,
+      seriesScores: Object.fromEntries([...seriesScores].map(([seat, scores]) => [seat, [...scores]])),
+      seriesTimeline: Object.fromEntries(seriesTimeline),
+      pollGaps: Object.fromEntries(pollGaps),
+      apiLatency,
       champion,
       playAgain,
       rematchNote,
+      secondGameLog,
       errors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, errors: seat.errors })),
       httpErrors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, responses: seat.http })),
       evidence: ev,
     };
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
-    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, checkpoints: stages.filter((entry) => entry.phase).length, phaseTimings, champion, playAgain, rematchNote, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
   } finally {
     await browser.close();
   }

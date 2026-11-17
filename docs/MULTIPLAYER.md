@@ -109,24 +109,23 @@ slower poll can never move the reveal backwards.
 | 0 | the whole regular season | round by round: 0.4 s for a round with a human game, 8 ms otherwise |
 | 4 | awards and final standings | on entry |
 | 5 | play-in | on entry |
-| 6-9 | playoff round | game by game: 1.5 s in a series with a human team, 30 ms otherwise |
+| 6 | playoff gate | waits for a qualified human to ready or the host to start the first round |
+| 7-9 | playoff round | game by game: 0.12 s in a series with a human team, 2.4 ms otherwise |
 | 10 | recap | on entry |
 
-Games without a human team run 50 times faster (`CPU_SPEEDUP`); a human team's games keep the old 0.4 s and 1.5 s
+Games without a human team run 50 times faster (`CPU_SPEEDUP`); a human team's games keep the old 0.4 s and 0.12 s
 pace. The clock stores these reveal units in `league_slices.clock.units`. A clock without units, saved before this
-change, keeps the old fixed batches. A regular season of 1,230 games now takes about 33 to 35 seconds instead of
+change, keeps the old fixed batches. A regular season of 1,230 games now takes about 5 seconds instead of
 8 minutes 12 seconds, for 1 to 8 humans.
 
-The end of the regular season is not a stop: the server moves straight to the awards stage. Every later stage ends
-at a checkpoint. At a checkpoint, present participants ready; the stage advances when every
-present participant is ready, or when the host advances alone. Away (unseen for 60 s) and left participants
-never block. If the host is present but has not readied 90 seconds after the checkpoint opened, any present
-participant may advance once everyone except the host is ready, and the server advances on the next poll. A
-player who is still reading inside those 90 seconds is never skipped. The host role moves to the earliest joined
-present participant when the host is away for 45 s or leaves.
+The end of the regular season is not a stop: the server moves through awards and play-in on its own. Only stage 6,
+the gate before the first playoff round, waits, and only when at least one present human qualified. A qualified
+participant readies, or the host starts the round alone; the gate opens when every present qualified participant is
+ready, or when the host starts. Away (unseen for 60 s) and left participants never block. The host role moves to
+the earliest joined present participant when the host is away for 45 s or leaves.
 
 `POST /ready` and `POST /advance` carry an action id and the expected stage. A retry of the same action id, or a
-request carrying an old stage, returns the current view without moving the checkpoint twice. Every phase
+request carrying an old stage, returns the current view without moving the stage twice. Every phase
 transition uses a row lock or an atomic compare-and-set, so concurrent ready/advance/rematch/build/draw/reroll/
 lock requests cannot skip, double-apply or move the cursor backwards.
 
@@ -193,8 +192,8 @@ All handlers are Web-standard functions under `api/lobby/**` and send the partic
 | POST | `/api/lobby/:code/lock` | host: draw any missing teams, lock assignments and open the preview |
 | POST | `/api/lobby/:code/build` | validate and store a Normal, Salary or Squad build |
 | POST | `/api/lobby/:code/power` | one Salary Shuffle or Scout for this participant |
-| POST | `/api/lobby/:code/ready` | ready at the current checkpoint, preview or rematch gate |
-| POST | `/api/lobby/:code/advance` | host or all-ready: move to the next checkpoint; host lock now; open the rematch builds |
+| POST | `/api/lobby/:code/ready` | ready at the playoff gate, preview or rematch gate |
+| POST | `/api/lobby/:code/advance` | host or all-ready: start the playoff round; host lock now; open the rematch builds |
 | POST | `/api/lobby/:code/rematch` | host: keep people and code, reset to the rematch gate |
 | POST | `/api/lobby/:code/remove` | host: remove an away player (counts as leaving) |
 | POST | `/api/lobby/:code/leave` | leave; before the draw the seat is deleted, after it is marked left |
@@ -224,7 +223,7 @@ fresh copy of the old schema with old rows.
 
 ## Transport and privacy
 
-The client polls every second while waiting or at a checkpoint, every 1.5 s while a stage reveals, and every five
+The client polls every second while waiting or at the playoff gate, every 1.5 s while a stage reveals, and every five
 seconds while hidden; it re-fetches after its own actions. The view exposes names, seats, teams, build summaries,
 revealed results and the last 30 events. It
 never exposes another participant's secret, token hash, participant id or full build. A lobby is reachable only

@@ -2,7 +2,7 @@ import { LEAGUE_TEAMS, type HumanSeason, type LeagueResult, type SeriesResult } 
 import {
   STAGE_NAMES,
   assembleLeagueView,
-  isCheckpoint,
+  isStageCheckpoint,
   playoffViewsFrom,
   stageGamesTotalFrom,
   stageTotalFrom,
@@ -202,30 +202,58 @@ async function readGamesAfter(lobbyId: string, after: number, upTo: number): Pro
 }
 
 const SERIES_READ = `
-with s as (
-  select entry, ord, jsonb_array_length(entry->'games') as len
-  from league_slices, jsonb_array_elements(series) with ordinality as t(entry, ord)
-  where lobby_id = $1::uuid and (entry->>'round')::int <= $2 - 5
-), r as (
-  select entry, ord, len,
-    coalesce(sum(len) over (order by ord rows between unbounded preceding and 1 preceding), 0) as before
-  from s
-)
-select coalesce(jsonb_agg(
-  jsonb_set(entry, '{games}', (
-    select coalesce(jsonb_agg(g order by gord), '[]'::jsonb)
-    from jsonb_array_elements(entry->'games') with ordinality as gt(g, gord)
-    where gord <= greatest(0, least(len, $3 - before))
-  ))
-  order by ord
-), '[]'::jsonb) as series
-from r
+select coalesce(jsonb_agg(entry order by ord), '[]'::jsonb) as series
+from league_slices, jsonb_array_elements(series) with ordinality as t(entry, ord)
+where lobby_id = $1::uuid and (entry->>'round')::int <= $2 - 5
 `;
 
 export async function readLeagueClock(lobbyId: string): Promise<LeagueClock | null> {
   try {
     const rows = await db().query<{ clock: LeagueClock }>('select clock from league_slices where lobby_id = $1::uuid', [lobbyId]);
-    return rows[0]?.clock ?? null;
+    const clock = rows[0]?.clock;
+    if (!clock) return null;
+    if (clock.qualified && clock.humanSeasons && clock.series && clock.playinGames && clock.champion !== undefined && clock.awards !== undefined) {
+      return clock;
+    }
+    const extras = await db().query<{
+      series: SeriesResult[] | null;
+      playin: { conference: 'east' | 'west'; label: string; home: string; away: string; winner: string }[] | null;
+      humans: HumanSeason[] | null;
+      champion: string | null;
+      awards: { mvp: { name: string; team: string }; dpoy: { name: string; team: string } } | null;
+    }>('select series, playin, humans, champion, awards from league_slices where lobby_id = $1::uuid', [lobbyId]);
+    const row = extras[0] ?? { series: null, playin: null, humans: null, champion: null, awards: null };
+    if (!clock.qualified) {
+      clock.qualified = [
+        ...new Set((row.series ?? []).filter((entry) => entry.round === 1).flatMap((entry) => [entry.high, entry.low])),
+      ];
+    }
+    if (!clock.humanSeasons) {
+      clock.humanSeasons = (row.humans ?? []).map((entry) => ({
+        participantId: entry.participantId,
+        name: entry.name,
+        team: entry.team,
+        wins: entry.wins,
+        losses: entry.losses,
+        seed: entry.seed,
+      }));
+    }
+    if (!clock.series) {
+      clock.series = (row.series ?? []).map((entry) => ({
+        round: entry.round,
+        name: entry.name,
+        conference: entry.conference,
+        high: entry.high,
+        low: entry.low,
+        winner: entry.winner,
+        wins: entry.wins,
+        losses: entry.losses,
+      }));
+    }
+    if (!clock.playinGames) clock.playinGames = row.playin ?? [];
+    if (clock.champion === undefined) clock.champion = row.champion;
+    if (clock.awards === undefined) clock.awards = row.awards;
+    return clock;
   } catch (error) {
     if (missingTable(error)) return null;
     throw error;
@@ -237,6 +265,7 @@ export async function readLeagueView(
   stage: number,
   cursor: number,
   meParticipantId: string,
+  startedAt: number | null = null,
 ): Promise<LeagueSliceView | null> {
   let metaRows: MetaRow[];
   try {
@@ -303,7 +332,7 @@ export async function readLeagueView(
     checkpoint,
     stage,
   );
-  return { view: assembleLeagueView(data, stage, Number(cursor), meParticipantId), humans, clock };
+  return { view: assembleLeagueView(data, stage, Number(cursor), meParticipantId, startedAt), humans, clock };
 }
 
 export interface LeagueDeltaData {
@@ -328,13 +357,14 @@ export async function readLeagueDelta(
   sinceCursor: number,
   meTeam: string | null,
   clock: LeagueClock,
+  startedAt: number | null = null,
 ): Promise<LeagueDeltaData | null> {
   const total = stageGamesTotalFrom(clock, stage);
   const clamped = Math.max(0, Math.min(Number(cursor), total));
   if (stage >= 6) {
     let series: SeriesResult[] | null;
     try {
-      const rows = await db().query<{ series: SeriesResult[] | null }>(SERIES_READ, [lobbyId, stage, clamped]);
+      const rows = await db().query<{ series: SeriesResult[] | null }>(SERIES_READ, [lobbyId, stage]);
       series = rows[0]?.series ?? null;
     } catch (error) {
       if (missingTable(error)) return null;
@@ -360,7 +390,7 @@ export async function readLeagueDelta(
     return {
       stage,
       stageCursor: clamped,
-      checkpoint: isCheckpoint(clamped, total),
+      checkpoint: isStageCheckpoint(clock, stage, clamped, startedAt),
       stageName: STAGE_NAMES[stage] ?? 'Season',
       stageTotal: stageTotalFrom(clock, stage),
       games: [],
@@ -396,7 +426,7 @@ export async function readLeagueDelta(
     return {
       stage,
       stageCursor: clamped,
-      checkpoint: isCheckpoint(clamped, total),
+      checkpoint: isStageCheckpoint(clock, stage, clamped, startedAt),
       stageName: STAGE_NAMES[stage] ?? 'Season',
       stageTotal: total,
       games,
@@ -467,7 +497,7 @@ export async function readLeagueDelta(
     checkpoint,
     stage,
   );
-  const full = assembleLeagueView(data, stage, clamped, meParticipantId);
+  const full = assembleLeagueView(data, stage, clamped, meParticipantId, startedAt);
   const humanTeams = new Set(humans.map((entry) => entry.team));
   const meIndex = meTeam ? LEAGUE_TEAMS.indexOf(meTeam) : -1;
   const games: LeagueGameView[] = newGames.map((game) => ({

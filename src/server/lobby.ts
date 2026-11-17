@@ -11,14 +11,13 @@ import type { SalCard } from '../shared/engine/salary.js';
 import { scoutGrade, shuffleColumn, shuffleRow, type ShuffleTarget } from '../shared/engine/salaryPowers.js';
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
 import {
-  checkpointAtFrom,
-  nextStageFrom,
-  seasonEndsAt,
+  nextStage,
+  playoffRoundHeld,
   clockFromLeague,
-  isCheckpoint,
+  isStageCheckpoint,
   revealLeague,
-  stageCursorAtFrom,
   stageGamesTotalFrom,
+  stageCursorAtFrom,
   type LeagueClock,
   type LeagueView,
 } from '../shared/mp/league.js';
@@ -26,7 +25,6 @@ import { BuildSummarySchema, LobbyBuildSchema, SettingsSchema } from '../shared/
 import {
   AWAY_MS,
   CAPACITY,
-  CHECKPOINT_IDLE_MS,
   EVENT_LIMIT,
   HOST_IDLE_MS,
   REROLL_WINDOW_MS,
@@ -35,6 +33,8 @@ import {
   type EventView,
   type LobbyBuild,
   type LobbyDelta,
+  CHECKPOINT_IDLE_MS,
+  type LobbyGateView,
   type LobbyPhase,
   type LobbySettings,
   type LobbyView,
@@ -91,13 +91,14 @@ interface RawLobby {
   stage_cursor: number | string;
   stage_started_at: string | null;
   locked_at: string | null;
+  updated_at: string;
   rematch: number | string;
   season_secret: string;
 }
 
 type LobbyRow = RawLobby;
 
-interface RawParticipant {
+export interface RawParticipant {
   id: string;
   name: string;
   seat: number;
@@ -225,6 +226,204 @@ function toEventViews(row: ReadRow): EventView[] {
   });
 }
 
+export function gateViewFor(
+  participants: RawParticipant[],
+  leagueView: { checkpoint: boolean; playoffs: { round: number; high: string; low: string }[] | null | undefined } | null,
+  meId: string | null,
+  hostId: string | null,
+  phase: LobbyPhase,
+  stage: number,
+  now: number,
+): LobbyGateView | null {
+  if (phase !== 'playoffs' || stage !== 6 || !leagueView?.checkpoint) return null;
+  const qualifiedTeams = new Set(
+    (leagueView.playoffs ?? []).filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]),
+  );
+  const me = participants.find((entry) => entry.id === meId) ?? null;
+  const qualified = participants.filter((entry) => entry.status !== 'left' && entry.team !== null && qualifiedTeams.has(entry.team));
+  const activeQualified = qualified.filter((entry) => now - Date.parse(entry.last_seen) <= AWAY_MS);
+  if (activeQualified.length === 0) return null;
+  const ready = activeQualified.filter((entry) => Number(entry.ready_stage) >= 6);
+  const waitingOn = activeQualified.filter((entry) => Number(entry.ready_stage) < 6);
+  const waitingNamesArray = waitingOn.map((entry) => entry.name);
+  const mine = me !== null && me.team !== null && qualifiedTeams.has(me.team);
+  const host = me !== null && me.id === hostId;
+  const hostName = participants.find((entry) => entry.id === hostId)?.name ?? 'the host';
+  const waitingNames = waitingOn.map((entry) => (me && entry.id === me.id ? 'you' : entry.name)).join(', ');
+  let nextAction = 'Starting the playoffs';
+  let actor: string | null = null;
+  if (waitingOn.length > 0) {
+    if (host) {
+      nextAction = `Start the playoffs · waiting on ${waitingNames}`;
+      actor = me?.name ?? null;
+    } else if (mine && me && Number(me.ready_stage) < 6) {
+      nextAction = `Ready for the playoffs · waiting on ${waitingNames}; ${hostName} can start`;
+      actor = me.name;
+    } else {
+      nextAction = `Waiting on ${waitingNames} to ready; ${hostName} can start`;
+      actor = hostName;
+    }
+  }
+  return {
+    active: true,
+    stage: 6,
+    qualified: activeQualified.length,
+    ready: ready.length,
+    mine,
+    host,
+    waitingOn: waitingNamesArray,
+    nextAction,
+    actor,
+  };
+}
+
+export interface StageEvent {
+  participantId: string | null;
+  kind: string;
+  detail: string;
+  key: string;
+}
+
+type PlayoffStartReason = { kind: 'host'; name: string } | { kind: 'all-ready' } | { kind: 'idle'; name: string } | null;
+
+export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, startReason: PlayoffStartReason = null): StageEvent[] {
+  const humans = clock.humanSeasons ?? [];
+  const byTeam = new Map(humans.map((entry) => [entry.team, entry]));
+  const qualified = new Set(clock.qualified ?? []);
+  const events: StageEvent[] = [];
+  const key = (suffix: string) => (leagueNo > 0 ? `${leagueNo}:${suffix}` : suffix);
+  if (stage <= 3) {
+    for (const human of humans) {
+      events.push({
+        participantId: human.participantId,
+        kind: 'season_final',
+        detail: `finished ${human.wins}-${human.losses} · #${human.seed}`,
+        key: key(`${stage}:season:${human.team}`),
+      });
+    }
+    return events;
+  }
+  if (stage === 4) {
+    if (clock.awards) {
+      events.push({
+        participantId: null,
+        kind: 'awards',
+        detail: `MVP ${clock.awards.mvp.name} (${clock.awards.mvp.team}) · DPOY ${clock.awards.dpoy.name} (${clock.awards.dpoy.team})`,
+        key: key(`${stage}:awards`),
+      });
+    }
+    const playinTeams = new Set((clock.playinGames ?? []).flatMap((game) => [game.home, game.away]));
+    for (const human of humans) {
+      if (qualified.has(human.team) || playinTeams.has(human.team)) continue;
+      events.push({
+        participantId: human.participantId,
+        kind: 'elimination',
+        detail: `missed the playoffs with ${human.team}`,
+        key: key(`${stage}:eliminated:${human.team}`),
+      });
+    }
+    return events;
+  }
+  if (stage === 5) {
+    for (const game of clock.playinGames ?? []) {
+      const winner = game.winner;
+      const loser = winner === game.home ? game.away : game.home;
+      const involved = [byTeam.get(game.home), byTeam.get(game.away)].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      for (const [index, human] of involved.entries()) {
+        const won = human.team === winner;
+        const suffix = index === 0 ? '' : `:${human.team}`;
+        events.push({
+          participantId: human.participantId,
+          kind: 'playin_result',
+          detail: won ? `beat ${loser} in the ${game.label} play-in` : `lost to ${winner} in the ${game.label} play-in`,
+          key: key(`${stage}:playin:${game.conference}:${game.label}${suffix}`),
+        });
+        if (!qualified.has(human.team)) {
+          events.push({
+            participantId: human.participantId,
+            kind: 'elimination',
+            detail: `missed the playoffs with ${human.team}`,
+            key: key(`${stage}:eliminated:${human.team}`),
+          });
+        }
+      }
+    }
+    return events;
+  }
+  if (stage >= 6 && stage <= 9) {
+    const round = stage - 5;
+    for (const series of (clock.series ?? []).filter((entry) => entry.round === round)) {
+      const loser = series.winner === series.high ? series.low : series.high;
+      const winnerWins = series.winner === series.high ? series.wins : series.losses;
+      const loserWins = series.winner === series.high ? series.losses : series.wins;
+      const involved = [byTeam.get(series.high), byTeam.get(series.low)].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      for (const [index, human] of involved.entries()) {
+        const won = human.team === series.winner;
+        const suffix = index === 0 ? '' : `:${human.team}`;
+        events.push({
+          participantId: human.participantId,
+          kind: 'series_result',
+          detail: won
+            ? `beat ${loser} ${winnerWins}-${loserWins} in the ${series.name}`
+            : `lost to ${series.winner} ${winnerWins}-${loserWins} in the ${series.name}`,
+          key: key(`${stage}:series:${series.round}:${series.high}:${series.low}${suffix}`),
+        });
+      }
+      const winnerHuman = byTeam.get(series.winner);
+      if (winnerHuman && stage !== 9) {
+        events.push({
+          participantId: winnerHuman.participantId,
+          kind: 'advance',
+          detail: `advanced with ${winnerHuman.team} from the ${series.name}`,
+          key: key(`${stage}:advance:${winnerHuman.team}`),
+        });
+      }
+      const loserHuman = byTeam.get(loser);
+      if (loserHuman) {
+        events.push({
+          participantId: loserHuman.participantId,
+          kind: 'elimination',
+          detail: `was eliminated with ${loserHuman.team} in the ${series.name}`,
+          key: key(`${stage}:eliminated:${loserHuman.team}`),
+        });
+      }
+    }
+    if (stage === 6) {
+      events.push({
+        participantId: null,
+        kind: 'playoff_start',
+        detail:
+          startReason?.kind === 'all-ready'
+            ? 'Everyone was ready, so the playoffs started'
+            : startReason?.kind === 'idle'
+              ? `The playoffs started automatically after waiting for ${startReason.name}`
+              : startReason?.kind === 'host'
+                ? `${startReason.name} started the playoffs`
+                : 'The playoffs started automatically',
+        key: key(`${stage}:start`),
+      });
+    }
+    if (stage === 9 && clock.champion) {
+      const championHuman = byTeam.get(clock.champion);
+      events.push({
+        participantId: championHuman?.participantId ?? null,
+        kind: 'champion',
+        detail: championHuman ? `won the championship with ${clock.champion}` : `${clock.champion} won the championship`,
+        key: key(`${stage}:champion`),
+      });
+    }
+  }
+  return events;
+}
+
+function uniqueStageEvents(stage: number, clock: LeagueClock, leagueNo: number, gateOnly = false, startReason: PlayoffStartReason = null): StageEvent[] {
+  const source = gateOnly
+    ? stageEvents(stage, clock, leagueNo, startReason).filter((entry) => entry.kind === 'playoff_start')
+    : stageEvents(stage, clock, leagueNo, startReason);
+  const unique = new Map(source.map((entry) => [`${entry.kind}:${entry.key}`, entry]));
+  return [...unique.values()];
+}
+
 function salaryGridView(grid: SalCard[][] | null): SalaryCardPick[][] | null {
   if (!grid) return null;
   return grid.map((column) =>
@@ -344,6 +543,7 @@ function buildView(
     salaryPowers,
     league: leagueView,
     ready: readyView,
+    gate: gateViewFor(row.participants, leagueView, meRow.id, raw.host_participant, raw.phase, stage, now),
     serverTime: new Date(now).toISOString(),
   };
 }
@@ -363,6 +563,7 @@ export function buildLobbyDelta(view: LobbyView, sinceEvent: number): LobbyDelta
       season: entry.season,
     })),
     events: view.events.filter((event) => event.id > sinceEvent),
+    gate: view.gate,
   };
 }
 
@@ -379,7 +580,7 @@ select
     'id', l.id, 'code', l.code, 'phase', l.phase, 'host_participant', l.host_participant,
     'settings', l.settings, 'version', l.version, 'mode', l.mode, 'era', l.era,
     'league_version', l.league_version, 'stage', l.stage, 'stage_cursor', l.stage_cursor,
-    'stage_started_at', l.stage_started_at, 'locked_at', l.locked_at, 'rematch', l.rematch,
+    'stage_started_at', l.stage_started_at, 'locked_at', l.locked_at, 'updated_at', l.updated_at, 'rematch', l.rematch,
     'season_secret', l.season_secret
   ) from l) as lobby,
   (select coalesce(json_agg(json_build_object(
@@ -398,7 +599,6 @@ select
     'id', e.id, 'kind', e.kind, 'payload', e.payload, 'participant_id', e.participant_id, 'at', e.created_at
   ) order by e.id desc), '[]'::json) from (
     select * from events where lobby_id = (select id from l)
-      and (id > $3 or id = (select max(id) from events where lobby_id = (select id from l)))
     order by id desc limit ${EVENT_LIMIT}
   ) e) as events
 `;
@@ -616,6 +816,7 @@ function factsFromProbe(row: ProbeData, now: number): MaintenanceFacts {
     activeHaveTeam: active.length > 0 && active.every((entry) => entry[10]),
     activeReadyStage: active.length > 0 && active.every((entry) => Number(entry[8]) >= stage),
     activeReadyCount: active.filter((entry) => Number(entry[8]) >= stage).length,
+    activeTeams: active.map((entry) => ({ team: entry[10] || null, ready: Number(entry[8]) >= stage })),
     hostReadyStage: host ? Number(host[8]) : null,
     presentPreviewReady: present.length > 0 && present.every((entry) => entry[9]),
   };
@@ -631,8 +832,8 @@ function onlyClockMaintenance(facts: MaintenanceFacts, clock: LeagueClock, now: 
   if (!leaguePhase(facts.phase)) return false;
   const startedAt = facts.stageStartedAt ? Date.parse(facts.stageStartedAt) : null;
   const cursor = Math.max(facts.stageCursor, stageCursorAtFrom(clock, facts.stage, startedAt, now));
-  const total = stageGamesTotalFrom(clock, facts.stage);
-  if (isCheckpoint(cursor, total) && (facts.activeReadyStage || seasonEndsAt(clock.counts, facts.stage))) return false;
+  if (facts.stage === 6 && cursor >= stageGamesTotalFrom(clock, 6)) return false;
+  if (isStageCheckpoint(clock, facts.stage, cursor, startedAt)) return false;
   return true;
 }
 
@@ -689,7 +890,7 @@ export async function unchangedPoll(input: { code: string; secret: string; since
   }
 }
 
-async function buildClockView(probe: ProbeOk, sinceEvent: number): Promise<LobbyView | null> {
+async function buildClockView(probe: ProbeOk): Promise<LobbyView | null> {
   const raw = probe.lobby;
   const clock = probe.sliceClock;
   if (!clock) return null;
@@ -703,7 +904,7 @@ async function buildClockView(probe: ProbeOk, sinceEvent: number): Promise<Lobby
   if (cursor > oldCursor) {
     const updated = await db().query<{ version: number | string; stage_cursor: number | string }>(
       `update lobbies set stage_cursor = greatest(stage_cursor, $2), version = version + 1, updated_at = now()
-       where id = $1::uuid and stage = $3 returning version, stage_cursor`,
+       where id = $1::uuid and stage = $3 and stage_cursor < $2 returning version, stage_cursor`,
       [raw.id, cursor, stage],
     );
     if (!updated[0]) return null;
@@ -713,9 +914,9 @@ async function buildClockView(probe: ProbeOk, sinceEvent: number): Promise<Lobby
   const parts = probe.row.p ?? [];
   const me = parts.find((entry) => entry[6]);
   if (!me) return null;
-  const slice = await readLeagueView(raw.id, stage, stageCursor, me[0]);
+  const slice = await readLeagueView(raw.id, stage, stageCursor, me[0], raw.stage_started_at ? Date.parse(raw.stage_started_at) : null);
   if (!slice) return null;
-  const events = await db().query<{ events: RawEvent[] }>(EVENTS_SQL, [raw.code, sinceEvent]);
+  const events = await db().query<{ events: RawEvent[] }>(EVENTS_SQL, [raw.code, 0]);
   const row: ReadRow = {
     lobby: { ...raw, version, stage_cursor: stageCursor },
     participants: parts.map(probeParticipant),
@@ -761,6 +962,7 @@ function compactFacts(row: CompactProbeData): MaintenanceFacts {
     activeHaveTeam: active.length > 0 && active.every((entry) => entry[5]),
     activeReadyStage: active.length > 0 && active.every((entry) => Number(entry[2]) >= stage),
     activeReadyCount: active.filter((entry) => Number(entry[2]) >= stage).length,
+    activeTeams: active.map((entry) => ({ team: entry[5] || null, ready: Number(entry[2]) >= stage })),
     hostReadyStage: host ? Number(host[2]) : null,
     presentPreviewReady: present.length > 0 && present.every((entry) => entry[3]),
   };
@@ -862,7 +1064,7 @@ export async function pollLobby(input: {
         return { kind: 'read' };
       }
       if (!versionChanged && !probe.clockMoved) return { kind: 'no_content' };
-      const view = await buildClockView(probe, input.events);
+      const view = await buildClockView(probe);
       if (!view) return { kind: 'read' };
       return { kind: 'clock', view };
     }
@@ -899,7 +1101,7 @@ async function buildLeagueDelta(probe: CompactProbeOk, sinceCursor: number, sinc
   if (cursor > oldCursor) {
     const updated = await db().query<{ version: number | string; stage_cursor: number | string }>(
       `update lobbies set stage_cursor = greatest(stage_cursor, $2), version = version + 1, updated_at = now()
-       where id = $1::uuid and stage = $3 returning version, stage_cursor`,
+       where id = $1::uuid and stage = $3 and stage_cursor < $2 returning version, stage_cursor`,
       [raw.id, cursor, stage],
     );
     if (!updated[0]) return null;
@@ -908,7 +1110,15 @@ async function buildLeagueDelta(probe: CompactProbeOk, sinceCursor: number, sinc
   }
   const me = probe.participants.find((entry) => entry[7]);
   if (!me) return null;
-  const league = await readLeagueDelta(raw.id, stage, stageCursor, sinceCursor, me[5] || null, clock);
+  const league = await readLeagueDelta(
+    raw.id,
+    stage,
+    stageCursor,
+    sinceCursor,
+    me[5] || null,
+    clock,
+    raw.stage_started_at ? Date.parse(raw.stage_started_at) : null,
+  );
   if (!league) return null;
   const events =
     probe.ev > sinceEvent ? ((await db().query<{ events: EventView[] }>(DELTA_EVENTS_SQL, [probe.code, sinceEvent]))[0]?.events ?? []) : [];
@@ -1001,13 +1211,20 @@ locked as (
   where id = (select id from l) and phase = 'draw'
     and (select count(*) from present) >= 2
     and not exists (select 1 from present where team is null)
-    and now() - (select max(created_at) from lobby_teams where lobby_id = (select id from l))
-      >= make_interval(secs => $4::int)
+    and (
+      now() - (select max(created_at) from lobby_teams where lobby_id = (select id from l))
+        >= make_interval(secs => $4::int)
+      or not exists (
+        select 1 from participants p
+        join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
+        where p.lobby_id = (select id from l) and p.status <> 'left' and not coalesce(t.reroll_used, false)
+      )
+    )
   returning id
 ),
 log as (
   insert into events (lobby_id, kind, payload)
-  select id, 'locked', jsonb_build_object('detail', 'locked the teams') from locked
+  select id, 'locked', jsonb_build_object('detail', 'locked the teams', 'name', 'Automatically') from locked
 )
 select (select count(*)::int from locked) as locked
 `;
@@ -1034,7 +1251,9 @@ with updated as (
   where id = $1::uuid and phase = 'rematch'
     and (select count(*) from participants p where p.lobby_id = $1::uuid and p.status <> 'left') >= 2
     and not exists (
-      select 1 from participants p where p.lobby_id = $1::uuid and p.status <> 'left' and not p.preview_ready
+      select 1 from participants p
+      where p.lobby_id = $1::uuid and p.status <> 'left'
+        and p.last_seen > now() - interval '60 seconds' and not p.preview_ready
     )
   returning id
 ), reset as (
@@ -1113,7 +1332,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     if (updated[0]) {
       await db().query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'locked', jsonb_build_object('detail', 'locked the builds'))`,
+         values ($1::uuid, 'locked', jsonb_build_object('detail', 'locked the builds', 'name', 'Automatically'))`,
         [raw.id],
       );
     }
@@ -1126,12 +1345,12 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     return;
   }
   if (raw.phase === 'rematch') {
-    if (present.length < 2 || !present.every((entry) => entry.preview_ready)) return;
+    if (active.length < 2 || !active.every((entry) => entry.preview_ready)) return;
     const updated = await db().query<{ id: string }>(REMATCH_DRAW_SQL, [raw.id]);
     if (updated[0]?.id) {
       await db().query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds'))`,
+         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds', 'name', 'Automatically'))`,
         [raw.id],
       );
     }
@@ -1145,23 +1364,39 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
   if (cursor > Number(raw.stage_cursor)) {
     await db().query(
       `update lobbies set stage_cursor = greatest(stage_cursor, $2), version = version + 1, updated_at = now()
-       where id = $1::uuid and stage = $3`,
+       where id = $1::uuid and stage = $3 and stage_cursor < $2`,
       [raw.id, cursor, stage],
     );
   }
-  const total = stageGamesTotalFrom(clock, stage);
-  if (!isCheckpoint(cursor, total)) return;
-  if (seasonEndsAt(clock.counts, stage) || (active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage))) {
-    await advanceStage(raw.id, stage, clock);
+  if (!isStageCheckpoint(clock, stage, cursor, startedAt)) {
+    if (stage >= 6 && stage <= 9 && cursor >= stageGamesTotalFrom(clock, stage)) {
+      if (!playoffRoundHeld(clock, stage, startedAt, now)) await advanceStage(raw.id, stage, clock, Number(raw.rematch));
+    }
     return;
   }
-  const checkpointAt = checkpointAtFrom(clock, stage, startedAt);
-  if (checkpointAt === null || now < checkpointAt + CHECKPOINT_IDLE_MS) return;
-  const activeHost = active.find((entry) => entry.id === raw.host_participant);
-  if (!activeHost || Number(activeHost.ready_stage) >= stage) return;
-  const others = active.filter((entry) => entry.id !== activeHost.id);
-  if (others.length === 0 || others.some((entry) => Number(entry.ready_stage) < stage)) return;
-  await advanceStage(raw.id, stage, clock);
+  if (stage >= 10) return;
+  if (stage === 6) {
+    const qualifiedTeams = new Set(clock.qualified ?? []);
+    const qualified = present.filter((entry) => entry.team !== null && qualifiedTeams.has(entry.team));
+    const activeQualified = qualified.filter((entry) => now - Date.parse(entry.last_seen) <= AWAY_MS);
+    const host = activeQualified.find((entry) => entry.id === raw.host_participant);
+    const others = activeQualified.filter((entry) => entry.id !== raw.host_participant);
+    if (
+      host &&
+      others.length > 0 &&
+      others.every((entry) => Number(entry.ready_stage) >= 6) &&
+      Number(host.ready_stage) < 6 &&
+      now - Date.parse(raw.updated_at) >= CHECKPOINT_IDLE_MS
+    ) {
+      await startPlayoffRound(raw.id, clock, Number(raw.rematch), { kind: 'idle', name: host.name });
+      return;
+    }
+    if (activeQualified.length > 0 && activeQualified.some((entry) => Number(entry.ready_stage) < 6)) return;
+    await startPlayoffRound(raw.id, clock, Number(raw.rematch), activeQualified.length > 0 ? { kind: 'all-ready' } : null);
+    return;
+  }
+  if (stage >= 6 && stage <= 9 && playoffRoundHeld(clock, stage, startedAt, now)) return;
+  await advanceStage(raw.id, stage, clock, Number(raw.rematch));
 }
 
 interface MaintenanceFacts {
@@ -1179,6 +1414,7 @@ interface MaintenanceFacts {
   activeHaveTeam: boolean;
   activeReadyStage: boolean;
   activeReadyCount: number;
+  activeTeams: { team: string | null; ready: boolean }[];
   hostReadyStage: number | null;
   presentPreviewReady: boolean;
 }
@@ -1206,6 +1442,7 @@ function factsFromRow(row: ReadRow): MaintenanceFacts | null {
     activeHaveTeam: active.length > 0 && active.every((entry) => entry.team),
     activeReadyStage: active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage),
     activeReadyCount: active.filter((entry) => Number(entry.ready_stage) >= stage).length,
+    activeTeams: active.map((entry) => ({ team: entry.team, ready: Number(entry.ready_stage) >= stage })),
     hostReadyStage: host ? Number(host.ready_stage) : null,
     presentPreviewReady: present.length > 0 && present.every((entry) => entry.preview_ready),
   };
@@ -1218,38 +1455,73 @@ function needsMaintenance(facts: MaintenanceFacts | null, now: number, clock: Le
   if (facts.phase === 'draw') return facts.active >= 2 && facts.activeHaveTeam;
   if (facts.phase === 'building') return facts.activeReady;
   if (facts.phase === 'preview') return facts.activePreviewReady;
-  if (facts.phase === 'rematch') return facts.present >= 2 && facts.presentPreviewReady;
+  if (facts.phase === 'rematch') return facts.active >= 2 && facts.activePreviewReady;
   if (facts.phase !== 'season' && facts.phase !== 'awards' && facts.phase !== 'playin' && facts.phase !== 'playoffs') return false;
   if (!clock) return false;
   const startedAt = facts.stageStartedAt ? Date.parse(facts.stageStartedAt) : null;
   if (stageCursorAtFrom(clock, facts.stage, startedAt, now) > facts.stageCursor) return true;
-  const total = stageGamesTotalFrom(clock, facts.stage);
   const cursor = Math.max(facts.stageCursor, stageCursorAtFrom(clock, facts.stage, startedAt, now));
-  if (!isCheckpoint(cursor, total)) return false;
-  if (facts.activeReadyStage || seasonEndsAt(clock.counts, facts.stage)) return true;
-  const checkpointAt = checkpointAtFrom(clock, facts.stage, startedAt);
-  if (checkpointAt === null || now < checkpointAt + CHECKPOINT_IDLE_MS) return false;
-  return (
-    facts.active >= 2 &&
-    facts.hostReadyStage !== null &&
-    facts.hostReadyStage < facts.stage &&
-    facts.activeReadyCount === facts.active - 1
-  );
+  if (facts.stage === 6 && cursor >= stageGamesTotalFrom(clock, 6)) return true;
+  if (!isStageCheckpoint(clock, facts.stage, cursor, startedAt)) return false;
+  if (facts.stage === 6) {
+    const qualifiedTeams = new Set(clock.qualified ?? []);
+    const qualified = facts.activeTeams.filter((entry) => entry.team !== null && qualifiedTeams.has(entry.team));
+    if (qualified.length === 0) return true;
+    return true;
+  }
+  return facts.stage < 10;
 }
 
-async function advanceStage(lobbyId: string, stage: number, clock: LeagueClock): Promise<void> {
-  const next = nextStageFrom(clock.counts, stage);
+async function advanceStage(lobbyId: string, stage: number, clock: LeagueClock, leagueNo: number): Promise<boolean> {
+  const next = nextStage(stage);
+  const phase = NEXT_PHASE[next] ?? 'recap';
+  const events = uniqueStageEvents(stage, clock, leagueNo);
   const updated = await db().query<{ id: string }>(
-    `update lobbies set stage = $2, stage_cursor = 0, stage_started_at = now(), phase = $3,
-       version = version + 1, updated_at = now()
-     where id = $1::uuid and stage = $4 returning id`,
-    [lobbyId, next, NEXT_PHASE[next] ?? 'recap', stage],
+    `with updated as (
+       update lobbies set stage = $2, stage_cursor = 0,
+         stage_started_at = case when $2 = 6 then null else now() end, phase = $3,
+         version = version + 1, updated_at = now()
+       where id = $1::uuid and stage = $4 returning id
+     ), logged as (
+       insert into events (lobby_id, participant_id, kind, payload)
+       select updated.id, nullif(entry->>'participantId', '')::uuid, entry->>'kind',
+         jsonb_build_object('detail', entry->>'detail', 'key', entry->>'key')
+       from updated, jsonb_array_elements($5::jsonb) as entry
+       where not exists (
+         select 1 from events existing
+         where existing.lobby_id = updated.id and existing.kind = entry->>'kind'
+           and existing.payload->>'key' = entry->>'key'
+       )
+       returning id
+     )
+     select id from updated`,
+    [lobbyId, next, phase, stage, JSON.stringify(events)],
   );
-  if (!updated[0]) return;
-  await db().query(
-    `insert into events (lobby_id, kind, payload) values ($1::uuid, 'checkpoint', jsonb_build_object('detail', $2::text))`,
-    [lobbyId, 'Checkpoint'],
+  return Boolean(updated[0]?.id);
+}
+
+async function startPlayoffRound(lobbyId: string, clock: LeagueClock, leagueNo: number, startReason: PlayoffStartReason = null): Promise<boolean> {
+  const events = uniqueStageEvents(6, clock, leagueNo, true, startReason);
+  const updated = await db().query<{ id: string }>(
+    `with updated as (
+       update lobbies set stage_cursor = 0, stage_started_at = now(), version = version + 1, updated_at = now()
+       where id = $1::uuid and stage = 6 and stage_started_at is null returning id
+     ), logged as (
+       insert into events (lobby_id, participant_id, kind, payload)
+       select updated.id, nullif(entry->>'participantId', '')::uuid, entry->>'kind',
+         jsonb_build_object('detail', entry->>'detail', 'key', entry->>'key')
+       from updated, jsonb_array_elements($2::jsonb) as entry
+       where not exists (
+         select 1 from events existing
+         where existing.lobby_id = updated.id and existing.kind = entry->>'kind'
+           and existing.payload->>'key' = entry->>'key'
+       )
+       returning id
+     )
+     select id from updated`,
+    [lobbyId, JSON.stringify(events)],
   );
+  return Boolean(updated[0]?.id);
 }
 
 async function loadLeague(
@@ -1261,12 +1533,20 @@ async function loadLeague(
   if (!me) return { league: null, clock: null };
   const stage = Number(raw.stage);
   const cursor = Number(raw.stage_cursor);
-  const slice = await readLeagueView(raw.id, stage, cursor, me.id);
-  if (slice) return { league: { humans: slice.humans, view: slice.view }, clock: slice.clock };
+  const slice = await readLeagueView(raw.id, stage, cursor, me.id, raw.stage_started_at ? Date.parse(raw.stage_started_at) : null);
+  if (slice) {
+    const clock = slice.clock.qualified ? slice.clock : await readLeagueClock(raw.id);
+    if (clock) return { league: { humans: slice.humans, view: slice.view }, clock };
+    const full = await leagueFor(raw.id, Number(raw.league_version));
+    return { league: { humans: slice.humans, view: slice.view }, clock: full ? clockFromLeague(full) : null };
+  }
   const full = await leagueFor(raw.id, Number(raw.league_version));
   if (!full) return { league: null, clock: null };
   return {
-    league: { humans: full.humans, view: revealLeague(full, stage, cursor, me.id) },
+    league: {
+      humans: full.humans,
+      view: revealLeague(full, stage, cursor, me.id, raw.stage_started_at ? Date.parse(raw.stage_started_at) : null),
+    },
     clock: clockFromLeague(full),
   };
 }
@@ -1275,7 +1555,7 @@ export async function readLobby(input: { code: string; secret: string; sinceEven
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
   try {
-    const rows = await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash, input.sinceEvent ?? 0]);
+    const rows = await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]);
     let row = rows[0];
     if (!row?.lobby) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -1290,10 +1570,10 @@ export async function readLobby(input: { code: string; secret: string; sinceEven
       const fresh = await sql.query<LobbyRow>(LOBBY_ROW_SQL, [input.code]);
       if (fresh[0]) {
         if (fresh[0].phase !== before.phase) {
-          row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash, input.sinceEvent ?? 0]))[0] ?? row;
+          row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]))[0] ?? row;
         } else {
           row = { ...row, lobby: { ...before, ...fresh[0] } };
-          const events = await sql.query<{ events: RawEvent[] }>(EVENTS_SQL, [input.code, input.sinceEvent ?? 0]);
+          const events = await sql.query<{ events: RawEvent[] }>(EVENTS_SQL, [input.code, 0]);
           row = { ...row, events: events[0]?.events ?? row.events };
         }
       }
@@ -1540,12 +1820,22 @@ export async function startLobby(input: {
   }
 }
 
-async function recordAction(code: string, tokenHash: string, actionId: string): Promise<void> {
-  await db().query(
+async function recordAction(code: string, tokenHash: string, actionId: string): Promise<boolean> {
+  const rows = await db().query<{ id: string }>(
     `insert into actions (participant_id, action_id, lobby_id)
      select p.id, $3::uuid, p.lobby_id from participants p
      where p.lobby_id = (select id from lobbies where code = $1) and p.token_hash = $2 and p.status <> 'left'
-     on conflict do nothing`,
+     on conflict do nothing returning participant_id::text as id`,
+    [code, tokenHash, actionId],
+  );
+  return rows.length > 0;
+}
+
+async function forgetAction(code: string, tokenHash: string, actionId: string): Promise<void> {
+  await db().query(
+    `delete from actions a using participants p
+     where a.participant_id = p.id and a.action_id = $3::uuid
+       and p.lobby_id = (select id from lobbies where code = $1) and p.token_hash = $2`,
     [code, tokenHash, actionId],
   );
 }
@@ -1737,7 +2027,8 @@ locked as (
 ),
 log as (
   insert into events (lobby_id, kind, payload)
-  select id, 'locked', jsonb_build_object('detail', 'locked the teams') from locked
+  select id, 'locked', jsonb_build_object('detail', 'locked the teams', 'name',
+    (select p.name from participants p where p.id = (select host_participant from l))) from locked
 )
 select
   (select id from l) as lobby_id,
@@ -1929,60 +2220,6 @@ export async function readyLobby(input: { code: string; secret: string; actionId
   }
 }
 
-const ADVANCE_SQL = `
-with l as (
-  select id, phase, stage, stage_cursor, stage_started_at, host_participant
-  from lobbies where code = $1 for update
-),
-me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
-present as (
-  select count(*)::int as n from participants p
-  where p.lobby_id = (select id from l) and p.status <> 'left'
-    and p.last_seen > now() - make_interval(secs => $5::int)
-),
-ready as (
-  select count(*)::int as n from participants p
-  where p.lobby_id = (select id from l) and p.status <> 'left'
-    and p.last_seen > now() - make_interval(secs => $5::int)
-    and p.ready_stage >= $3
-),
-advanced as (
-  update lobbies lob set stage = $3 + 1, stage_cursor = 0, stage_started_at = now(),
-    phase = $4, version = lob.version + 1, updated_at = now()
-  from l, me
-  where lob.id = l.id and l.stage = $3 and l.phase in ('season', 'awards', 'playin', 'playoffs')
-    and me.id is not null
-    and (
-      l.host_participant = me.id
-      or (select n from ready) = (select n from present)
-      or (
-        $6::timestamptz is not null and now() >= $6::timestamptz
-        and (select n from present) >= 2
-        and (select n from ready) = (select n from present) - 1
-        and exists (
-          select 1 from participants h
-          where h.id = l.host_participant and h.status <> 'left'
-            and h.last_seen > now() - make_interval(secs => $5::int)
-            and h.ready_stage < $3
-        )
-      )
-    )
-  returning lob.id
-),
-log as (
-  insert into events (lobby_id, kind, payload)
-  select id, 'checkpoint', jsonb_build_object('detail', 'Checkpoint') from advanced
-)
-select
-  (select id from l) as lobby_id,
-  (select phase from l) as phase,
-  (select stage from l) as stage,
-  (select id from me) as me_id,
-  (select n from present) as present,
-  (select n from ready) as ready,
-  (select count(*)::int from advanced) as advanced
-`;
-
 const PREVIEW_START_SQL = `
 with l as (select id, phase, host_participant from lobbies where code = $1 for update),
 me as (select p.id from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left')
@@ -2017,7 +2254,8 @@ reset_l as (
 ),
 log as (
   insert into events (lobby_id, kind, payload)
-  select id, 'rematch', jsonb_build_object('detail', 'started a rematch') from reset_l
+  select id, 'rematch', jsonb_build_object('detail', 'started a rematch', 'name',
+    (select p.name from participants p where p.id = (select host_participant from l))) from reset_l
 )
 select
   (select id from l) as lobby_id,
@@ -2030,7 +2268,7 @@ select
 export async function advanceLobby(input: { code: string; secret: string; actionId: string; stage: number }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
-  await recordAction(input.code, tokenHash, input.actionId);
+  const fresh = await recordAction(input.code, tokenHash, input.actionId);
   try {
     const context = await sql.query<{
       id: string;
@@ -2043,13 +2281,15 @@ export async function advanceLobby(input: { code: string; secret: string; action
       mode: string;
       era: string;
       league_version: number | string;
+      rematch: number | string;
     }>(
-      `select id, phase, stage, stage_cursor, stage_started_at, host_participant, season_secret, mode, era, league_version
+      `select id, phase, stage, stage_cursor, stage_started_at, host_participant, season_secret, mode, era, league_version, rematch
        from lobbies where code = $1`,
       [input.code],
     );
     const lobby = context[0];
     if (!lobby) return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+    if (!fresh) return readLobby({ code: input.code, secret: input.secret });
     if (lobby.phase === 'draw') return readLobby({ code: input.code, secret: input.secret });
     if (lobby.phase === 'preview') {
       const rows = await sql.query<{ lobby_id: string | null; phase: LobbyPhase | null; host: string | null; me_id: string | null }>(
@@ -2147,7 +2387,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
           return { ok: false, status: 409, error: { error: 'A league needs at least 2 players.', reason: 'conflict' } };
         }
         const unready = await sql.query<{ n: number }>(
-          "select count(*)::int as n from participants where lobby_id = $1::uuid and status <> 'left' and not preview_ready",
+          "select count(*)::int as n from participants where lobby_id = $1::uuid and status <> 'left' and last_seen > now() - interval '60 seconds' and not preview_ready",
           [hostRow.lobby_id],
         );
         const waiting = unready[0]?.n ?? 0;
@@ -2159,8 +2399,9 @@ export async function advanceLobby(input: { code: string; secret: string; action
       }
       await sql.query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds'))`,
-        [hostRow.lobby_id],
+         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds', 'name',
+           (select p.name from participants p where p.id = $2::uuid)))`,
+        [hostRow.lobby_id, hostRow.me_id],
       );
       return readLobby({ code: input.code, secret: input.secret });
     }
@@ -2180,48 +2421,38 @@ export async function advanceLobby(input: { code: string; secret: string; action
     }
     if (!clock) return { ok: false, status: 409, error: { error: 'The season has not started.', reason: 'conflict' } };
     const stage = Number(lobby.stage);
+    const hostRows = await sql.query<{ host: string | null; me_id: string | null; host_name: string | null }>(
+      `select l.host_participant as host,
+         (select p.id from participants p where p.lobby_id = l.id and p.token_hash = $2 and p.status <> 'left') as me_id,
+         (select p.name from participants p where p.id = l.host_participant) as host_name
+       from lobbies l where l.code = $1`,
+      [input.code, tokenHash],
+    );
+    const hostRow = hostRows[0];
+    if (!hostRow?.me_id) {
+      return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
+    }
+    if (hostRow.host !== hostRow.me_id) {
+      return { ok: false, status: 403, error: { error: 'Only the host can advance the league.', reason: 'forbidden' } };
+    }
+    if (stage === 6) {
+      await startPlayoffRound(lobby.id, clock, Number(lobby.rematch), hostRow.host_name ? { kind: 'host', name: hostRow.host_name } : null);
+      return readLobby({ code: input.code, secret: input.secret });
+    }
     const cursor = Math.max(
       Number(lobby.stage_cursor),
       stageCursorAtFrom(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null, Date.now()),
     );
-    if (!isCheckpoint(cursor, stageGamesTotalFrom(clock, stage))) {
-      return { ok: false, status: 409, error: { error: 'This checkpoint is still revealing.', reason: 'conflict' } };
+    if (!isStageCheckpoint(clock, stage, cursor, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null)) {
+      return readLobby({ code: input.code, secret: input.secret });
     }
-    const checkpointAt = checkpointAtFrom(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null);
-    const deadline = checkpointAt === null ? null : new Date(checkpointAt + CHECKPOINT_IDLE_MS).toISOString();
-    const next = nextStageFrom(clock.counts, stage);
-    const rows = await sql.query<{
-      lobby_id: string | null;
-      phase: LobbyPhase | null;
-      stage: number | string | null;
-      me_id: string | null;
-      present: number;
-      ready: number;
-      advanced: number;
-    }>(ADVANCE_SQL, [
-      input.code,
-      tokenHash,
-      stage,
-      NEXT_PHASE[next] ?? 'recap',
-      Math.floor(AWAY_MS / 1000),
-      deadline,
-    ]);
-    const row = rows[0];
-    if (!row?.lobby_id) {
-      return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+    if (playoffRoundHeld(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null, Date.now())) {
+      return readLobby({ code: input.code, secret: input.secret });
     }
-    if (!row.me_id) {
-      return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
-    }
-    if (row.advanced > 0) return readLobby({ code: input.code, secret: input.secret });
-    if (Number(row.stage) !== stage) return readLobby({ code: input.code, secret: input.secret });
-    const waiting = Math.max(0, row.present - row.ready);
-    return {
-      ok: false,
-      status: 409,
-      error: { error: `Waiting on ${waiting} player${waiting === 1 ? '' : 's'}.`, reason: 'conflict' },
-    };
+    await advanceStage(lobby.id, stage, clock, Number(lobby.rematch));
+    return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
+    await forgetAction(input.code, tokenHash, input.actionId).catch(() => {});
     return { ok: false, status: 503, error: serverError(error) };
   }
 }

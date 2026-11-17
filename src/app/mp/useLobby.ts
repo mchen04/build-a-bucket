@@ -31,6 +31,7 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
   goneRef.current = onGone;
 
   const apply = useCallback((next: LobbyView) => {
+    if (next.version < version.current) return;
     open.current = next;
     version.current = next.version;
     token.current = progressToken(next);
@@ -62,6 +63,15 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
   }, []);
 
   useEffect(() => {
+    version.current = 0;
+    token.current = '';
+    events.current = 0;
+    open.current = null;
+    setView(null);
+    setStatus('loading');
+  }, [session?.code]);
+
+  useEffect(() => {
     alive.current = true;
     if (!session) return undefined;
 
@@ -86,7 +96,9 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
         if (!alive.current) return;
         if (next) absorb(next);
         else setStatus('live');
-        schedule(document.hidden ? 5000 : waiting ? 1000 : 1500);
+        const latest = open.current;
+        const fast = latest?.league?.phase === 'playoffs';
+        schedule(document.hidden ? 5000 : waiting ? 1000 : fast ? 350 : 1500);
       } catch (caught) {
         if (!alive.current) return;
         if (isFatal(caught)) {

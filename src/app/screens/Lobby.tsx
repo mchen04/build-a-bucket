@@ -286,7 +286,7 @@ export function Lobby(props: Props) {
   }
 
   const present = view.participants.filter((entry) => entry.status !== 'left');
-  const retained = present;
+  const retained = present.filter((entry) => !entry.away);
   const retainedReady = retained.filter((entry) => entry.ready).length;
   const autoFilled = view.participants.filter((entry) => entry.summary?.auto).length;
   const missingBuilds = view.participants.filter((entry) => entry.status !== 'left' && !entry.summary).length;
@@ -390,6 +390,11 @@ export function Lobby(props: Props) {
               <div class="tiny muted">
                 {view.teams.length}/{present.length} teams drawn · one reroll each
               </div>
+              <div class="tiny muted" style={{ marginTop: '2px' }}>
+                {view.teams.length < present.length
+                  ? 'Waiting for every team to be drawn.'
+                  : 'All teams drawn. Teams lock automatically about 15 seconds after the last draw; use your reroll before then.'}
+              </div>
             </div>
             {view.teams.length ? (
               <div class="card">
@@ -452,7 +457,7 @@ export function Lobby(props: Props) {
               {view.ready.mine ? 'You are ready' : 'Ready up for the next league'}
             </div>
             <div class="tiny muted">
-              {retainedReady}/{retained.length} ready · every retained player must ready
+              {retainedReady}/{retained.length} ready · every present player must ready
             </div>
             {retained.length < 2 ? (
               <div style={{ marginTop: '4px' }}>
