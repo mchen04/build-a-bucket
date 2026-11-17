@@ -241,11 +241,12 @@ export function gateViewFor(
   const activeQualified = qualified.filter((entry) => now - Date.parse(entry.last_seen) <= AWAY_MS);
   if (activeQualified.length === 0) return null;
   const ready = activeQualified.filter((entry) => Number(entry.ready_stage) >= 6);
-  const waitingOn = activeQualified.filter((entry) => Number(entry.ready_stage) < 6).map((entry) => entry.name);
+  const waitingOn = activeQualified.filter((entry) => Number(entry.ready_stage) < 6);
+  const waitingNamesArray = waitingOn.map((entry) => entry.name);
   const mine = me !== null && me.team !== null && qualifiedTeams.has(me.team);
   const host = me !== null && me.id === hostId;
   const hostName = participants.find((entry) => entry.id === hostId)?.name ?? 'the host';
-  const waitingNames = waitingOn.map((name) => (me && name === me.name ? 'you' : name)).join(', ');
+  const waitingNames = waitingOn.map((entry) => (me && entry.id === me.id ? 'you' : entry.name)).join(', ');
   let nextAction = 'Starting the playoffs';
   let actor: string | null = null;
   if (waitingOn.length > 0) {
@@ -267,7 +268,7 @@ export function gateViewFor(
     ready: ready.length,
     mine,
     host,
-    waitingOn,
+    waitingOn: waitingNamesArray,
     nextAction,
     actor,
   };
@@ -280,7 +281,7 @@ export interface StageEvent {
   key: string;
 }
 
-export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0): StageEvent[] {
+export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, starterName: string | null = null): StageEvent[] {
   const humans = clock.humanSeasons ?? [];
   const byTeam = new Map(humans.map((entry) => [entry.team, entry]));
   const qualified = new Set(clock.qualified ?? []);
@@ -383,7 +384,12 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0): St
       }
     }
     if (stage === 6) {
-      events.push({ participantId: null, kind: 'playoff_start', detail: 'The playoffs are underway', key: key(`${stage}:start`) });
+      events.push({
+        participantId: null,
+        kind: 'playoff_start',
+        detail: starterName ? `${starterName} started the playoffs` : 'The playoffs started automatically',
+        key: key(`${stage}:start`),
+      });
     }
     if (stage === 9 && clock.champion) {
       const championHuman = byTeam.get(clock.champion);
@@ -398,8 +404,10 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0): St
   return events;
 }
 
-function uniqueStageEvents(stage: number, clock: LeagueClock, leagueNo: number, gateOnly = false): StageEvent[] {
-  const source = gateOnly ? stageEvents(stage, clock, leagueNo).filter((entry) => entry.kind === 'playoff_start') : stageEvents(stage, clock, leagueNo);
+function uniqueStageEvents(stage: number, clock: LeagueClock, leagueNo: number, gateOnly = false, starterName: string | null = null): StageEvent[] {
+  const source = gateOnly
+    ? stageEvents(stage, clock, leagueNo, starterName).filter((entry) => entry.kind === 'playoff_start')
+    : stageEvents(stage, clock, leagueNo, starterName);
   const unique = new Map(source.map((entry) => [`${entry.kind}:${entry.key}`, entry]));
   return [...unique.values()];
 }
@@ -870,7 +878,7 @@ export async function unchangedPoll(input: { code: string; secret: string; since
   }
 }
 
-async function buildClockView(probe: ProbeOk, sinceEvent: number): Promise<LobbyView | null> {
+async function buildClockView(probe: ProbeOk): Promise<LobbyView | null> {
   const raw = probe.lobby;
   const clock = probe.sliceClock;
   if (!clock) return null;
@@ -896,7 +904,7 @@ async function buildClockView(probe: ProbeOk, sinceEvent: number): Promise<Lobby
   if (!me) return null;
   const slice = await readLeagueView(raw.id, stage, stageCursor, me[0], raw.stage_started_at ? Date.parse(raw.stage_started_at) : null);
   if (!slice) return null;
-  const events = await db().query<{ events: RawEvent[] }>(EVENTS_SQL, [raw.code, sinceEvent]);
+  const events = await db().query<{ events: RawEvent[] }>(EVENTS_SQL, [raw.code, 0]);
   const row: ReadRow = {
     lobby: { ...raw, version, stage_cursor: stageCursor },
     participants: parts.map(probeParticipant),
@@ -1044,7 +1052,7 @@ export async function pollLobby(input: {
         return { kind: 'read' };
       }
       if (!versionChanged && !probe.clockMoved) return { kind: 'no_content' };
-      const view = await buildClockView(probe, input.events);
+      const view = await buildClockView(probe);
       if (!view) return { kind: 'read' };
       return { kind: 'clock', view };
     }
@@ -1465,8 +1473,8 @@ async function advanceStage(lobbyId: string, stage: number, clock: LeagueClock, 
   return Boolean(updated[0]?.id);
 }
 
-async function startPlayoffRound(lobbyId: string, clock: LeagueClock, leagueNo: number): Promise<boolean> {
-  const events = uniqueStageEvents(6, clock, leagueNo, true);
+async function startPlayoffRound(lobbyId: string, clock: LeagueClock, leagueNo: number, starterName: string | null = null): Promise<boolean> {
+  const events = uniqueStageEvents(6, clock, leagueNo, true, starterName);
   const updated = await db().query<{ id: string }>(
     `with updated as (
        update lobbies set stage_cursor = 0, stage_started_at = now(), version = version + 1, updated_at = now()
@@ -1538,7 +1546,7 @@ export async function readLobby(input: { code: string; secret: string; sinceEven
           row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]))[0] ?? row;
         } else {
           row = { ...row, lobby: { ...before, ...fresh[0] } };
-          const events = await sql.query<{ events: RawEvent[] }>(EVENTS_SQL, [input.code, input.sinceEvent ?? 0]);
+          const events = await sql.query<{ events: RawEvent[] }>(EVENTS_SQL, [input.code, 0]);
           row = { ...row, events: events[0]?.events ?? row.events };
         }
       }
@@ -1794,6 +1802,15 @@ async function recordAction(code: string, tokenHash: string, actionId: string): 
     [code, tokenHash, actionId],
   );
   return rows.length > 0;
+}
+
+async function forgetAction(code: string, tokenHash: string, actionId: string): Promise<void> {
+  await db().query(
+    `delete from actions a using participants p
+     where a.participant_id = p.id and a.action_id = $3::uuid
+       and p.lobby_id = (select id from lobbies where code = $1) and p.token_hash = $2`,
+    [code, tokenHash, actionId],
+  );
 }
 
 const DRAW_SQL = `
@@ -2377,9 +2394,10 @@ export async function advanceLobby(input: { code: string; secret: string; action
     }
     if (!clock) return { ok: false, status: 409, error: { error: 'The season has not started.', reason: 'conflict' } };
     const stage = Number(lobby.stage);
-    const hostRows = await sql.query<{ host: string | null; me_id: string | null }>(
+    const hostRows = await sql.query<{ host: string | null; me_id: string | null; host_name: string | null }>(
       `select l.host_participant as host,
-         (select p.id from participants p where p.lobby_id = l.id and p.token_hash = $2 and p.status <> 'left') as me_id
+         (select p.id from participants p where p.lobby_id = l.id and p.token_hash = $2 and p.status <> 'left') as me_id,
+         (select p.name from participants p where p.id = l.host_participant) as host_name
        from lobbies l where l.code = $1`,
       [input.code, tokenHash],
     );
@@ -2391,7 +2409,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
       return { ok: false, status: 403, error: { error: 'Only the host can advance the league.', reason: 'forbidden' } };
     }
     if (stage === 6) {
-      await startPlayoffRound(lobby.id, clock, Number(lobby.rematch));
+      await startPlayoffRound(lobby.id, clock, Number(lobby.rematch), hostRow.host_name);
       return readLobby({ code: input.code, secret: input.secret });
     }
     const cursor = Math.max(
@@ -2404,6 +2422,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
     await advanceStage(lobby.id, stage, clock, Number(lobby.rematch));
     return readLobby({ code: input.code, secret: input.secret });
   } catch (error) {
+    await forgetAction(input.code, tokenHash, input.actionId).catch(() => {});
     return { ok: false, status: 503, error: serverError(error) };
   }
 }

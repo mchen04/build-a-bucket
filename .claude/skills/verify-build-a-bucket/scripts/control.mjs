@@ -594,6 +594,7 @@ async function leagueRun() {
     }
   };
   const seriesScores = new Map();
+  const seriesKeys = new Map();
   const recordSeries = async (seat) => {
     const card = seat.page.getByTestId('my-matchup');
     if (!(await card.isVisible().catch(() => false))) return;
@@ -601,10 +602,31 @@ async function leagueRun() {
     const match = /(\d+)[–-](\d+)/.exec(text);
     if (!match) return;
     const key = `${seat.seat}:${seat.name}`;
+    const seriesKey = text.split('\n')[0];
+    if (seriesKeys.get(key) !== seriesKey) {
+      seriesKeys.set(key, seriesKey);
+      seriesScores.set(key, new Set());
+    }
     if (!seriesScores.has(key)) seriesScores.set(key, new Set());
     seriesScores.get(key).add(`${match[1]}-${match[2]}`);
   };
   const logText = async (seat) => seat.page.getByTestId('activity-log').innerText().catch(() => '');
+  const installSeriesObserver = async (seat) =>
+    seat.page.evaluate(() => {
+      const target = window;
+      target.__seriesScores = [];
+      const read = () => {
+        const card = document.querySelector('[data-testid="my-matchup"]');
+        if (!card) return;
+        const text = card.textContent ?? '';
+        const match = /(\d+)[–-](\d+)/.exec(text);
+        if (!match) return;
+        target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}` });
+      };
+      new window.MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
+      window.setInterval(read, 50);
+      read();
+    });
   const buildAndStart = async (hostSeat, activeSeats, recordMarks, chooseSettings) => {
     if (chooseSettings) {
       if (mode !== 'normal') await hostSeat.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
@@ -697,6 +719,7 @@ async function leagueRun() {
       await snap(seat, 'joined');
     }
     await buildAndStart(host, seats, true, true);
+    for (const seat of seats) await installSeriesObserver(seat);
     let checkpoint = 0;
     let chaosDone = false;
     let lastLabel = '';
@@ -818,6 +841,19 @@ async function leagueRun() {
     for (const seat of active()) await snap(seat, 'recap');
     const recapLogs = await Promise.all(active().map(logText));
     if (new Set(recapLogs).size > 1) throw new Error('activity logs differ at the recap');
+    seriesScores.clear();
+    for (const seat of active()) {
+      const samples = await seat.page.evaluate(() => window.__seriesScores ?? []);
+      let lastKey = null;
+      for (const sample of samples) {
+        const key = `${seat.seat}:${seat.name}`;
+        if (sample.key !== lastKey) {
+          seriesScores.set(key, new Set());
+          lastKey = sample.key;
+        }
+        seriesScores.get(key).add(sample.score);
+      }
+    }
     const seenSeries = [...seriesScores.values()].some((scores) => scores.size > 0);
     const movedSeries = [...seriesScores.values()].some((scores) => scores.size > 1);
     if (seenSeries && !movedSeries) throw new Error('human series card did not advance game by game');
@@ -827,7 +863,7 @@ async function leagueRun() {
       if (max < 4) continue;
       if (totals[0] !== 0) throw new Error(`human series card skipped its first game for ${seat}`);
       for (let index = 1; index < totals.length; index++) {
-        if (totals[index] !== totals[index - 1] + 1) throw new Error(`human series card skipped a game for ${seat}`);
+        if (totals[index] !== totals[index - 1] + 1) throw new Error(`human series card skipped a game for ${seat}: ${totals.join(',')}`);
       }
     }
     let playAgain = false;

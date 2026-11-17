@@ -559,17 +559,14 @@ test('squad playoff walkthrough reveals every round before the recap', async ({ 
   const banner = page.getByTestId('squad-playoff-banner');
   await expect(rounds).toHaveCount(0);
   await expect(banner).toHaveCount(0);
-  let seen = 0;
-  for (let guard = 0; guard < 8 && seen < 4; guard++) {
-    await page.clock.runFor(519);
-    await page.clock.runFor(1);
-    const count = await rounds.count();
-    if (count > seen) {
-      seen = count;
-      stamp(`rounds=${count}`);
-      await shot(page, `squad-playoffs-${count}`);
-    }
+  for (let index = 1; index <= 3; index++) {
+    await page.clock.runFor(520);
+    await expect(rounds).toHaveCount(index);
+    await expect(banner).toHaveCount(0);
+    stamp(`rounds=${index}`);
+    await shot(page, `squad-playoffs-${index}`);
   }
+  await page.clock.runFor(520);
   expect(await rounds.count(), 'fixture seed scan-0 must reach and win all four rounds; re-run the seed scan if this stops holding').toBe(4);
   await expect(banner).toBeVisible();
   stamp(`all-rounds-banner rounds=${await rounds.count()}`);

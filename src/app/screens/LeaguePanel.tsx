@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
-import { limitPlayoffs, type LeagueGameView, type PlayInView, type SeriesView } from '../../shared/mp/league';
+import type { LeagueGameView, PlayInView, SeriesView } from '../../shared/mp/league';
 import type { LobbyView } from '../../shared/mp/types';
 import { StatGrid, StandingsTable, YouTag } from '../components';
 import { activityLine } from '../mp/format';
@@ -70,30 +69,7 @@ function SeriesRow(props: { series: SeriesView; myTeam: string | null }) {
 }
 
 export function LeaguePanel(props: Props) {
-  const league = props.view.league;
-  const serverCount = (league?.playoffs ?? []).reduce((total, series) => total + series.games.length, 0);
-  const [revealed, setRevealed] = useState(serverCount);
-  useEffect(() => {
-    if (revealed > serverCount) {
-      setRevealed(serverCount);
-      return;
-    }
-    if (revealed >= serverCount) return;
-    const id = window.setTimeout(() => setRevealed((value) => Math.min(serverCount, value + 1)), 450);
-    return () => window.clearTimeout(id);
-  }, [revealed, serverCount]);
-  if (!league) return null;
-  const playoffs = limitPlayoffs(league.playoffs, Math.min(revealed, serverCount));
-  const found = playoffs?.find((entry) => entry.id === league.my?.series?.id);
-  const series = league.my?.series ? { ...league.my.series, ...(found ?? {}) } : null;
-  const view: Props = {
-    ...props,
-    view: {
-      ...props.view,
-      league: { ...league, playoffs, my: league.my ? { ...league.my, series } : league.my },
-    },
-  };
-  return <LeaguePanelView {...view} />;
+  return <LeaguePanelView {...props} />;
 }
 
 function LeaguePanelView(props: Props) {
@@ -241,14 +217,17 @@ function LeaguePanelView(props: Props) {
             {my.series.high} {my.series.wins}–{my.series.losses} {my.series.low}
           </div>
           <div class="tiny muted">
-            {my.series.wins + my.series.losses} game{my.series.wins + my.series.losses === 1 ? '' : 's'} played
-            {my.series.complete
-              ? my.series.advanced
-                ? ' · advanced'
-                : ' · eliminated'
-              : my.series.winner
-                ? ` · ${my.series.winner} advanced`
-                : ' · in progress'}
+            {my.series.wins + my.series.losses === 0
+              ? 'Series not started'
+              : `${my.series.wins + my.series.losses} game${my.series.wins + my.series.losses === 1 ? '' : 's'} played${
+                  my.series.complete
+                    ? my.series.advanced
+                      ? ' · advanced'
+                      : ' · eliminated'
+                    : my.series.winner
+                      ? ` · ${my.series.winner} advanced`
+                      : ' · in progress'
+                }`}
           </div>
         </div>
       ) : null}

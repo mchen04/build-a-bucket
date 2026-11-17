@@ -508,6 +508,37 @@ describeDb('shared league stage behavior', () => {
     expect(view?.nextAction).not.toContain('Ben');
   });
 
+  it('matches the viewer by participant id when names repeat', () => {
+    const base = (id: string, name: string, team: string): RawParticipant => ({
+      id,
+      name,
+      seat: 1,
+      status: 'joined',
+      joined_at: new Date().toISOString(),
+      last_seen: new Date().toISOString(),
+      is_me: id === 'ben2',
+      build: null,
+      build_kind: null,
+      build_summary: null,
+      ready_stage: 0,
+      preview_ready: false,
+      team,
+      reroll_used: false,
+      salary_powers: null,
+    });
+    const view = gateViewFor(
+      [base('ava', 'Ava', 'LAL'), base('ben1', 'Ben', 'BOS'), base('ben2', 'Ben', 'NYK')],
+      { checkpoint: true, playoffs: [{ round: 1, high: 'BOS', low: 'NYK' }] },
+      'ben2',
+      'ava',
+      'playoffs',
+      6,
+      Date.now(),
+    );
+    expect(view?.nextAction).toContain('you');
+    expect(view?.nextAction).toContain('Ben');
+  });
+
   it('returns the current state for a repeated host action id', async () => {
     const { code, seats } = await seasonLeague();
     const row = await lobbyRow(code);
@@ -544,5 +575,6 @@ describeDb('shared league stage behavior', () => {
     const finals = { ...clock, series: [{ round: 4, name: 'NBA Finals', high: 'POR', low: 'LAC', winner: 'LAC', wins: 2, losses: 4, games: [] }] } as unknown as LeagueClock;
     expect(stageEvents(9, finals).filter((entry) => entry.kind === 'advance')).toHaveLength(0);
     expect(stageEvents(9, finals).filter((entry) => entry.kind === 'champion')).toHaveLength(1);
+    expect(stageEvents(6, clock, 0, 'Ava').find((entry) => entry.kind === 'playoff_start')?.detail).toBe('Ava started the playoffs');
   });
 });

@@ -86,7 +86,9 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
         if (!alive.current) return;
         if (next) absorb(next);
         else setStatus('live');
-        schedule(document.hidden ? 5000 : waiting ? 1000 : 1500);
+        const latest = open.current;
+        const fast = latest?.league?.phase === 'playoffs';
+        schedule(document.hidden ? 5000 : waiting ? 1000 : fast ? 350 : 1500);
       } catch (caught) {
         if (!alive.current) return;
         if (isFatal(caught)) {

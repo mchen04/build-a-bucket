@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { PlayInRound, SeasonResult, SeriesRound } from '../../shared/engine/types';
 import { TopBar } from '../components';
 
@@ -23,12 +23,22 @@ function roundResult(round: PlayInRound | SeriesRound): string {
 export function Playoffs(props: Props) {
   const rounds = props.season.playoffRounds;
   const [revealed, setRevealed] = useState(0);
+  const timer = useRef<number | null>(null);
   const done = revealed >= rounds.length;
 
   useEffect(() => {
     if (done) return;
-    const id = window.setTimeout(() => setRevealed((value) => value + 1), 520);
-    return () => window.clearTimeout(id);
+    if (timer.current !== null) return;
+    timer.current = window.setTimeout(() => {
+      timer.current = null;
+      setRevealed((value) => value + 1);
+    }, 520);
+    return () => {
+      if (timer.current !== null) {
+        window.clearTimeout(timer.current);
+        timer.current = null;
+      }
+    };
   }, [revealed, done]);
 
   return (
