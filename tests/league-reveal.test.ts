@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { LEAGUE_TEAMS, simulateLeague, stageTotals, type HumanTeamInput, type LeagueResult } from '../src/shared/engine/league';
-import { isCheckpoint, revealLeague, stageGamesTotal, stageTotal } from '../src/shared/mp/league';
+import {
+  CPU_SPEEDUP,
+  HUMAN_REGULAR_MS,
+  PLAYOFF_GAME_MS,
+  REGULAR_BATCH_MS,
+  REGULAR_BATCH_SIZE,
+  checkpointAtFrom,
+  clockFromLeague,
+  isCheckpoint,
+  nextStageFrom,
+  revealLeague,
+  seasonEndsAt,
+  stageCursorAtFrom,
+  stageGamesTotal,
+  stageTotal,
+} from '../src/shared/mp/league';
 
 function humans(count = 8): HumanTeamInput[] {
   return LEAGUE_TEAMS.slice(0, count).map((team, index) => ({
@@ -134,5 +149,62 @@ describe('spoiler-free reveal', () => {
       expect(isCheckpoint(Math.max(0, games - 1), games)).toBe(false);
       expect(isCheckpoint(games, games)).toBe(true);
     }
+  });
+});
+
+describe('reveal pacing', () => {
+  const OLD_SEASON_MS = Math.ceil(1230 / REGULAR_BATCH_SIZE) * REGULAR_BATCH_MS;
+  const solo = simulateLeague({ seed: 'pace', era: 'current', mode: 'normal', humans: humans(1) });
+  const human = solo.humans[0]!.team;
+  const clock = clockFromLeague(solo);
+
+  it('runs the whole regular season as one stage that ends the season', () => {
+    expect(clock.counts).toEqual([1230, 0, 0, 0]);
+    expect(seasonEndsAt(clock.counts, 0)).toBe(true);
+    expect(nextStageFrom(clock.counts, 0)).toBe(4);
+    expect(nextStageFrom([300, 300, 300, 330], 0)).toBe(1);
+  });
+
+  it('gives each round with a human game the old per-game pace and the rest a fiftieth of it', () => {
+    const rounds = new Map<number, boolean>();
+    for (const game of solo.games) {
+      rounds.set(game.round, (rounds.get(game.round) ?? false) || game.home === human || game.away === human);
+    }
+    const slow = [...rounds.values()].filter(Boolean).length;
+    const fast = rounds.size - slow;
+    expect(slow).toBe(82);
+    const expected = slow * HUMAN_REGULAR_MS + fast * (HUMAN_REGULAR_MS / CPU_SPEEDUP);
+    expect(checkpointAtFrom(clock, 0, 0)).toBe(Math.ceil(expected));
+    expect(checkpointAtFrom(clock, 0, 0)! * 10).toBeLessThan(OLD_SEASON_MS);
+  });
+
+  it('reveals the season in order, never backwards, and finishes at the checkpoint', () => {
+    const end = checkpointAtFrom(clock, 0, 0)!;
+    let last = 0;
+    for (let at = 0; at <= end; at += 97) {
+      const cursor = stageCursorAtFrom(clock, 0, 0, at);
+      expect(cursor).toBeGreaterThanOrEqual(last);
+      last = cursor;
+    }
+    expect(stageCursorAtFrom(clock, 0, 0, end - 1)).toBeLessThan(1230);
+    expect(stageCursorAtFrom(clock, 0, 0, end)).toBe(1230);
+  });
+
+  it('plays computer-only playoff games fifty times faster than a human series', () => {
+    for (let stage = 6; stage <= 9; stage++) {
+      const series = solo.series.filter((entry) => entry.round === stage - 5);
+      const expected = series.reduce((sum, entry) => {
+        const each = entry.high === human || entry.low === human ? PLAYOFF_GAME_MS : PLAYOFF_GAME_MS / CPU_SPEEDUP;
+        return sum + each * entry.games.length;
+      }, 0);
+      expect(checkpointAtFrom(clock, stage, 0)).toBe(Math.ceil(expected));
+    }
+  });
+
+  it('keeps the old pace for a saved clock without pacing units', () => {
+    const saved = { counts: [300, 310, 300, 320], playin: 6, seriesCounts: [8, 4, 2, 1], seriesGames: [40, 22, 11, 6] };
+    expect(stageCursorAtFrom(saved, 0, 0, REGULAR_BATCH_MS)).toBe(REGULAR_BATCH_SIZE);
+    expect(stageCursorAtFrom(saved, 6, 0, PLAYOFF_GAME_MS * 2)).toBe(2);
+    expect(nextStageFrom(saved.counts, 0)).toBe(1);
   });
 });

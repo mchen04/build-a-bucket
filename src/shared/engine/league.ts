@@ -19,7 +19,6 @@ export type Conference = 'east' | 'west';
 
 export const LEAGUE_TEAMS: string[] = [...EAST, ...WEST];
 export const REGULAR_GAMES = 82;
-export const QUARTER_ROUNDS = [21, 41, 62, 82];
 export const PLAYOFF_ROUND_NAMES = ['First Round', 'Conference Semifinals', 'Conference Finals', 'NBA Finals'];
 
 export interface ScheduledGame {
@@ -212,10 +211,9 @@ export function buildSchedule(seed: string): ScheduledGame[] {
   let gameNo = 0;
   rounds.forEach((round, index) => {
     const roundNo = index + 1;
-    const stage = roundNo <= QUARTER_ROUNDS[0]! ? 0 : roundNo <= QUARTER_ROUNDS[1]! ? 1 : roundNo <= QUARTER_ROUNDS[2]! ? 2 : 3;
     for (const [home, away] of round) {
       gameNo += 1;
-      games.push({ gameNo, round: roundNo, stage, home, away });
+      games.push({ gameNo, round: roundNo, stage: 0, home, away });
     }
   });
   return games;

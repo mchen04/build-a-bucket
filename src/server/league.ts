@@ -231,7 +231,7 @@ function squadBuild(
   build: LobbyBuild,
   settings: LobbySettings,
   data: Catalog,
-  team: string,
+  team: string | null,
   buildSeed: string | undefined,
 ): BuildCheck {
   if (build.kind !== 'squad') return { ok: false, error: 'This lobby uses squad builds.' };
@@ -256,17 +256,18 @@ function squadBuild(
     values.push({ slot: player.slot, position: player.position, values: valuesFromPicks(player.picks) });
   }
   if (seen.size !== SQUAD_PLAYERS) return { ok: false, error: 'A squad has five players.' };
-  const starters = squadStarters(
-    team,
-    settings.era === 'alltime' ? data.legendGuards : data.currentGuards,
-    settings.era === 'alltime' ? data.legendBigs : data.currentBigs,
-  );
-  const strength = squadStrength(
-    team,
-    starters,
-    values.map((entry) => ({ pos: entry.position, values: entry.values })),
-    settings.era,
-  );
+  const strength = team
+    ? squadStrength(
+        team,
+        squadStarters(
+          team,
+          settings.era === 'alltime' ? data.legendGuards : data.currentGuards,
+          settings.era === 'alltime' ? data.legendBigs : data.currentBigs,
+        ),
+        values.map((entry) => ({ pos: entry.position, values: entry.values })),
+        settings.era,
+      )
+    : null;
   const ranked = [...values].sort(
     (a, b) => ovrFromValues(b.values, b.position) - ovrFromValues(a.values, a.position),
   );
@@ -288,7 +289,7 @@ function squadBuild(
       position: best.position,
       ovr,
       values: best.values,
-      squadStrength: { off: strength.off, def: strength.def },
+      squadStrength: strength ? { off: strength.off, def: strength.def } : undefined,
       squadPlayers: values,
     },
     summary: summaryFor(normalized, ovr, false),
@@ -299,7 +300,7 @@ export function validateBuild(
   build: LobbyBuild,
   settings: LobbySettings,
   data: Catalog,
-  team: string,
+  team: string | null,
   secret: string,
   options: BuildOptions = {},
 ): BuildCheck {
@@ -341,7 +342,7 @@ function autoNormal(position: Position, era: Era, data: Catalog, seed: string): 
   };
 }
 
-function autoSquad(settings: LobbySettings, data: Catalog, team: string, buildSeed: string): BuildCheck {
+function autoSquad(settings: LobbySettings, data: Catalog, team: string | null, buildSeed: string): BuildCheck {
   const players: SquadPlayerBuild[] = [];
   for (const slot of SQUAD_SLOTS) {
     const check = autoNormal(slot.pos, settings.era, data, `${buildSeed}:${slot.id}`);
@@ -379,7 +380,7 @@ function autoSalary(data: Catalog, secret: string): BuildCheck {
 export function autoBuild(
   settings: LobbySettings,
   data: Catalog,
-  team: string,
+  team: string | null,
   buildSeed: string,
   secret: string,
 ): BuildCheck {

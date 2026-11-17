@@ -1,13 +1,13 @@
 :root {
-  --bg: #0b0d12;
-  --panel: #141821;
-  --panel2: #1b2130;
-  --line: #262e3f;
+  --bg: #0d0a16;
+  --panel: #171226;
+  --panel2: #201936;
+  --line: #2e2547;
   --line-soft: rgba(255, 255, 255, 0.06);
   --text: #eef2f8;
-  --muted: #8b95a7;
-  --accent: #ff7a1a;
-  --accent-ink: #1a0d02;
+  --muted: #9a90b3;
+  --accent: #a970ff;
+  --accent-ink: #12061f;
   --good: #3ddc97;
   --bad: #ff5d6c;
   --gold: #ffd166;
@@ -77,7 +77,7 @@ button {
   flex-direction: column;
   overflow: hidden;
   overflow-x: hidden;
-  background: radial-gradient(120% 60% at 50% 0%, #151b28 0%, var(--bg) 60%);
+  background: radial-gradient(120% 60% at 50% 0%, #1e1533 0%, var(--bg) 60%);
 }
 
 .screen {
@@ -431,9 +431,9 @@ button {
 .notice {
   border-radius: 12px;
   padding: 10px 12px;
-  background: rgba(255, 122, 26, 0.12);
-  border: 1px solid rgba(255, 122, 26, 0.35);
-  color: #ffd2b0;
+  background: rgba(169, 112, 255, 0.12);
+  border: 1px solid rgba(169, 112, 255, 0.35);
+  color: #e2d0ff;
   font-size: 12px;
   line-height: 1.35;
 }
@@ -610,7 +610,7 @@ button {
 }
 
 .table-row.us {
-  background: rgba(255, 122, 26, 0.12);
+  background: rgba(169, 112, 255, 0.12);
   font-weight: 800;
 }
 
@@ -692,7 +692,7 @@ button {
   border-radius: 16px;
   padding: 14px;
   text-align: center;
-  background: linear-gradient(180deg, rgba(255, 209, 102, 0.18), rgba(255, 122, 26, 0.08));
+  background: linear-gradient(180deg, rgba(255, 209, 102, 0.18), rgba(169, 112, 255, 0.08));
   border: 1px solid rgba(255, 209, 102, 0.4);
 }
 
@@ -985,14 +985,14 @@ button {
 .spin-big {
   min-height: 96px;
   border-radius: 18px;
-  background: linear-gradient(180deg, #ff8a33, #f26a0a);
+  background: linear-gradient(180deg, #b98aff, #8b4cf2);
   color: var(--accent-ink);
   font-size: 26px;
   font-weight: 900;
   letter-spacing: 0.14em;
   display: grid;
   place-items: center;
-  box-shadow: 0 10px 30px rgba(255, 122, 26, 0.25);
+  box-shadow: 0 10px 30px rgba(169, 112, 255, 0.25);
 }
 
 .spin-big:disabled {
@@ -1102,7 +1102,7 @@ button {
 }
 
 .roster-row.me {
-  background: rgba(255, 122, 26, 0.14);
+  background: rgba(169, 112, 255, 0.14);
 }
 
 .roster-row.gone {
@@ -1118,7 +1118,7 @@ button {
   font-weight: 900;
   letter-spacing: 0.08em;
   color: var(--accent);
-  border: 1px solid rgba(255, 122, 26, 0.4);
+  border: 1px solid rgba(169, 112, 255, 0.4);
   border-radius: 99px;
   padding: 1px 4px;
 }
@@ -1400,7 +1400,7 @@ button {
   font-weight: 900;
   letter-spacing: 0.08em;
   color: var(--accent);
-  border: 1px solid rgba(255, 122, 26, 0.4);
+  border: 1px solid rgba(169, 112, 255, 0.4);
   border-radius: var(--radius-pill);
   padding: 1px 4px;
   line-height: 1.2;
@@ -1452,7 +1452,7 @@ button {
 }
 
 .result-row.mine {
-  background: rgba(255, 122, 26, 0.08);
+  background: rgba(169, 112, 255, 0.08);
 }
 
 .result-team {
@@ -1502,7 +1502,7 @@ button {
 }
 
 .series.mine {
-  background: rgba(255, 122, 26, 0.08);
+  background: rgba(169, 112, 255, 0.08);
 }
 
 .series-team {

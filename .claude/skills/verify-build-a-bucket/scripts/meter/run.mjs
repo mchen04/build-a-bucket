@@ -257,9 +257,9 @@ async function waitJourney(base, mode, phase, seconds) {
   const { code, host, seats } = await createLobby(base, 'Host', settings);
   await joinSeats(base, code, seats, 8);
   await act(base, code, host, 'start', { settings });
+  await act(base, code, host, 'advance', { stage: 0 });
   await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
   await act(base, code, host, 'lock');
-  await act(base, code, host, 'advance', { stage: 0 });
   if (phase === 'building') {
     await act(base, code, seats[1], 'ready', { stage: 0 });
   } else {
@@ -303,9 +303,9 @@ async function freshnessJourney(base) {
     return null;
   };
   await act(base, code, host, 'start', { settings });
+  await act(base, code, host, 'advance', { stage: 0 });
   await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
   await act(base, code, host, 'lock');
-  await act(base, code, host, 'advance', { stage: 0 });
   for (const actor of seats.slice(0, 4)) {
     const started = Date.now();
     const watches = seats
@@ -362,9 +362,9 @@ async function leagueJourney(base, mode, options) {
   const { code, host, seats } = await createLobby(base, 'Host', settings);
   await joinSeats(base, code, seats, 8);
   await act(base, code, host, 'start', { settings });
+  await act(base, code, host, 'advance', { stage: 0 });
   await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
   await act(base, code, host, 'lock');
-  await act(base, code, host, 'advance', { stage: 0 });
   await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
   let lastView = (await poll(base, code, host, 0)).json?.lobby;
 
@@ -400,9 +400,9 @@ async function leagueJourney(base, mode, options) {
     await act(base, code, host, 'rematch');
     await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
     await poll(base, code, host);
+    await act(base, code, host, 'advance', { stage: 0 });
     await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
     await act(base, code, host, 'lock');
-    await act(base, code, host, 'advance', { stage: 0 });
     await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
     const second = [await poll(base, code, seats[0], 0)];
     const view = second[0].json?.lobby;
@@ -427,9 +427,9 @@ async function seasonJourney(base, mode = 'normal') {
   const { code, host, seats } = await createLobby(base, 'Host', settings);
   await joinSeats(base, code, seats, 8);
   await act(base, code, host, 'start', { settings });
+  await act(base, code, host, 'advance', { stage: 0 });
   await Promise.all(seats.map((entry) => act(base, code, entry, 'draw')));
   await act(base, code, host, 'lock');
-  await act(base, code, host, 'advance', { stage: 0 });
   await Promise.all(seats.map((entry) => act(base, code, entry, 'ready', { stage: 0 })));
   let view = (await poll(base, code, host, 0)).json?.lobby;
   const phases = [];

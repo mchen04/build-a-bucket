@@ -11,10 +11,10 @@ Single-player modes are unchanged. A lobby never reads or consumes the solo Dail
 | Phase | Who moves it | What the lobby sees |
 |---|---|---|
 | `lobby` | host starts (2+ players) | invite link, seats, mode and era |
+| `building` | each participant, host can lock now | Normal, Salary Cap or Squad builder, before any team is known |
 | `draw` | each participant, host can lock | one unique team each, one respin, unclaimed pool |
-| `building` | each participant, host can lock now | Normal, Salary Cap or Squad builder for the assigned team |
 | `preview` | everyone readies, host can start | every team with its build OVR |
-| `season` | the server reveals | four quarter checkpoints, scores, partial standings |
+| `season` | the server reveals | one continuous regular season, scores, partial standings |
 | `awards` | everyone readies, host can advance | final standings and awards |
 | `playin` | everyone readies, host can advance | play-in results |
 | `playoffs` | the server reveals game by game | first round, semis, conference finals, finals |
@@ -37,12 +37,16 @@ reconnect in any phase and keeps its seat, team, build and powers.
 - A respin is allowed once per participant per game. The update is guarded by `not reroll_used` and excludes the
   current team. A retried request with the same action id returns the stored row and never spends a second respin.
   A rematch deletes the team rows, the league slices and the `league` column, so the next game starts with a
-  fresh draw, build and respin.
-- Assignments lock when the host starts building (`locked_at`) or 15 seconds after the last present participant
+  fresh build, draw and respin.
+- The draw opens when every present participant has a build, or when the host locks the builds (missing builds
+  are auto-filled). A Squad build is checked without a team; its strength against the team's starters is computed
+  when the league starts.
+- Assignments lock when the host locks the teams (`locked_at`) or 15 seconds after the last present participant
   draws, whichever comes first. The window gives the last drawer the same reroll chance as every earlier drawer.
   The host can lock early; participants who have not drawn receive a team from the server first. The lock
   statement draws every missing team and moves the phase in one `for update` statement, so a player can never
-  enter `building` without a team.
+  reach `preview` without a team. A lobby saved mid-draw under the old order, with no builds yet, locks into
+  `building` instead, and its builds then go straight to `preview`.
 - A reconnect with the same secret resumes the same seat, team and respin state. A participant who left after the
   draw rejoins with a cleared build, readiness and salary powers, so the previous game's build cannot be played
   again and cannot count as ready for a rematch.
@@ -55,8 +59,9 @@ reconnect in any phase and keeps its seat, team, build and powers.
 - Extra: each conference plays six extra distance rounds (the 15-team cyclic distances 1-7, six chosen by the
   seeded shuffle), two home/away games per pair in each chosen distance. Every team gets 24 extra games and
   exactly 82 regular-season games.
-- Games are packed into rounds where neither team plays twice, then flattened into `gameNo` order. Round 21,
-  41 and 62 are the quarter checkpoints.
+- Games are packed into rounds where neither team plays twice, then flattened into `gameNo` order. Every
+  regular-season game is in stage 0; there are no quarter checkpoints. A league saved before this change keeps its
+  four quarter stages and its old pace.
 - Results are computed once from the lobby's server seed (`lobbies.season_secret`) when every present
   participant has a build and the league starts. Each game's RNG is keyed by the seed and `gameNo`, so the
   result is independent of request order.
@@ -101,13 +106,19 @@ slower poll can never move the reveal backwards.
 
 | Stage | Contents | Reveal |
 |---|---|---|
-| 0-3 | regular-season quarters | a batch of 3 games every 1.2 s |
+| 0 | the whole regular season | round by round: 0.4 s for a round with a human game, 8 ms otherwise |
 | 4 | awards and final standings | on entry |
 | 5 | play-in | on entry |
-| 6-9 | playoff round | one game every 1.5 s |
+| 6-9 | playoff round | game by game: 1.5 s in a series with a human team, 30 ms otherwise |
 | 10 | recap | on entry |
 
-Every stage ends at a checkpoint. At a checkpoint, present participants ready; the stage advances when every
+Games without a human team run 50 times faster (`CPU_SPEEDUP`); a human team's games keep the old 0.4 s and 1.5 s
+pace. The clock stores these reveal units in `league_slices.clock.units`. A clock without units, saved before this
+change, keeps the old fixed batches. A regular season of 1,230 games now takes about 33 to 35 seconds instead of
+8 minutes 12 seconds, for 1 to 8 humans.
+
+The end of the regular season is not a stop: the server moves straight to the awards stage. Every later stage ends
+at a checkpoint. At a checkpoint, present participants ready; the stage advances when every
 present participant is ready, or when the host advances alone. Away (unseen for 60 s) and left participants
 never block. If the host is present but has not readied 90 seconds after the checkpoint opened, any present
 participant may advance once everyone except the host is ready, and the server advances on the next poll. A
@@ -128,7 +139,7 @@ The view only reveals what the cursor allows:
 - playoff games only up to the round cursor; a series winner appears only when the whole series is revealed;
 - the champion and every finish only in the recap.
 
-`stageTotal` is a fixed denominator: the real quarter size for stages 0-3, 6 for the play-in, and 7 per series
+`stageTotal` is a fixed denominator: the regular-season size for stage 0, 6 for the play-in, and 7 per series
 for a playoff round. It never exposes how long a series actually ran.
 
 ## Building and the rematch gate
@@ -176,14 +187,14 @@ All handlers are Web-standard functions under `api/lobby/**` and send the partic
 | POST | `/api/lobby` | create a lobby; the creator hosts seat 1 |
 | GET | `/api/lobby/:code?since=&events=&token=` | poll the view (204 when unchanged, delta when only progress moved) |
 | POST | `/api/lobby/:code/join` | take a free seat in `lobby`; the same secret resumes any phase |
-| POST | `/api/lobby/:code/start` | host: `lobby` to `draw` with the chosen mode and era (2+ players) |
+| POST | `/api/lobby/:code/start` | host: `lobby` to `building` with the chosen mode and era (2+ players) |
 | POST | `/api/lobby/:code/draw` | draw a unique unclaimed team |
 | POST | `/api/lobby/:code/reroll` | one respin into a still-unclaimed team |
-| POST | `/api/lobby/:code/lock` | host: draw any missing teams, lock assignments and open building |
+| POST | `/api/lobby/:code/lock` | host: draw any missing teams, lock assignments and open the preview |
 | POST | `/api/lobby/:code/build` | validate and store a Normal, Salary or Squad build |
 | POST | `/api/lobby/:code/power` | one Salary Shuffle or Scout for this participant |
 | POST | `/api/lobby/:code/ready` | ready at the current checkpoint, preview or rematch gate |
-| POST | `/api/lobby/:code/advance` | host or all-ready: move to the next checkpoint; host lock now; open the rematch draw |
+| POST | `/api/lobby/:code/advance` | host or all-ready: move to the next checkpoint; host lock now; open the rematch builds |
 | POST | `/api/lobby/:code/rematch` | host: keep people and code, reset to the rematch gate |
 | POST | `/api/lobby/:code/remove` | host: remove an away player (counts as leaving) |
 | POST | `/api/lobby/:code/leave` | leave; before the draw the seat is deleted, after it is marked left |
