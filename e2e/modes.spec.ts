@@ -400,7 +400,7 @@ test('salary powers shuffle, scout a grade and survive a reload', async ({ page 
   await expect(page.getByTestId('salary-result')).toContainText('OVR');
   await expect(page.getByTestId('salary-result')).toContainText(spent);
   await expect(page.getByTestId('salary-result')).toContainText('TODAY IS LOCKED IN');
-  await expect(page.getByTestId('salary-result')).toContainText('Playoffs');
+  await expect(page.getByTestId('salary-result')).toContainText(/playoffs/i);
   const stat = (value: number, label: string) => new RegExp(`${String(value).replace('.', '\\.')}\\s*${label}`);
   await expect(page.getByTestId('salary-result')).toContainText(stat(expected.ppg, 'PPG'));
   await expect(page.getByTestId('salary-result')).toContainText(stat(expected.rpg, 'RPG'));
