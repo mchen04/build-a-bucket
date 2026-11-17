@@ -614,6 +614,7 @@ async function leagueRun() {
   const installSeriesObserver = async (seat) =>
     seat.page.evaluate(() => {
       const target = window;
+      performance.setResourceTimingBufferSize(10000);
       target.__seriesScores = [];
       target.__nextActions = [];
       target.__logs = [];

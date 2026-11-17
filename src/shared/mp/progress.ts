@@ -67,7 +67,24 @@ function mergeLeagueGames(current: LeagueGameView[], incoming: LeagueGameView[])
 
 function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
   const standings = delta.rows ? rowsToStandings(delta.rows, view) : delta.standings !== undefined ? delta.standings : view.standings;
-  const my = delta.rows ? myFromRows(delta.rows, view) : delta.my !== undefined ? delta.my : view.my;
+  const playoffs = delta.playoffs !== undefined ? delta.playoffs : view.playoffs;
+  let my = delta.rows ? myFromRows(delta.rows, view) : delta.my !== undefined ? delta.my : view.my;
+  if (my?.series && playoffs) {
+    const series = playoffs.find((entry) => entry.id === my?.series?.id) ?? playoffs.find((entry) => entry.high === my?.team || entry.low === my?.team);
+    if (series) {
+      my = {
+        ...my,
+        series: {
+          ...my.series,
+          wins: series.wins,
+          losses: series.losses,
+          complete: series.complete,
+          winner: series.winner,
+          advanced: series.complete ? series.winner === my.team : my.series.advanced,
+        },
+      };
+    }
+  }
   return {
     ...view,
     phase: stagePhase(delta.stage),
@@ -81,7 +98,7 @@ function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
     my,
     awards: delta.awards !== undefined ? delta.awards : view.awards,
     playin: delta.playin !== undefined ? delta.playin : view.playin,
-    playoffs: delta.playoffs !== undefined ? delta.playoffs : view.playoffs,
+    playoffs,
   };
 }
 

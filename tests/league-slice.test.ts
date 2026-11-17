@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import * as v from 'valibot';
 import {
   LEAGUE_TEAMS,
   simulateLeague,
   type HumanTeamInput,
+  type HumanSeason,
   type LeagueResult,
   type SeriesResult,
 } from '../src/shared/engine/league';
@@ -15,7 +17,8 @@ import {
   type LeagueView,
 } from '../src/shared/mp/league';
 import { mergeDelta } from '../src/shared/mp/progress';
-import type { LeagueDelta, LobbyView } from '../src/shared/mp/types';
+import { LobbyDeltaSchema } from '../src/shared/mp/schemas';
+import type { LeagueDelta, LobbyDelta, LobbyView } from '../src/shared/mp/types';
 import { setRunner } from '../src/server/db';
 import { readLeagueDelta } from '../src/server/leagueSlice';
 import {
@@ -350,8 +353,8 @@ describe('league slice views', () => {
       const series = [...seriesFixture(2, [7, 6, 5, 4]), ...seriesFixture(3, [7, 6])];
       setRunner({
         async query<Row>(text: string): Promise<Row[]> {
-          if (!text.includes('jsonb_array_elements(series)')) throw new Error(`unexpected query: ${text}`);
-          return [{ series }] as unknown as Row[];
+          if (text.includes('jsonb_array_elements(series)')) return [{ series }] as unknown as Row[];
+          return [{ humans: [{ participantId: 'delta-me', team: series[0]!.high, name: 'Me', seat: 1 }] as unknown as HumanSeason[], east: [], west: [], clock, awards: null, playin: null, series, champion: null, h2h: null }] as unknown as Row[];
         },
         async batch(): Promise<void> {},
         async transaction<Row>(): Promise<Row[][]> {
@@ -368,19 +371,48 @@ describe('league slice views', () => {
       const mid = await readLeagueDelta('delta-total', 7, 13, 0, 'DET', clock);
       expect(mid?.stageTotal).toBe(22);
       expect(mid?.checkpoint).toBe(false);
-      expect(mid?.my?.series?.id).toBe(mid?.playoffs?.find((entry) => entry.high === 'DET' || entry.low === 'DET')?.id);
-      expect(mid?.my?.series?.wins).toBe(mid?.playoffs?.find((entry) => entry.high === 'DET' || entry.low === 'DET')?.wins);
       const done = await readLeagueDelta('delta-total', 7, 22, 0, 'DET', clock);
       expect(done?.stageTotal).toBe(22);
       expect(done?.checkpoint).toBe(true);
       expect(done?.playoffs?.flatMap((entry) => entry.games)).toHaveLength(22);
-      expect(done?.my?.series?.complete).toBe(done?.playoffs?.find((entry) => entry.high === 'DET' || entry.low === 'DET')?.complete);
       const finalsMid = await readLeagueDelta('delta-total', 8, 12, 0, 'DET', clock);
       expect(finalsMid?.stageTotal).toBe(13);
       expect(finalsMid?.checkpoint).toBe(false);
       const finalsDone = await readLeagueDelta('delta-total', 8, 13, 0, 'DET', clock);
       expect(finalsDone?.stageTotal).toBe(13);
       expect(finalsDone?.checkpoint).toBe(true);
+    });
+
+    it('keeps my series in step with the bracket through the client schema and merge', async () => {
+      const series = seriesFixture(2, [7, 6, 5, 4]);
+      setRunner({
+        async query<Row>(text: string): Promise<Row[]> {
+          if (text.includes('jsonb_array_elements(series)')) return [{ series }] as unknown as Row[];
+          return [{ humans: [{ participantId: 'delta-me', team: series[0]!.high, name: 'Me', seat: 1 }] as unknown as HumanSeason[], east: [], west: [], clock, awards: null, playin: null, series, champion: null, h2h: null }] as unknown as Row[];
+        },
+        async batch(): Promise<void> {},
+        async transaction<Row>(): Promise<Row[][]> {
+          return [];
+        },
+      });
+      const clock: LeagueClock = { counts: [0, 0, 0, 0], playin: 0, seriesCounts: [8, 4, 2, 1], seriesGames: [0, 22, 13, 6] };
+      const me = series[0]!.high;
+      const delta = await readLeagueDelta('delta-my', 7, 13, 0, me, clock);
+      expect(delta).toBeTruthy();
+      if (!delta) return;
+      const view = {
+        version: 1,
+        standings: [{ team: me, conference: 'east', wins: 50, losses: 32, seed: 1, isMine: true, humanName: 'Me' }],
+        my: { team: me, series: { id: series[0]!.id, wins: 0, losses: 0, complete: false, winner: null, advanced: false } },
+        playoffs: null,
+      } as unknown as LeagueView;
+      const payload = { version: 2, serverTime: new Date().toISOString(), phase: 'playoffs', events: [], participants: [], league: delta };
+      expect(v.safeParse(LobbyDeltaSchema, payload).success).toBe(true);
+      const merged = mergeDelta({ version: 1, league: view, participants: [], events: [] } as unknown as LobbyView, payload as unknown as LobbyDelta).league as LeagueView;
+      const bracket = delta.playoffs?.find((entry) => entry.id === series[0]!.id);
+      expect(merged.my?.series?.wins).toBe(bracket?.wins);
+      expect(merged.my?.series?.losses).toBe(bracket?.losses);
+      expect(merged.standings).toEqual(view.standings);
     });
   });
 });
