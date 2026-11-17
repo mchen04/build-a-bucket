@@ -14,6 +14,9 @@ import { readLeagueView } from '../src/server/leagueSlice';
 import type { LeagueResult } from '../src/shared/engine/league';
 import { generateSecret, newActionId } from '../src/shared/mp/codes';
 import { stageGamesTotal } from '../src/shared/mp/league';
+import type { LeagueClock } from '../src/shared/mp/league';
+import { progressToken } from '../src/shared/mp/progress';
+import { stageEvents } from '../src/server/lobby';
 import type { LobbySettings, LobbyView } from '../src/shared/mp/types';
 
 const BASE = 'http://localhost:4173/api';
@@ -120,7 +123,7 @@ async function participantId(lobbyId: string, seat: number): Promise<string> {
   return id;
 }
 
-async function setTeams(code: string, teams: [string, string]): Promise<void> {
+async function setTeams(code: string, teams: string[]): Promise<void> {
   const row = await lobbyRow(code);
   const seats = await db().query<{ id: string; seat: number }>('select id, seat from participants where lobby_id = $1::uuid order by seat', [row.id]);
   for (const seat of seats) {
@@ -197,7 +200,7 @@ describeDb('shared league stage behavior', () => {
     expect(host.gate?.mine).toBe(true);
     expect(host.gate?.qualified).toBe(1);
     expect(host.gate?.ready).toBe(0);
-    expect(host.gate?.nextAction).toBe('Ready for the playoffs');
+    expect(host.gate?.nextAction).toContain('Start the playoffs');
 
     const guest = await view(code, seats[1]!.secret);
     expect(guest.gate?.active).toBe(true);
@@ -320,4 +323,122 @@ describeDb('shared league stage behavior', () => {
     expect(hostFinal.stage).toBe(10);
     expect(guestFinal.stage).toBe(10);
   }, 180_000);
+
+  it('scopes rematch event keys to the new league', async () => {
+    const { code, seats } = await seasonLeague();
+    const row = await lobbyRow(code);
+    await db().query(
+      "insert into events (lobby_id, kind, payload) values ($1::uuid, 'awards', jsonb_build_object('detail', 'old', 'key', '4:awards'))",
+      [row.id],
+    );
+    await db().query("update lobbies set rematch = 1, stage = 4, phase = 'awards', stage_cursor = 0, stage_started_at = null where id = $1::uuid", [row.id]);
+    await view(code, seats[0]!.secret);
+    expect((await eventsOfKind(code, 'awards')).some((entry) => entry.key === '1:4:awards')).toBe(true);
+
+    await db().query(
+      "insert into events (lobby_id, kind, payload) values ($1::uuid, 'playoff_start', jsonb_build_object('detail', 'old', 'key', '6:start'))",
+      [row.id],
+    );
+    await db().query("update lobbies set stage = 6, phase = 'playoffs', stage_cursor = 0, stage_started_at = null where id = $1::uuid", [row.id]);
+    expect((await advance(code, seats[0]!.secret, 6)).status).toBe(200);
+    expect((await eventsOfKind(code, 'playoff_start')).some((entry) => entry.key === '1:6:start')).toBe(true);
+
+    await db().query(
+      "insert into events (lobby_id, kind, payload) values ($1::uuid, 'champion', jsonb_build_object('detail', 'old', 'key', '9:champion'))",
+      [row.id],
+    );
+    await db().query("update lobbies set stage = 9, phase = 'playoffs', stage_cursor = 100000, stage_started_at = now() - interval '1 hour' where id = $1::uuid", [row.id]);
+    await view(code, seats[0]!.secret);
+    expect((await eventsOfKind(code, 'champion')).some((entry) => entry.key === '1:9:champion')).toBe(true);
+  }, 120_000);
+
+  it('prints the winner score first and attributes play-in lines to the human', async () => {
+    const clock = {
+      humanSeasons: [{ participantId: 'p1', name: 'Fay', team: 'POR', wins: 40, losses: 42, seed: 8 }],
+      qualified: ['POR', 'LAC'],
+      series: [{ round: 1, name: 'First Round', high: 'LAC', low: 'POR', winner: 'POR', wins: 2, losses: 4, games: [] }],
+      playinGames: [{ conference: 'west', label: 'Last spot', home: 'POR', away: 'LAC', winner: 'LAC' }],
+    } as unknown as LeagueClock;
+    const series = stageEvents(6, clock).find((entry) => entry.kind === 'series_result');
+    expect(series?.detail).toBe('beat LAC 4-2 in the First Round');
+    const playin = stageEvents(5, clock).find((entry) => entry.kind === 'playin_result');
+    expect(playin?.detail).toBe('lost to LAC in the Last spot play-in');
+  });
+
+  it('routes a host advance from the play-in into the playoff gate', async () => {
+    const { code, seats } = await seasonLeague();
+    const row = await lobbyRow(code);
+    const qualified = [...new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]))];
+    const nonQualified = row.league.standings.east.concat(row.league.standings.west).map((entry) => entry.team).filter((team) => !qualified.includes(team));
+    await setTeams(code, [qualified[0]!, nonQualified[0]!]);
+    await setStage(code, 5, 'playin', 100000);
+    expect((await advance(code, seats[0]!.secret, 5)).status).toBe(200);
+    const lobby = await view(code, seats[0]!.secret);
+    expect(lobby.stage).toBe(6);
+    expect(lobby.gate).not.toBeNull();
+  }, 120_000);
+
+  it('starts the gate once under concurrent polls', async () => {
+    const { code, seats } = await seasonLeague();
+    const row = await lobbyRow(code);
+    const qualified = new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]));
+    const nonQualified = row.league.standings.east.concat(row.league.standings.west).map((entry) => entry.team).filter((team) => !qualified.has(team));
+    await setTeams(code, [nonQualified[0]!, nonQualified[1]!]);
+    await setStage(code, 6, 'playoffs', 0);
+    await Promise.all([
+      view(code, seats[0]!.secret),
+      view(code, seats[1]!.secret),
+      view(code, seats[0]!.secret),
+      advance(code, seats[0]!.secret, 6),
+      advance(code, seats[0]!.secret, 6),
+    ]);
+    expect(await eventsOfKind(code, 'playoff_start')).toHaveLength(1);
+  }, 120_000);
+
+  it('treats a repeated host start as the current state', async () => {
+    const { code, seats } = await seasonLeague();
+    const row = await lobbyRow(code);
+    const qualified = [...new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]))];
+    const nonQualified = row.league.standings.east.concat(row.league.standings.west).map((entry) => entry.team).filter((team) => !qualified.includes(team));
+    await setTeams(code, [qualified[0]!, nonQualified[0]!]);
+    await setStage(code, 6, 'playoffs', 0);
+    expect((await advance(code, seats[0]!.secret, 6)).status).toBe(200);
+    expect((await advance(code, seats[0]!.secret, 6)).status).toBe(200);
+    expect(await eventsOfKind(code, 'playoff_start')).toHaveLength(1);
+    expect((await view(code, seats[0]!.secret)).gate).toBeNull();
+  }, 120_000);
+
+  it('names every waiting player and the host in the gate action', async () => {
+    const { code, seats } = await seasonLeague(4);
+    const row = await lobbyRow(code);
+    const qualified = [...new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]))];
+    await setTeams(code, qualified.slice(0, 4));
+    await setStage(code, 6, 'playoffs', 0);
+    const host = await view(code, seats[0]!.secret);
+    const guest = await view(code, seats[1]!.secret);
+    expect(host.gate?.nextAction).toContain('Start the playoffs');
+    expect(guest.gate?.nextAction).toContain('Host can start');
+    for (const name of ['Host', 'P2', 'P3', 'P4']) {
+      expect(host.gate?.nextAction).toContain(name);
+      expect(guest.gate?.nextAction).toContain(name);
+    }
+  }, 120_000);
+
+  it('answers a waiting gate poll without a full read', async () => {
+    const { code, seats } = await seasonLeague();
+    const row = await lobbyRow(code);
+    const qualified = [...new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]))];
+    const nonQualified = row.league.standings.east.concat(row.league.standings.west).map((entry) => entry.team).filter((team) => !qualified.includes(team));
+    await setTeams(code, [qualified[0]!, nonQualified[0]!]);
+    await setStage(code, 6, 'playoffs', 0);
+    const lobby = await view(code, seats[0]!.secret);
+    const token = progressToken(lobby);
+    const events = lobby.events[0]?.id ?? 0;
+    const response = await viewHandler(
+      new Request(`${BASE}/lobby/${code}?since=${lobby.version}&events=${events}&token=${encodeURIComponent(token)}&waiting=1`, {
+        headers: { authorization: `Bearer ${seats[0]!.secret}` },
+      }),
+    );
+    expect(response.status).toBe(204);
+  }, 120_000);
 });

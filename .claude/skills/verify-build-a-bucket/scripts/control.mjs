@@ -588,33 +588,15 @@ async function leagueRun() {
       if (!marks.some((entry) => entry.label === label)) mark(label);
     }
   };
-  const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
-  try {
-    const host = seats[0];
-    await host.page.goto(base);
-    await host.page.getByTestId('mp-name').waitFor({ timeout: 90000 });
-    await host.page.getByTestId('mp-name').fill(host.name);
-    await host.page.getByTestId('create-lobby').click();
-    await host.page.getByTestId('lobby-code').waitFor();
-    const code = (await host.page.getByTestId('lobby-code').innerText()).trim();
-    const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
-    if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
-    await snap(host, 'created');
-    for (const seat of seats.slice(1)) {
-      await seat.page.goto(link);
-      await seat.page.getByTestId('invite-code').waitFor({ timeout: 90000 });
-      await snap(seat, 'invite');
-      await seat.page.getByTestId('invite-name').fill(seat.name);
-      await seat.page.getByTestId('invite-join').click();
-      await seat.page.getByTestId('lobby-code').waitFor({ timeout: 90000 });
-      await snap(seat, 'joined');
+  const buildAndStart = async (hostSeat, activeSeats, recordMarks, chooseSettings) => {
+    if (chooseSettings) {
+      if (mode !== 'normal') await hostSeat.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
+      if (era !== 'current') await hostSeat.page.getByRole('button', { name: 'All-Time', exact: true }).click();
+      await hostSeat.page.getByTestId('start-season').click();
     }
-    if (mode !== 'normal') await host.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
-    if (era !== 'current') await host.page.getByRole('button', { name: 'All-Time', exact: true }).click();
-    await host.page.getByTestId('start-season').click();
-    await host.page.getByTestId('open-builder').waitFor();
-    await host.page.waitForTimeout(800);
-    for (const seat of seats) {
+    await hostSeat.page.getByTestId('open-builder').waitFor();
+    await hostSeat.page.waitForTimeout(800);
+    for (const seat of activeSeats) {
       await seat.page.getByTestId('open-builder').click();
       if (mode === 'salary') {
         await seat.page.getByTestId('lobby-salary-scout').click();
@@ -654,27 +636,50 @@ async function leagueRun() {
         { timeout: 30000 },
       );
     }
-    mark('build-complete');
-    await host.page.getByTestId('draw-team').waitFor();
-    await host.page.getByTestId('draw-team').click();
-    await host.page.getByTestId('reroll-team').waitFor();
-    await host.page.getByTestId('reroll-team').click();
-    await host.page.waitForTimeout(500);
-    for (const seat of seats.slice(1)) {
+    if (recordMarks) mark('build-complete');
+    await hostSeat.page.getByTestId('draw-team').waitFor();
+    await hostSeat.page.getByTestId('draw-team').click();
+    await hostSeat.page.getByTestId('reroll-team').waitFor();
+    await hostSeat.page.getByTestId('reroll-team').click();
+    await hostSeat.page.waitForTimeout(500);
+    for (const seat of activeSeats.slice(1)) {
       await seat.page.getByTestId('draw-team').click();
       await seat.page.getByTestId('draw-team').waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
     }
-    const lock = host.page.getByTestId('lock-teams');
+    const lock = hostSeat.page.getByTestId('lock-teams');
     if (await lock.isVisible().catch(() => false)) await lock.click().catch(() => {});
-    await host.page.getByTestId('preview-ready').waitFor();
-    for (const seat of seats) {
+    await hostSeat.page.getByTestId('preview-ready').waitFor();
+    for (const seat of activeSeats) {
       const ready = seat.page.getByTestId('preview-ready');
       if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
     }
-    const startNow = host.page.getByTestId('start-season-now');
+    const startNow = hostSeat.page.getByTestId('start-season-now');
     if (await startNow.isVisible().catch(() => false)) await startNow.click().catch(() => {});
-    await host.page.getByTestId('league-stage').waitFor();
-    mark('season-start');
+    await hostSeat.page.getByTestId('league-stage').waitFor();
+    if (recordMarks) mark('season-start');
+  };
+  const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
+  try {
+    let host = seats[0];
+    await host.page.goto(base);
+    await host.page.getByTestId('mp-name').waitFor({ timeout: 90000 });
+    await host.page.getByTestId('mp-name').fill(host.name);
+    await host.page.getByTestId('create-lobby').click();
+    await host.page.getByTestId('lobby-code').waitFor();
+    const code = (await host.page.getByTestId('lobby-code').innerText()).trim();
+    const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
+    if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
+    await snap(host, 'created');
+    for (const seat of seats.slice(1)) {
+      await seat.page.goto(link);
+      await seat.page.getByTestId('invite-code').waitFor({ timeout: 90000 });
+      await snap(seat, 'invite');
+      await seat.page.getByTestId('invite-name').fill(seat.name);
+      await seat.page.getByTestId('invite-join').click();
+      await seat.page.getByTestId('lobby-code').waitFor({ timeout: 90000 });
+      await snap(seat, 'joined');
+    }
+    await buildAndStart(host, seats, true, true);
     let checkpoint = 0;
     let chaosDone = false;
     let lastLabel = '';
@@ -770,6 +775,7 @@ async function leagueRun() {
             await host.page.waitForTimeout(1500);
             host.closed = true;
             stages.push({ label: 'host-left', seat: host.seat, name: host.name });
+            host = active()[0];
           }
         }
         lastLabel = label;
@@ -782,6 +788,7 @@ async function leagueRun() {
     for (const seat of active()) await snap(seat, 'recap');
     let playAgain = false;
     let rematchNote = null;
+    let secondGameLog = null;
     const rematchHost = await findHost('rematch');
     if (rematchHost) {
       tap(rematchHost, 'Play Again');
@@ -822,6 +829,14 @@ async function leagueRun() {
         }
         await rematchHost.page.getByTestId('open-builder').waitFor({ timeout: 30000 });
         for (const seat of active()) await snap(seat, 'second-game');
+        await buildAndStart(rematchHost, active(), false, false);
+        const secondDeadline = Date.now() + 45000;
+        while (Date.now() < secondDeadline) {
+          if ((await visible(rematchHost, 'awards')) || (await visible(rematchHost, 'playoffs')) || (await visible(rematchHost, 'recap'))) break;
+          await rematchHost.page.waitForTimeout(250);
+        }
+        secondGameLog = await rematchHost.page.getByTestId('activity-log').innerText().catch(() => '');
+        for (const seat of active()) await snap(seat, 'second-game-events');
         playAgain = true;
       }
     }
@@ -872,12 +887,13 @@ async function leagueRun() {
       champion,
       playAgain,
       rematchNote,
+      secondGameLog,
       errors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, errors: seat.errors })),
       httpErrors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, responses: seat.http })),
       evidence: ev,
     };
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
-    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
   } finally {
     await browser.close();
   }

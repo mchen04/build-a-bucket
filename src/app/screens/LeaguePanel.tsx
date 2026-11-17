@@ -187,7 +187,6 @@ export function LeaguePanel(props: Props) {
               <div style={{ fontWeight: 800, fontSize: 'var(--text-sm)' }}>
                 {gate.ready}/{gate.qualified} playoff teams ready
               </div>
-              <div class="tiny muted">{gate.nextAction}</div>
             </div>
             {gate.mine && !props.view.me.ready ? (
               <button class="btn btn-small" disabled={props.busy} onClick={props.onReady}>
@@ -204,11 +203,6 @@ export function LeaguePanel(props: Props) {
               </button>
             ) : null}
           </div>
-          {gate.waitingOn.length ? (
-            <div class="tiny muted" style={{ marginTop: 'var(--space-2)' }}>
-              Waiting on {gate.waitingOn.join(', ')}
-            </div>
-          ) : null}
         </div>
       ) : null}
 

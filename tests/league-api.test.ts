@@ -609,6 +609,19 @@ describeDb('shared league API', () => {
     expect(lobby.seatsTaken).toBe(1);
   }, 120_000);
 
+  it('counts only present players in the rematch waiting message', async () => {
+    const { code, seats } = await runLeague('normal', 3);
+    expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
+    await db().query(
+      "update participants set last_seen = now() - interval '2 minutes' where lobby_id = (select id from lobbies where code = $1) and seat = $2",
+      [code, seats[2]!.seat],
+    );
+    await ready(code, seats[0]!.secret, 0);
+    const outcome = await advance(code, seats[0]!.secret, 0);
+    expect(outcome.status).toBe(409);
+    expect((await read<{ error: string }>(outcome)).error).toContain('Waiting on 1 player');
+  }, 120_000);
+
   it('lets the host remove an away participant and open the rematch builds', async () => {
     const { code, seats } = await runLeague('normal', 3);
     expect((await rematch(code, seats[0]!.secret)).status).toBe(200);

@@ -286,7 +286,7 @@ export function Lobby(props: Props) {
   }
 
   const present = view.participants.filter((entry) => entry.status !== 'left');
-  const retained = present;
+  const retained = present.filter((entry) => !entry.away);
   const retainedReady = retained.filter((entry) => entry.ready).length;
   const autoFilled = view.participants.filter((entry) => entry.summary?.auto).length;
   const missingBuilds = view.participants.filter((entry) => entry.status !== 'left' && !entry.summary).length;
