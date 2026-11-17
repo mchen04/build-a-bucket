@@ -617,27 +617,24 @@ async function leagueRun() {
       target.__seriesScores = [];
       target.__nextActions = [];
       target.__logs = [];
-      target.__polls = [];
-      const originalFetch = window.fetch;
-      window.fetch = (...args) => {
-        const url = String(args[0] instanceof window.Request ? args[0].url : args[0]);
-        if (url.includes('/api/lobby/')) target.__polls.push(Date.now());
-        return originalFetch(...args);
-      };
+      target.__bracket = [];
       const read = () => {
         const card = document.querySelector('[data-testid="my-matchup"]');
         if (card) {
           const text = card.textContent ?? '';
           const match = /(\d+)[–-](\d+)/.exec(text);
-          if (match) target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}`, at: Date.now() });
+          if (match) {
+            const teams = (text.match(/\b[A-Z]{2,3}\b/g) ?? []).slice(0, 2);
+            target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}`, teams, at: Date.now() });
+          }
         }
+        target.__bracket.push({ rows: Array.from(document.querySelectorAll('.series')).map((row) => row.textContent ?? ''), at: Date.now() });
         const next = document.querySelector('[data-testid="next-action"]');
         if (next) target.__nextActions.push({ text: next.textContent ?? '', at: Date.now() });
         const log = document.querySelector('[data-testid="activity-log"]');
         if (log) target.__logs.push({ text: log.textContent ?? '', at: Date.now() });
       };
       new window.MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
-      window.setInterval(read, 50);
       read();
     });
   const buildAndStart = async (hostSeat, activeSeats, recordMarks, chooseSettings) => {
@@ -732,7 +729,6 @@ async function leagueRun() {
       await snap(seat, 'joined');
     }
     await buildAndStart(host, seats, true, true);
-    for (const seat of seats) await installSeriesObserver(seat);
     let checkpoint = 0;
     let chaosDone = false;
     let lastLabel = '';
@@ -761,6 +757,7 @@ async function leagueRun() {
         }
         const gateLogs = await Promise.all(active().map(logText));
         if (new Set(gateLogs).size > 1) throw new Error('activity logs differ at the playoff gate');
+        for (const seat of active()) await installSeriesObserver(seat);
         const gateAt = Date.now();
         const readyAt = new Map();
         for (const seat of active()) if (await clickReady(seat)) readyAt.set(seat.seat, Date.now());
@@ -857,6 +854,7 @@ async function leagueRun() {
     seriesScores.clear();
     const pollGaps = new Map();
     const seriesTimeline = new Map();
+    const bracketTimeline = new Map();
     for (const seat of active()) {
       const samples = await seat.page.evaluate(() => window.__seriesScores ?? []);
       seriesTimeline.set(`${seat.seat}:${seat.name}`, samples);
@@ -869,7 +867,10 @@ async function leagueRun() {
         }
         seriesScores.get(key).add(sample.score);
       }
-      const polls = await seat.page.evaluate(() => window.__polls ?? []);
+      const polls = await seat.page.evaluate(() =>
+        performance.getEntriesByType('resource').filter((entry) => entry.name.includes('/api/lobby/')).map((entry) => entry.startTime + performance.timeOrigin),
+      );
+      bracketTimeline.set(`${seat.seat}:${seat.name}`, await seat.page.evaluate(() => window.__bracket ?? []));
       const gaps = polls.slice(1).map((at, index) => at - polls[index]).sort((a, b) => a - b);
       const pick = (fraction) => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * fraction))] ?? 0;
       pollGaps.set(`${seat.seat}:${seat.name}`, { p50: pick(0.5), p95: pick(0.95), max: gaps[gaps.length - 1] ?? 0 });
@@ -881,10 +882,31 @@ async function leagueRun() {
       const totals = [...new Set([...scores].map((score) => score.split('-').reduce((sum, value) => sum + Number(value), 0)))].sort((a, b) => a - b);
       const max = totals[totals.length - 1] ?? 0;
       if (max < 4) continue;
-      const maxGap = pollGaps.get(seat)?.max ?? 0;
-      if (totals[0] !== 0 && maxGap <= 700) throw new Error(`human series card skipped its first game for ${seat}`);
-      for (let index = 1; index < totals.length; index++) {
-        if (totals[index] !== totals[index - 1] + 1 && maxGap <= 700) throw new Error(`human series card skipped a game for ${seat}: ${totals.join(',')}`);
+      const samples = seriesTimeline.get(seat) ?? [];
+      const polls = await active().find((entry) => `${entry.seat}:${entry.name}` === seat)?.page.evaluate(() =>
+        performance.getEntriesByType('resource').filter((entry) => entry.name.includes('/api/lobby/')).map((entry) => entry.startTime + performance.timeOrigin),
+      ) ?? [];
+      const states = [];
+      for (const sample of samples) {
+        const total = sample.score.split('-').reduce((sum, value) => sum + Number(value), 0);
+        if (!states.length || states[states.length - 1].total !== total) states.push({ total, at: sample.at });
+      }
+      for (let index = 1; index < states.length; index++) {
+        if (states[index].total <= states[index - 1].total + 1) continue;
+        const between = polls.filter((at) => at >= states[index - 1].at && at <= states[index].at);
+        const gaps = [between[0] - states[index - 1].at, ...between.slice(1).map((at, i) => at - between[i]), states[index].at - between[between.length - 1]];
+        if (Math.max(...gaps) <= 700) throw new Error(`human series card skipped a game for ${seat}: ${totals.join(',')}`);
+      }
+      if (totals[0] !== 0) throw new Error(`human series card skipped its first game for ${seat}`);
+      const bracket = bracketTimeline.get(seat) ?? [];
+      for (const sample of samples) {
+        const near = bracket.filter((entry) => entry.at <= sample.at + 1000).sort((a, b) => b.at - a.at)[0];
+        if (!near) continue;
+        const teams = sample.teams ?? [];
+        if (teams.length < 2) continue;
+        if (!near.rows.some((row) => teams.every((team) => row.includes(team)) && row.includes(sample.score))) {
+          throw new Error(`my-matchup disagrees with the bracket for ${seat}: ${sample.score}`);
+        }
       }
     }
     let playAgain = false;

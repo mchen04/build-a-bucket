@@ -358,14 +358,23 @@ describe('league slice views', () => {
           return [];
         },
       });
-      const clock: LeagueClock = { counts: [0, 0, 0, 0], playin: 0, seriesCounts: [8, 4, 2, 1], seriesGames: [0, 22, 13, 6] };
+      const clock: LeagueClock = {
+        counts: [0, 0, 0, 0],
+        playin: 0,
+        seriesCounts: [8, 4, 2, 1],
+        seriesGames: [0, 22, 13, 6],
+        humanSeasons: [{ participantId: 'delta-me', name: 'Delta', team: 'DET', wins: 50, losses: 32, seed: 1 }],
+      };
       const mid = await readLeagueDelta('delta-total', 7, 13, 0, 'DET', clock);
       expect(mid?.stageTotal).toBe(22);
       expect(mid?.checkpoint).toBe(false);
+      expect(mid?.my?.series?.id).toBe(mid?.playoffs?.find((entry) => entry.high === 'DET' || entry.low === 'DET')?.id);
+      expect(mid?.my?.series?.wins).toBe(mid?.playoffs?.find((entry) => entry.high === 'DET' || entry.low === 'DET')?.wins);
       const done = await readLeagueDelta('delta-total', 7, 22, 0, 'DET', clock);
       expect(done?.stageTotal).toBe(22);
       expect(done?.checkpoint).toBe(true);
       expect(done?.playoffs?.flatMap((entry) => entry.games)).toHaveLength(22);
+      expect(done?.my?.series?.complete).toBe(done?.playoffs?.find((entry) => entry.high === 'DET' || entry.low === 'DET')?.complete);
       const finalsMid = await readLeagueDelta('delta-total', 8, 12, 0, 'DET', clock);
       expect(finalsMid?.stageTotal).toBe(13);
       expect(finalsMid?.checkpoint).toBe(false);

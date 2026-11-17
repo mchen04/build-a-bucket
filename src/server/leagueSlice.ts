@@ -3,7 +3,6 @@ import {
   STAGE_NAMES,
   assembleLeagueView,
   isStageCheckpoint,
-  playoffViewsFrom,
   stageGamesTotalFrom,
   stageTotalFrom,
   type LeagueClock,
@@ -383,6 +382,7 @@ export async function readLeagueDelta(
       throw error;
     }
     if (series === null) return null;
+    const humans = clock.humanSeasons ?? [];
     const data = {
       games: [],
       gamesTotal: 0,
@@ -392,13 +392,15 @@ export async function readLeagueDelta(
       seriesGames: clock.seriesGames,
       standings: null,
       partial: null,
-      humans: [],
+      humans,
       awards: null,
       playin: null,
       series,
       champion: null,
       h2h: null,
-    };
+    } as unknown as Parameters<typeof assembleLeagueView>[0];
+    const meParticipantId = humans.find((entry) => entry.team === meTeam)?.participantId ?? null;
+    const full = assembleLeagueView(data, stage, clamped, meParticipantId, startedAt);
     return {
       stage,
       stageCursor: clamped,
@@ -406,7 +408,9 @@ export async function readLeagueDelta(
       stageName: STAGE_NAMES[stage] ?? 'Season',
       stageTotal: stageTotalFrom(clock, stage),
       games: [],
-      playoffs: playoffViewsFrom(data, stage, clamped),
+      playoffs: full.playoffs,
+      my: full.my,
+      standings: full.standings,
     };
   }
   if (stage < 4) {
