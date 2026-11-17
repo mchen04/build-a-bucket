@@ -883,6 +883,12 @@ async function leagueRun() {
       if (max < 4) continue;
       const samples = seriesTimeline.get(seat) ?? [];
       for (let index = 1; index < samples.length; index++) {
+        if (samples[index].key !== samples[index - 1].key) continue;
+        const previous = samples[index - 1].score.split('-').reduce((sum, value) => sum + Number(value), 0);
+        const current = samples[index].score.split('-').reduce((sum, value) => sum + Number(value), 0);
+        if (current < previous) throw new Error(`human series card went backwards for ${seat}: ${samples[index - 1].score} -> ${samples[index].score}`);
+      }
+      for (let index = 1; index < samples.length; index++) {
         if (samples[index].key === samples[index - 1].key) continue;
         const previous = samples[index - 1].score.split('-').reduce((sum, value) => sum + Number(value), 0);
         if (previous < 4) throw new Error(`human series card left an unfinished series for ${seat}: ${samples[index - 1].score}`);

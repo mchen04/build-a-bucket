@@ -279,9 +279,25 @@ describe('reveal pacing', () => {
     } as unknown as LeagueClock;
     const total = 7 * 700;
     for (const stage of [6, 7, 8, 9]) {
-      expect(playoffRoundHeld(clock, stage, 0, total)).toBe(true);
-      expect(playoffRoundHeld(clock, stage, 0, total + 700)).toBe(true);
-      expect(playoffRoundHeld(clock, stage, 0, total + 1400)).toBe(false);
+      const start = stage === 6 ? total + 1200 : total;
+      expect(playoffRoundHeld(clock, stage, 0, start)).toBe(true);
+      expect(playoffRoundHeld(clock, stage, 0, start + 700)).toBe(true);
+      expect(playoffRoundHeld(clock, stage, 0, start + 1400)).toBe(false);
+    }
+  });
+
+  it('shows a started first round at 0-0 to a gate-rate poll at any phase', () => {
+    const clock = {
+      counts: [0, 0, 0, 0],
+      playin: 0,
+      seriesCounts: [1, 1, 1, 1],
+      seriesGames: [7, 7, 7, 7],
+      units: [[], [], [], [], [], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1], [1, 1, 1, 1, 1, 1, 1]],
+      humanSeasons: [{ participantId: 'p1', name: 'Me', team: 'BOS', wins: 50, losses: 32, seed: 1 }],
+      series: [{ round: 1, name: 'First Round', conference: 'east' as const, high: 'BOS', low: 'NYK', winner: 'BOS', wins: 4, losses: 3 }],
+    } as unknown as LeagueClock;
+    for (let offset = 0; offset < 1000; offset++) {
+      expect(stageCursorAtFrom(clock, 6, 0, offset)).toBe(0);
     }
   });
 

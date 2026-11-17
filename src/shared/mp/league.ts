@@ -26,6 +26,7 @@ export const STAGE_NAMES = [
 export const REGULAR_BATCH_SIZE = 3;
 export const REGULAR_BATCH_MS = 1200;
 export const PLAYOFF_GAME_MS = 700;
+export const STAGE6_LEAD_IN_MS = 1200;
 export const HUMAN_REGULAR_MS = 60;
 export const CPU_SPEEDUP = 2.4;
 
@@ -212,7 +213,12 @@ export function stageCursorAtFrom(clock: LeagueClock, stage: number, startedAt: 
     const total = stageGamesTotalFrom(clock, 6);
     const units = clock.units?.[6];
     if (!units || units.length === 0) return total;
-    return Math.min(total, pacedCursor(units, 6, Math.max(0, now - startedAt)));
+    const humans = new Set((clock.humanSeasons ?? []).map((entry) => entry.team));
+    const humanRound = (clock.series ?? []).some(
+      (series) => series.round === 1 && (humans.has(series.high) || humans.has(series.low)),
+    );
+    const leadIn = humanRound ? STAGE6_LEAD_IN_MS : 0;
+    return Math.min(total, pacedCursor(units, 6, Math.max(0, now - startedAt - leadIn)));
   }
   const total = stageGamesTotalFrom(clock, stage);
   if (total === 0) return 0;
