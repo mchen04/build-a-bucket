@@ -618,7 +618,6 @@ async function leagueRun() {
       target.__seriesScores = [];
       target.__nextActions = [];
       target.__logs = [];
-      target.__bracket = [];
       const read = () => {
         const card = document.querySelector('[data-testid="my-matchup"]');
         if (card) {
@@ -626,10 +625,11 @@ async function leagueRun() {
           const match = /(\d+)[–-](\d+)/.exec(text);
           if (match) {
             const teams = /([A-Z]{2,3})\s+\d+[–-]\d+\s+([A-Z]{2,3})/.exec(text)?.slice(1) ?? [];
-            target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}`, teams, at: Date.now() });
+            const row = Array.from(document.querySelectorAll('.series')).find((entry) => teams.every((team) => (entry.textContent ?? '').includes(team)));
+            const bracketScore = row?.querySelector('.series-score')?.textContent?.replace('–', '-').trim() ?? null;
+            target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}`, teams, bracketScore, at: Date.now() });
           }
         }
-        target.__bracket.push({ rows: Array.from(document.querySelectorAll('.series')).map((row) => row.textContent ?? ''), at: Date.now() });
         const next = document.querySelector('[data-testid="next-action"]');
         if (next) target.__nextActions.push({ text: next.textContent ?? '', at: Date.now() });
         const log = document.querySelector('[data-testid="activity-log"]');
@@ -855,7 +855,6 @@ async function leagueRun() {
     seriesScores.clear();
     const pollGaps = new Map();
     const seriesTimeline = new Map();
-    const bracketTimeline = new Map();
     for (const seat of active()) {
       const samples = await seat.page.evaluate(() => window.__seriesScores ?? []);
       seriesTimeline.set(`${seat.seat}:${seat.name}`, samples);
@@ -871,7 +870,6 @@ async function leagueRun() {
       const polls = await seat.page.evaluate(() =>
         performance.getEntriesByType('resource').filter((entry) => entry.name.includes('/api/lobby/')).map((entry) => entry.startTime + performance.timeOrigin),
       );
-      bracketTimeline.set(`${seat.seat}:${seat.name}`, await seat.page.evaluate(() => window.__bracket ?? []));
       const gaps = polls.slice(1).map((at, index) => at - polls[index]).sort((a, b) => a - b);
       const pick = (fraction) => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * fraction))] ?? 0;
       pollGaps.set(`${seat.seat}:${seat.name}`, { p50: pick(0.5), p95: pick(0.95), max: gaps[gaps.length - 1] ?? 0 });
@@ -899,15 +897,8 @@ async function leagueRun() {
         if (Math.max(...gaps) <= 700) throw new Error(`human series card skipped a game for ${seat}: ${totals.join(',')}`);
       }
       if (totals[0] !== 0) throw new Error(`human series card skipped its first game for ${seat}`);
-      const bracket = bracketTimeline.get(seat) ?? [];
       for (const sample of samples) {
-        const near = bracket.filter((entry) => entry.at <= sample.at + 1000).sort((a, b) => b.at - a.at)[0];
-        if (!near) continue;
-        const teams = sample.teams ?? [];
-        if (teams.length < 2) continue;
-        const row = near.rows.find((entry) => teams.every((team) => entry.includes(team)));
-        const bracketScore = row ? /(\d+)[–-](\d+)/.exec(row) : null;
-        if (bracketScore && sample.score !== '0-0' && bracketScore[0] !== sample.score) {
+        if (sample.bracketScore && sample.score !== '0-0' && sample.bracketScore !== sample.score) {
           throw new Error(`my-matchup disagrees with the bracket for ${seat}: ${sample.score}`);
         }
       }
