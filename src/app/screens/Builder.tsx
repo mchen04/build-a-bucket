@@ -56,11 +56,12 @@ export function Builder(props: Props) {
 
   const spin = (teamRespin: boolean, playerRespin: boolean) => {
     if (spinning || complete) return;
+    const onRespunTeam = playerRespin && (run.currentRespin?.team ?? false);
     const target = spinTarget(
       pool,
       run.seed,
       run.spinIndex,
-      teamRespin,
+      teamRespin || onRespunTeam,
       playerRespin ? 1 : 0,
       respinSeedFor(run),
     );
@@ -84,7 +85,7 @@ export function Builder(props: Props) {
       props.onChange({
         ...run,
         current: { team: target.team, playerName: target.player.name },
-        currentRespin: { team: teamRespin, player: playerRespin },
+        currentRespin: { team: teamRespin || onRespunTeam, player: playerRespin },
         teamRespinUsed: teamRespin ? true : run.teamRespinUsed,
         playerRespinUsed: playerRespin ? true : run.playerRespinUsed,
       });

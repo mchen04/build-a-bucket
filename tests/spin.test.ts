@@ -56,6 +56,17 @@ describe('spin targets', () => {
     }
   });
 
+  it('keeps the respun team on a later player respin', () => {
+    for (let spinIndex = 0; spinIndex < 12; spinIndex++) {
+      const respunTeam = spinTarget(POOL, SEED, spinIndex, true, 0, RESPIN);
+      const thenPlayer = spinTarget(POOL, SEED, spinIndex, true, 1, RESPIN);
+      expect(thenPlayer?.team).toBe(respunTeam?.team);
+      if (teamPlayers(POOL, respunTeam?.team ?? '').length > 1) {
+        expect(thenPlayer?.player.name).not.toBe(respunTeam?.player.name);
+      }
+    }
+  });
+
   it('returns null for an empty pool', () => {
     expect(spinTarget([], SEED, 0, false, 0, RESPIN)).toBeNull();
   });

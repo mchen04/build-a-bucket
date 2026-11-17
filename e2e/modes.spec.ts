@@ -187,6 +187,24 @@ test('solo team spin allows one respin and locks the team across reload', async 
   await expect(page.getByRole('button', { name: 'Simulate Season' })).toBeEnabled();
 });
 
+test('a player respin after a team respin keeps the respun team', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate((value) => localStorage.setItem('bab:v1', JSON.stringify(value)), savedRun('respin', [], 'guard'));
+  await page.reload();
+  await page.locator('.spin-big').click();
+  const team = page.getByTestId('source-team');
+  const name = page.getByTestId('source-name');
+  await expect(name).toBeVisible();
+  await page.getByRole('button', { name: /Respin Team/ }).click();
+  await expect(page.getByRole('button', { name: /Respin Team · used/ })).toBeDisabled({ timeout: 5_000 });
+  const respunTeam = ((await team.textContent()) ?? '').split(' · ')[0];
+  const respunName = await name.textContent();
+  await page.getByRole('button', { name: /Respin Player/ }).click();
+  await expect(page.getByRole('button', { name: /Respin Player · used/ })).toBeDisabled({ timeout: 5_000 });
+  await expect(name).not.toHaveText(respunName ?? '');
+  expect(((await team.textContent()) ?? '').split(' · ')[0]).toBe(respunTeam);
+});
+
 test('daily challenge plays to its end state, resumes after reload and locks the day', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-10-24T18:00:00Z'));
   await page.goto('/');
