@@ -25,14 +25,18 @@ export const STAGE_NAMES = [
 ];
 export const REGULAR_BATCH_SIZE = 3;
 export const REGULAR_BATCH_MS = 1200;
-export const PLAYOFF_GAME_MS = 1500;
-export const HUMAN_REGULAR_MS = REGULAR_BATCH_MS / REGULAR_BATCH_SIZE;
-export const CPU_SPEEDUP = 50;
+export const PLAYOFF_GAME_MS = 120;
+export const HUMAN_REGULAR_MS = 60;
+export const CPU_SPEEDUP = PLAYOFF_GAME_MS / 50;
+
+export function nextStage(stage: number): number {
+  if (stage <= 3) return 4;
+  return Math.min(10, stage + 1);
+}
 
 export function nextStageFrom(counts: readonly number[], stage: number): number {
-  let next = stage + 1;
-  while (next <= 3 && (counts[next] ?? 0) === 0) next += 1;
-  return Math.min(10, next);
+  void counts;
+  return nextStage(stage);
 }
 
 export function seasonEndsAt(counts: readonly number[], stage: number): boolean {
@@ -70,7 +74,7 @@ function revealUnits(league: LeagueResult): number[][] {
 
 function unitMs(stage: number, unit: number): number {
   const base = stage <= 3 ? HUMAN_REGULAR_MS : PLAYOFF_GAME_MS;
-  return unit > 0 ? base : base / CPU_SPEEDUP;
+  return unit > 0 ? base : CPU_SPEEDUP;
 }
 
 function pacedCursor(units: readonly number[], stage: number, elapsed: number): number {
@@ -106,14 +110,16 @@ export function stageGamesTotal(league: LeagueResult, stage: number): number {
 }
 
 export function stageTotal(league: LeagueResult, stage: number): number {
-  if (stage <= 3) return stageTotals(league.games)[stage] ?? 0;
-  if (stage === 5) return 6;
-  if (stage >= 6 && stage <= 9) return 7 * league.series.filter((entry) => entry.round === stage - 5).length;
-  return 0;
+  return stageGamesTotal(league, stage);
 }
 
 export function isCheckpoint(cursor: number, total: number): boolean {
   return cursor >= total;
+}
+
+export function isStageCheckpoint(clock: LeagueClock, stage: number, cursor: number): boolean {
+  if (stage === 6) return cursor === 0;
+  return isCheckpoint(cursor, stageGamesTotalFrom(clock, stage));
 }
 
 export interface LeagueClock {
@@ -122,6 +128,12 @@ export interface LeagueClock {
   seriesCounts: number[];
   seriesGames: number[];
   units?: number[][];
+  qualified?: string[];
+  humanSeasons?: { participantId: string; name: string; team: string; wins: number; losses: number; seed: number }[];
+  series?: { round: number; name: string; conference: 'east' | 'west' | 'finals'; high: string; low: string; winner: string; wins: number; losses: number }[];
+  playinGames?: { conference: 'east' | 'west'; label: string; home: string; away: string; winner: string }[];
+  champion?: string | null;
+  awards?: { mvp: { name: string; team: string }; dpoy: { name: string; team: string } } | null;
 }
 
 export function clockFromLeague(league: LeagueResult): LeagueClock {
@@ -130,7 +142,45 @@ export function clockFromLeague(league: LeagueResult): LeagueClock {
   const seriesGames = [1, 2, 3, 4].map((round) =>
     league.series.filter((entry) => entry.round === round).reduce((sum, entry) => sum + entry.games.length, 0),
   );
-  return { counts, playin: league.playin.length, seriesCounts, seriesGames, units: revealUnits(league) };
+  const qualified = [...new Set(league.series.filter((entry) => entry.round === 1).flatMap((entry) => [entry.high, entry.low]))];
+  return {
+    counts,
+    playin: league.playin.length,
+    seriesCounts,
+    seriesGames,
+    units: revealUnits(league),
+    qualified,
+    humanSeasons: league.humans.map((entry) => ({
+      participantId: entry.participantId,
+      name: entry.name,
+      team: entry.team,
+      wins: entry.wins,
+      losses: entry.losses,
+      seed: entry.seed,
+    })),
+    series: league.series.map((entry) => ({
+      round: entry.round,
+      name: entry.name,
+      conference: entry.conference,
+      high: entry.high,
+      low: entry.low,
+      winner: entry.winner,
+      wins: entry.wins,
+      losses: entry.losses,
+    })),
+    playinGames: league.playin.map((entry) => ({
+      conference: entry.conference,
+      label: entry.label,
+      home: entry.home,
+      away: entry.away,
+      winner: entry.winner,
+    })),
+    champion: league.champion,
+    awards: {
+      mvp: { name: league.awards.mvp.name, team: league.awards.mvp.team },
+      dpoy: { name: league.awards.dpoy.name, team: league.awards.dpoy.team },
+    },
+  };
 }
 
 export function stageGamesTotalFrom(clock: LeagueClock, stage: number): number {
@@ -141,13 +191,17 @@ export function stageGamesTotalFrom(clock: LeagueClock, stage: number): number {
 }
 
 export function stageTotalFrom(clock: LeagueClock, stage: number): number {
-  if (stage <= 3) return clock.counts[stage] ?? 0;
-  if (stage === 5) return 6;
-  if (stage >= 6 && stage <= 9) return 7 * (clock.seriesCounts[stage - 6] ?? 0);
-  return 0;
+  return stageGamesTotalFrom(clock, stage);
 }
 
 export function stageCursorAtFrom(clock: LeagueClock, stage: number, startedAt: number | null, now: number): number {
+  if (stage === 6) {
+    if (startedAt === null) return 0;
+    const total = stageGamesTotalFrom(clock, 6);
+    const units = clock.units?.[6];
+    if (!units || units.length === 0) return total;
+    return Math.min(total, 1 + pacedCursor(units, 6, Math.max(0, now - startedAt)));
+  }
   const total = stageGamesTotalFrom(clock, stage);
   if (total === 0) return 0;
   if (startedAt === null) return 0;
@@ -167,6 +221,7 @@ export function stageCursorAtFrom(clock: LeagueClock, stage: number, startedAt: 
 
 export function checkpointAtFrom(clock: LeagueClock, stage: number, startedAt: number | null): number | null {
   if (startedAt === null) return null;
+  if (stage === 6) return startedAt;
   const total = stageGamesTotalFrom(clock, stage);
   if (total === 0) return startedAt;
   const units = clock.units?.[stage];
@@ -253,6 +308,21 @@ export interface MyLeagueView {
   losses: number;
   seed: number | null;
   madePlayoffs: boolean | null;
+  qualified: boolean | null;
+  series: {
+    id: string;
+    round: number;
+    name: string;
+    high: string;
+    low: string;
+    wins: number;
+    losses: number;
+    complete: boolean;
+    winner: string | null;
+    advanced: boolean;
+  } | null;
+  eliminated: boolean;
+  eliminatedRound: string | null;
   finish: string | null;
   champion: boolean | null;
   ppg: number | null;
@@ -437,6 +507,7 @@ function myViewFrom(
   stage: number,
   meParticipantId: string | null,
   standings: StandingView[],
+  playoffs: SeriesView[] | null,
 ): MyLeagueView | null {
   if (!meParticipantId) return null;
   const human = data.humans.find((entry) => entry.participantId === meParticipantId);
@@ -445,12 +516,33 @@ function myViewFrom(
   const playInRevealed = stage >= 5;
   const recapRevealed = stage >= 10;
   const partial = standings.find((row) => row.team === human.team) ?? null;
+  const mine = (playoffs ?? [])
+    .filter((series) => series.high === human.team || series.low === human.team)
+    .sort((a, b) => b.round - a.round)[0] ?? null;
+  const eliminated = mine !== null && mine.complete && mine.winner !== human.team;
   return {
     team: human.team,
     wins: awardsRevealed ? human.wins : partial?.wins ?? 0,
     losses: awardsRevealed ? human.losses : partial?.losses ?? 0,
     seed: awardsRevealed ? human.seed : null,
     madePlayoffs: playInRevealed ? human.madePlayoffs : null,
+    qualified: playInRevealed ? human.madePlayoffs : null,
+    series: mine
+      ? {
+          id: mine.id,
+          round: mine.round,
+          name: mine.name,
+          high: mine.high,
+          low: mine.low,
+          wins: mine.wins,
+          losses: mine.losses,
+          complete: mine.complete,
+          winner: mine.winner,
+          advanced: mine.complete && mine.winner === human.team,
+        }
+      : null,
+    eliminated,
+    eliminatedRound: eliminated && mine ? mine.name : null,
     finish: recapRevealed ? human.finish : null,
     champion: recapRevealed ? human.champion : null,
     ppg: awardsRevealed ? human.ppg : null,
@@ -481,17 +573,15 @@ export function assembleLeagueView(
     },
     stage,
   );
-  const checkpoint = isCheckpoint(
+  const checkpoint = isStageCheckpoint(
+    {
+      counts: data.stageCounts,
+      playin: data.playinCount,
+      seriesCounts: data.seriesCounts,
+      seriesGames: data.seriesGames,
+    },
+    stage,
     cursor,
-    stageGamesTotalFrom(
-      {
-        counts: data.stageCounts,
-        playin: data.playinCount,
-        seriesCounts: data.seriesCounts,
-        seriesGames: data.seriesGames,
-      },
-      stage,
-    ),
   );
 
   const visible = data.games.filter((game) => game.gameNo <= revealed);
@@ -598,7 +688,7 @@ export function assembleLeagueView(
     awards,
     playin,
     playoffs,
-    my: myViewFrom(data, stage, meParticipantId, standings),
+    my: myViewFrom(data, stage, meParticipantId, standings, playoffs),
     recap,
   };
 }

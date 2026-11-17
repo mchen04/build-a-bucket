@@ -55,6 +55,7 @@ function view(overrides: Partial<LobbyView> = {}): LobbyView {
     salaryPowers: null,
     league: null,
     ready: { ready: 0, present: 2, mine: false },
+    gate: null,
     serverTime: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };

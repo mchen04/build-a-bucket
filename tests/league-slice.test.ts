@@ -346,7 +346,7 @@ describe('league slice views', () => {
   describe('league delta totals', () => {
     afterEach(() => setRunner(null));
 
-    it('keeps the maximum series total while the checkpoint uses the actual total', async () => {
+    it('uses the actual series total for the checkpoint and the denominator', async () => {
       const series = [...seriesFixture(2, [7, 6, 5, 4]), ...seriesFixture(3, [7, 6])];
       setRunner({
         async query<Row>(text: string): Promise<Row[]> {
@@ -360,17 +360,17 @@ describe('league slice views', () => {
       });
       const clock: LeagueClock = { counts: [0, 0, 0, 0], playin: 0, seriesCounts: [8, 4, 2, 1], seriesGames: [0, 22, 13, 6] };
       const mid = await readLeagueDelta('delta-total', 7, 13, 0, 'DET', clock);
-      expect(mid?.stageTotal).toBe(28);
+      expect(mid?.stageTotal).toBe(22);
       expect(mid?.checkpoint).toBe(false);
       const done = await readLeagueDelta('delta-total', 7, 22, 0, 'DET', clock);
-      expect(done?.stageTotal).toBe(28);
+      expect(done?.stageTotal).toBe(22);
       expect(done?.checkpoint).toBe(true);
       expect(done?.playoffs?.flatMap((entry) => entry.games)).toHaveLength(22);
       const finalsMid = await readLeagueDelta('delta-total', 8, 12, 0, 'DET', clock);
-      expect(finalsMid?.stageTotal).toBe(14);
+      expect(finalsMid?.stageTotal).toBe(13);
       expect(finalsMid?.checkpoint).toBe(false);
       const finalsDone = await readLeagueDelta('delta-total', 8, 13, 0, 'DET', clock);
-      expect(finalsDone?.stageTotal).toBe(14);
+      expect(finalsDone?.stageTotal).toBe(13);
       expect(finalsDone?.checkpoint).toBe(true);
     });
   });

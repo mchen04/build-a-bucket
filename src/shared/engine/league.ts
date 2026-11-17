@@ -579,12 +579,12 @@ export function simulateLeague(input: {
   const eastRecord = records.get(eastChamp) as TeamRecord;
   const westRecord = records.get(westChamp) as TeamRecord;
   const eastHome =
-    eastSeed !== westSeed
-      ? eastSeed < westSeed
-      : eastRecord.wins !== westRecord.wins
-        ? eastRecord.wins > westRecord.wins
-        : eastRecord.pointsFor - eastRecord.pointsAgainst !== westRecord.pointsFor - westRecord.pointsAgainst
-          ? eastRecord.pointsFor - eastRecord.pointsAgainst > westRecord.pointsFor - westRecord.pointsAgainst
+    eastRecord.wins !== westRecord.wins
+      ? eastRecord.wins > westRecord.wins
+      : eastRecord.pointsFor - eastRecord.pointsAgainst !== westRecord.pointsFor - westRecord.pointsAgainst
+        ? eastRecord.pointsFor - eastRecord.pointsAgainst > westRecord.pointsFor - westRecord.pointsAgainst
+        : eastSeed !== westSeed
+          ? eastSeed < westSeed
           : seededRng(`${seed}:finals:home`)() < 0.5;
   const finalsHigh = eastHome ? eastChamp : westChamp;
   const finalsLow = finalsHigh === eastChamp ? westChamp : eastChamp;

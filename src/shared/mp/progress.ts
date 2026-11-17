@@ -23,6 +23,7 @@ export function progressToken(view: Pick<LobbyView, 'events' | 'participants'>):
 }
 
 export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
+  if (delta.version < view.version) return view;
   const progress = new Map<number, ParticipantProgress>((delta.participants ?? []).map((entry) => [entry.seat, entry]));
   const participants: ParticipantView[] = view.participants.map((entry) => {
     const next = progress.get(entry.seat);
@@ -37,6 +38,8 @@ export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
       season: 'season' in next ? next.season ?? null : entry.season,
     };
   });
+  const events = new Map<number, LobbyView['events'][number]>();
+  for (const event of [...delta.events, ...view.events]) events.set(event.id, event);
   return {
     ...view,
     version: delta.version,
@@ -44,8 +47,9 @@ export function mergeDelta(view: LobbyView, delta: LobbyDelta): LobbyView {
     phase: delta.phase ?? view.phase,
     participants,
     me: participants.find((entry) => entry.isMe) ?? view.me,
-    events: [...delta.events, ...view.events].slice(0, EVENT_LIMIT),
+    events: [...events.values()].sort((a, b) => b.id - a.id).slice(0, EVENT_LIMIT),
     league: delta.league && view.league ? mergeLeagueDelta(view.league, delta.league) : view.league,
+    gate: delta.gate !== undefined ? delta.gate : view.gate,
   };
 }
 

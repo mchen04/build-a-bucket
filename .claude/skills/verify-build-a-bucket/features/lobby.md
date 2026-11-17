@@ -15,7 +15,8 @@ playoff bracket with the same results. Checkpoints pause for everyone present; a
 - `lobby-lock` lets the host lock assignments and open the preview.
 - `lobby-preview` shows every team and build OVR; everyone readies or the host starts the season.
 - `lobby-season` reveals the whole regular season in one run, then goes straight to the awards with no stop.
-- `lobby-awards` shows final standings and awards; `lobby-playin` shows the play-in.
+- `lobby-awards` shows final standings and awards; `lobby-playin` resolves on its own.
+- `lobby-gate` waits only before the first playoff round: qualified seats see Ready, the host sees Start playoffs.
 - `lobby-playoffs` reveals each round game by game and never shows a result ahead of the cursor.
 - `lobby-recap` shows the champion, every finish and friend head-to-head; `lobby-rematch` keeps seats and code.
 - `lobby-reconnect` restores the same seat, team, reroll state and build after reload.
@@ -37,7 +38,7 @@ Preconditions:
 - **Start and draw.** Host: `--step 'click:css:[data-testid="start-season"]' --step 'click:css:[data-testid="draw-team"]' --step 'see:css:[data-testid="reroll-team"]'`. Each guest draws too. The roster shows one team per seat and no duplicates.
 - **Lock and build.** Host: `--step 'click:css:[data-testid="lock-teams"]'`. Each session: `--step 'click:css:[data-testid="open-builder"]' --step spinpick:10 --step 'click:button:Submit build' --step 'see:text:Build submitted'`.
 - **Preview and season.** Each session: `--step 'click:css:[data-testid="preview-ready"]'`. The last ready starts the season; `[data-testid="league-stage"]` appears and `[data-testid="awards"]`, `[data-testid="playoffs"]` and `[data-testid="recap"]` are absent.
-- **Checkpoints.** At a checkpoint the panel shows `Ready` and, for the host, `Advance`. Everyone present readies, or the host advances. A retry never skips a checkpoint.
+- **Playoff gate.** After the season, awards and play-in resolve on their own. Only before the first playoff round does the panel show `[data-testid="playoff-gate"]`: qualified seats see `Ready`, the host sees `Start playoffs`. Everyone present readies, or the host starts. A retry never skips a round.
 - **Recap and rematch.** `--step 'see:css:[data-testid="recap"]' --step 'see:css:[data-testid="champion-banner"]' --step shot:recap`; the host taps `rematch` and the lobby returns to the builds with the same code and seats.
 - **Capacity and API side.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs lobby-load --players 8 --extra 4 --seconds 10`: `distinctSeats` is 8 and `joinStatuses` shows 7 successes and 4 refusals.
 - **Full scripted proof.** `npm run e2e -- e2e/lobby.spec.ts --project=mobile-chromium` drives two contexts from invite code to recap and rematch (needs port 4173 free).
@@ -48,31 +49,34 @@ Preconditions:
 proof for a shared league. It opens one real browser context per seat (2 to 8), creates the lobby, reads the displayed
 invite link, has every other seat open that link and join by name, builds in `--mode`
 (`normal` ten spins, `salary` one card per column plus the Scout power, `squad` five complete builds), draws and
-rerolls, previews, and
-then at every checkpoint:
+rerolls, previews, and then at every stage:
 
 - reads `standings` from every active seat and fails unless the top ten of each conference agree;
 - reads `my-team` and fails unless that seat's record and seed match its own standings row;
 - fails if a seed appears during the season, or awards, play-in, playoffs or the champion appear before their stage;
-- writes one screenshot and aria snapshot per active seat, then has every seat Ready and the host Advance.
+- writes one screenshot and aria snapshot per active seat, and checks the shared activity log and next-action line on every seat.
+
+Only the playoff gate takes input: qualified seats tap Ready and the host taps Start playoffs. Awards, play-in and
+every playoff round run on their own.
 
 It ends at the recap, compares the champion text across seats, then does Play Again: every retained seat readies, the
 host opens the builds, and the second game's `open-builder` must appear. `evidence/league/summary.json` holds the code,
-mode, era, each checkpoint's visible standings and each seat's record/seed, the champion, Play Again and any page or
+mode, era, each stage's visible standings and each seat's record/seed, the champion, Play Again and any page or
 console errors. It also records the wall-clock `phaseDurations` (build complete, season start, season end, each
-playoff round, recap), each seat's `actions` after the builds by control name, its `gateWaits` at every checkpoint
-(gate shown to advance, and its own ready tap to advance), and `apiLatency` per endpoint (count, p50/p95/max, status
-counts) as the browser saw it. Checkpoint controls are clicked only while visible, so the run still works when a later
-version has fewer gates.
+playoff round, recap), each seat's `actions` after the builds by control name, its `gateWaits` at the playoff gate
+(gate shown to start, and its own ready tap to start), and `apiLatency` per endpoint (count, p50/p95/max, status
+counts) as the browser saw it. Gate controls are clicked only while visible, so the run still works when no human
+qualifies and the gate is skipped.
 
-Chaos options, applied at the first checkpoint:
+Chaos options, applied at the first sampled stage:
 
 - `--reload 2` reloads seat 2 mid-season, waits for the lobby to come back, and re-compares the standings.
-- `--away 2` closes seat 2's browser context; the host must still advance and the remaining seats must agree.
-- `--host-leave` taps Leave lobby on the host; another seat must receive Advance and carry the league.
+- `--away 2` closes seat 2's browser context; the host must still start the playoffs and the remaining seats must agree.
+- `--host-leave` taps Leave lobby on the host; another seat must receive Start playoffs and carry the league.
 
-The season reveal is real time. The regular season takes about 35 seconds: rounds with a human game reveal at 0.4 s,
-the rest 50 times faster. Playoff series between computer teams also run 50 times faster. The command has no internal setters or database jumps.
+The season reveal is real time. The regular season takes about 5 seconds: rounds with a human game reveal at 0.4 s,
+the rest 50 times faster. A playoff series with a human team reveals one game every 0.12 s; a series between computer
+teams runs 50 times faster. The command has no internal setters or database jumps.
 
 ## Gotchas
 
@@ -84,4 +88,4 @@ the rest 50 times faster. Playoff series between computer teams also run 50 time
   text work. Typing the link by hand with an uppercase `/J/` would miss the invite route.
 - On a loaded host (load average above about 10) client requests can exceed their 8 s budget and show "reconnecting"; check `uptime` before calling it a regression.
 - Lobbies made against a deployed stack are not deleted by cleanup.
-- Away (unseen for 60 s) and left players never block a checkpoint; the host role moves to the earliest joined present player when the host is away for 45 s or leaves.
+- Away (unseen for 60 s) and left players never block the playoff gate; the host role moves to the earliest joined present player when the host is away for 45 s or leaves.

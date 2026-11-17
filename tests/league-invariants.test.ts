@@ -304,13 +304,15 @@ describe('reveal and stage machinery', () => {
   it('reaches its checkpoint on every stage and never shows a later stage', () => {
     for (let stage = 0; stage <= 10; stage++) {
       const total = stageGamesTotalFrom(clock, stage);
-      const view = revealLeague(result, stage, total, me);
+      const cursor = stage === 6 ? 0 : total;
+      const view = revealLeague(result, stage, cursor, me);
       expect(view.checkpoint).toBe(true);
       expect(view.stage).toBe(stage);
       if (stage === 0) expect(view.cursor).toBe(1230);
       if (stage >= 1 && stage <= 3) expect(view.cursor).toBe(0);
       if (stage === 5) expect(view.cursor).toBe(6);
-      if (stage >= 6 && stage <= 9) {
+      if (stage === 6) expect(view.cursor).toBe(0);
+      if (stage >= 7 && stage <= 9) {
         expect(view.cursor).toBe(total);
         expect(view.playoffs?.every((series) => series.round < stage - 5 || (series.round === stage - 5 && series.complete))).toBe(true);
       }
@@ -323,15 +325,15 @@ describe('reveal and stage machinery', () => {
     }
   });
 
-  it('keeps the fixed playoff denominator while a checkpoint reveals fewer games', () => {
+  it('uses the games actually played as the playoff denominator', () => {
     for (let stage = 6; stage <= 9; stage++) {
-      expect(stageTotalFrom(clock, stage)).toBe(7 * (clock.seriesCounts[stage - 6] ?? 0));
-      expect(stageGamesTotalFrom(clock, stage)).toBeLessThanOrEqual(stageTotalFrom(clock, stage));
+      expect(stageTotalFrom(clock, stage)).toBe(stageGamesTotalFrom(clock, stage));
+      expect(stageTotalFrom(clock, stage)).toBeLessThanOrEqual(7 * (clock.seriesCounts[stage - 6] ?? 0));
     }
   });
 
-  it.fails('makes a playoff checkpoint reach its stageTotal', () => {
-    for (let stage = 6; stage <= 9; stage++) {
+  it('makes a playoff checkpoint reach its stageTotal', () => {
+    for (let stage = 7; stage <= 9; stage++) {
       const view = revealLeague(result, stage, stageGamesTotalFrom(clock, stage), me);
       expect(view.checkpoint).toBe(true);
       expect(view.cursor).toBe(view.stageTotal);
@@ -340,7 +342,7 @@ describe('reveal and stage machinery', () => {
 });
 
 describe('finals home court', () => {
-  function findFinalsMismatch(): { result: LeagueResult; final: SeriesResult; better: string; worse: string } | null {
+  function findFinalsRecordGap(): { result: LeagueResult; final: SeriesResult; better: string; worse: string } | null {
     for (let index = 0; index < 600; index++) {
       const result = league(`finals-record-${index}`, 2);
       const final = result.series.find((series) => series.round === 4);
@@ -350,20 +352,19 @@ describe('finals home court', () => {
       const low = records.get(final.low);
       if (!high || !low || high.wins === low.wins) continue;
       const better = high.wins > low.wins ? final.high : final.low;
-      if (better === final.high) continue;
       return { result, final, better, worse: better === final.high ? final.low : final.high };
     }
     return null;
   }
 
-  it('finds a finals where the better record did not hold the higher seed', () => {
-    const found = findFinalsMismatch();
+  it('finds a finals where the two records differ', () => {
+    const found = findFinalsRecordGap();
     expect(found).not.toBeNull();
-    if (found) expect(found.final.high).not.toBe(found.better);
+    if (found) expect(found.final.high).toBe(found.better);
   });
 
-  it.fails('gives finals home court to the better regular-season record', () => {
-    const found = findFinalsMismatch();
+  it('gives finals home court to the better regular-season record', () => {
+    const found = findFinalsRecordGap();
     if (!found) throw new Error('no finals record mismatch in 600 seeds');
     const first = found.final.games[0];
     expect(first?.home).toBe(found.better);

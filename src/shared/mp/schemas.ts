@@ -223,12 +223,29 @@ const AwardSchema = v.object({
   bpg: v.optional(v.number()),
 });
 
+const MySeriesSchema = v.object({
+  id: v.string(),
+  round: v.number(),
+  name: v.string(),
+  high: v.string(),
+  low: v.string(),
+  wins: v.number(),
+  losses: v.number(),
+  complete: v.boolean(),
+  winner: v.nullable(v.string()),
+  advanced: v.boolean(),
+});
+
 const MyLeagueSchema = v.object({
   team: v.string(),
   wins: v.number(),
   losses: v.number(),
   seed: v.nullable(v.number()),
   madePlayoffs: v.nullable(v.boolean()),
+  qualified: v.nullable(v.boolean()),
+  series: v.nullable(MySeriesSchema),
+  eliminated: v.boolean(),
+  eliminatedRound: v.nullable(v.string()),
   finish: v.nullable(v.string()),
   champion: v.nullable(v.boolean()),
   ppg: v.nullable(v.number()),
@@ -295,6 +312,18 @@ const LeagueDeltaSchema = v.object({
   playoffs: v.optional(v.nullable(v.array(SeriesSchema))),
 });
 
+const GateViewSchema = v.object({
+  active: v.boolean(),
+  stage: v.number(),
+  qualified: v.number(),
+  ready: v.number(),
+  mine: v.boolean(),
+  host: v.boolean(),
+  waitingOn: v.array(v.string()),
+  nextAction: v.string(),
+  actor: v.nullable(v.string()),
+});
+
 export const LobbyDeltaSchema = v.object({
   version: v.number(),
   serverTime: v.string(),
@@ -302,6 +331,7 @@ export const LobbyDeltaSchema = v.object({
   participants: v.optional(v.array(ParticipantProgressSchema)),
   events: v.array(EventViewSchema),
   league: v.optional(LeagueDeltaSchema),
+  gate: v.optional(v.nullable(GateViewSchema)),
 });
 
 const ReadyViewSchema = v.object({
@@ -333,6 +363,7 @@ const LobbyViewSchema = v.object({
   salaryPowers: v.nullable(SalaryPowersViewSchema),
   league: v.nullable(LeagueViewSchema),
   ready: ReadyViewSchema,
+  gate: v.nullable(GateViewSchema),
   serverTime: v.string(),
 });
 

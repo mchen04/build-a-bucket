@@ -398,7 +398,7 @@ async function leagueRun() {
   };
   const waitStage = async (seat, timeout = 150000) =>
     seat.page.waitForFunction(
-      () => document.querySelector('[data-testid="checkpoint"]') || document.querySelector('[data-testid="recap"]'),
+      () => document.querySelector('[data-testid="league-stage"]') || document.querySelector('[data-testid="recap"]'),
       null,
       { timeout },
     );
@@ -413,25 +413,8 @@ async function leagueRun() {
     const names = await playoffs.locator('.round-name').allInnerTexts().catch(() => []);
     return names.length ? clean(names[names.length - 1]) : null;
   };
-  const waitAdvanced = async (seat, before, timeout = 20000) => {
-    try {
-      await seat.page.waitForFunction(
-        (previous) => {
-          if (document.querySelector('[data-testid="recap"]')) return true;
-          const card = document.querySelector('[data-testid="league-stage"]');
-          const name = card?.querySelector('.tiny.muted')?.textContent?.trim() ?? '';
-          return name !== '' && name !== previous;
-        },
-        before,
-        { timeout },
-      );
-      return true;
-    } catch {
-      return false;
-    }
-  };
   const clickReady = async (seat) => {
-    const button = seat.page.getByTestId('checkpoint').getByRole('button', { name: 'Ready', exact: true });
+    const button = seat.page.getByTestId('playoff-gate').getByRole('button', { name: 'Ready', exact: true });
     if ((await button.isVisible().catch(() => false)) && (await button.isEnabled().catch(() => false))) {
       tap(seat, 'Ready');
       await button.click().catch(() => {});
@@ -439,11 +422,11 @@ async function leagueRun() {
     }
     return false;
   };
-  const advanceSeat = async () => {
+  const startPlayoffs = async () => {
     for (const seat of active()) {
-      const button = seat.page.getByTestId('checkpoint').getByRole('button', { name: 'Advance', exact: true });
+      const button = seat.page.getByTestId('playoff-gate').getByRole('button', { name: 'Start playoffs', exact: true });
       if (await button.isVisible().catch(() => false)) {
-        tap(seat, 'Advance');
+        tap(seat, 'Start playoffs');
         await button.click().catch(() => {});
         return seat;
       }
@@ -503,8 +486,14 @@ async function leagueRun() {
       if (row.seed !== parsed.seed) throw new Error(`seed disagrees with standings at ${label} for seat ${seat.seat}`);
       mine.push({ seat: seat.seat, name: seat.name, ...parsed });
     }
-    const states = [];
+    let states = [];
     for (const seat of active()) states.push({ seat, phase: await phaseOf(seat), banner: await visible(seat, 'champion-banner') });
+    const livePhase = await phaseOf(active()[0]);
+    if (livePhase !== phase) {
+      phase = livePhase;
+      states = [];
+      for (const seat of active()) states.push({ seat, phase: await phaseOf(seat), banner: await visible(seat, 'champion-banner') });
+    }
     if (phase === 'Season running') {
       for (const state of states) {
         if (state.phase !== phase) continue;
@@ -587,7 +576,18 @@ async function leagueRun() {
   const stages = [];
   const marks = [];
   const gateWaits = [];
-  const mark = (label) => marks.push({ label, at: Date.now() });
+  const mark = (label) => {
+    if (!marks.some((entry) => entry.label === label)) marks.push({ label, at: Date.now() });
+  };
+  const markRounds = async (seat, current) => {
+    const names = await seat.page.getByTestId('playoffs').locator('.round-name').allInnerTexts().catch(() => []);
+    const wanted = clean(current ?? '').toUpperCase();
+    const index = names.findIndex((name) => clean(name).toUpperCase() === wanted);
+    for (const name of names.slice(0, index + 1)) {
+      const label = `round:${clean(name).toUpperCase()}`;
+      if (!marks.some((entry) => entry.label === label)) mark(label);
+    }
+  };
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
   try {
     const host = seats[0];
@@ -677,97 +677,107 @@ async function leagueRun() {
     mark('season-start');
     let checkpoint = 0;
     let chaosDone = false;
-    let lastStage = null;
-    for (;;) {
-      const record = await verifyStage(`checkpoint-${checkpoint}`, lastStage);
-      stages.push(record);
-      lastStage = record.roundName ?? record.stageName;
-      if (record.phase === 'Awards' && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
-      else if (record.phase === 'Play-In') mark('play-in');
-      else if (record.phase === 'Playoffs') mark(`round:${record.roundName ?? record.stageName}`);
-      else if (record.phase === 'Recap') mark('recap');
-      const gateAt = Date.now();
-      const readyAt = new Map();
-      for (const seat of active()) await snap(seat, `checkpoint-${checkpoint}`);
-      if (checkpoint === 0) {
+    let lastLabel = '';
+    const deadline = Date.now() + 240000;
+    while (Date.now() < deadline) {
+      if (await visible(host, 'recap')) {
+        const record = await verifyStage(`recap-${checkpoint}`, null);
+        stages.push(record);
+        mark('recap');
+        break;
+      }
+      if (await visible(host, 'playoff-gate')) {
+        const record = await verifyStage(`gate-${checkpoint}`, null);
+        stages.push(record);
+        if (!marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+        if (!marks.some((entry) => entry.label === 'playoff-gate')) mark('playoff-gate');
+        await markRounds(host, record.roundName ?? record.stageName);
         for (const seat of active()) {
-          const card = seat.page.getByTestId('standings');
-          if (!(await card.isVisible().catch(() => false))) continue;
-          await card.evaluate((element) => element.scrollIntoView({ block: 'start' }));
-          await seat.page.waitForTimeout(400);
-          const cover = await card.evaluate((element) => {
-            const rows = [...element.querySelectorAll('.table-row:not(.head)')];
-            const visible = rows.filter((row) => {
-              const rect = row.getBoundingClientRect();
-              const box = row.closest('.table')?.getBoundingClientRect();
-              const top = Math.max(0, box ? box.top : 0);
-              const bottom = Math.min(window.innerHeight, box ? box.bottom : window.innerHeight);
-              return rect.top >= top && rect.bottom <= bottom;
-            });
-            const hits = visible.map((row) => {
-              const rect = row.getBoundingClientRect();
-              const hit = document.elementFromPoint(rect.left + Math.min(20, rect.width / 2), rect.top + rect.height / 2);
-              return hit !== null && !row.contains(hit) ? hit : null;
-            });
-            const covered = hits.filter((hit) => hit !== null);
-            const byHeader = covered.filter((hit) => hit.closest('.table-row.head') !== null).length;
-            return { rows: rows.length, visible: visible.length, coveredByHeader: byHeader, coveredByOther: covered.length - byHeader };
+          if (await visible(seat, 'checkpoint')) throw new Error(`unexpected checkpoint at the playoff gate for seat ${seat.seat}`);
+          if (!(await visible(seat, 'activity-log'))) throw new Error(`activity log missing at the playoff gate for seat ${seat.seat}`);
+          const next = (await seat.page.getByTestId('next-action').innerText()).trim();
+          if (!next) throw new Error(`next action missing at the playoff gate for seat ${seat.seat}`);
+          await snap(seat, `gate-${checkpoint}`);
+        }
+        const gateAt = Date.now();
+        const readyAt = new Map();
+        for (const seat of active()) if (await clickReady(seat)) readyAt.set(seat.seat, Date.now());
+        await host.page.getByTestId('playoff-gate').waitFor({ state: 'hidden', timeout: 2000 }).catch(() => {});
+        if (await visible(host, 'playoff-gate')) await startPlayoffs();
+        await host.page.getByTestId('playoff-gate').waitFor({ state: 'hidden', timeout: 20000 });
+        const advancedAt = Date.now();
+        for (const seat of active()) {
+          gateWaits.push({
+            stage: 'Playoff gate',
+            phase: 'Playoffs',
+            seat: seat.seat,
+            name: seat.name,
+            gateMs: advancedAt - gateAt,
+            afterReadyMs: readyAt.has(seat.seat) ? advancedAt - readyAt.get(seat.seat) : null,
           });
-          stages.push({ label: `standings-scrolled`, seat: seat.seat, ...cover });
-          await snap(seat, 'standings-scrolled');
         }
+        checkpoint++;
+        lastLabel = '';
+        continue;
       }
-      if (record.phase === 'Recap') break;
-      if (!chaosDone && checkpoint === 0) {
-        chaosDone = true;
-        if (reloadSeat !== null) {
-          const seat = seats[reloadSeat - 1];
-          await seat.page.reload({ waitUntil: 'load' });
-          await waitStage(seat);
-          const tables = [];
-          for (const entry of active()) tables.push(await readTables(entry));
-          const top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
-          if (!top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) throw new Error('standings differ after reload');
-          stages.push({ label: 'after-reload', phase: await phaseOf(seat), standings: top[0] });
-          await snap(seat, 'after-reload');
+      const phase = await phaseOf(host).catch(() => '');
+      const card = await stageName(host);
+      const round = await roundName(host);
+      const label = `${phase}:${round ?? card ?? ''}`;
+      if (label !== lastLabel) {
+        const record = await verifyStage(`stage-${checkpoint}`, null);
+        stages.push(record);
+        const roundLabel = clean(record.roundName ?? record.stageName ?? '').toUpperCase();
+        if ((record.phase === 'Awards' || record.phase === 'Play-In' || record.phase === 'Playoffs') && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+        if (record.phase === 'Playoffs' && roundLabel === 'FIRST ROUND' && !marks.some((entry) => entry.label === 'playoff-gate')) mark('playoff-gate');
+        await markRounds(host, record.roundName ?? record.stageName);
+        if (record.phase === 'Awards' && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+        else if (record.phase === 'Play-In') {
+          if (!marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+          mark('play-in');
         }
-        if (awaySeat !== null) {
-          const seat = seats[awaySeat - 1];
-          await seat.context.close();
-          seat.closed = true;
-          stages.push({ label: 'away', seat: seat.seat, name: seat.name });
-        }
-        if (hostLeave) {
-          await host.page.getByTestId('quit-lobby').click();
-          await host.page.waitForTimeout(1500);
-          host.closed = true;
-          stages.push({ label: 'host-left', seat: host.seat, name: host.name });
-        }
-      }
-      let moved = false;
-      for (let attempt = 0; attempt < 3 && !moved; attempt++) {
+        else if (record.phase === 'Playoffs') {
+          if (!marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+          if (roundLabel === 'FIRST ROUND' && !marks.some((entry) => entry.label === 'playoff-gate')) mark('playoff-gate');
+          else mark(`round:${roundLabel}`);
+        } else if (record.phase === 'Recap') mark('recap');
         for (const seat of active()) {
-          if (await clickReady(seat) && !readyAt.has(seat.seat)) readyAt.set(seat.seat, Date.now());
+          if (await visible(seat, 'checkpoint')) throw new Error(`unexpected checkpoint at ${label} for seat ${seat.seat}`);
+          if (!(await visible(seat, 'activity-log'))) throw new Error(`activity log missing at ${label} for seat ${seat.seat}`);
+          await snap(seat, `stage-${checkpoint}`);
         }
-        await advanceSeat();
-        moved = await waitAdvanced(active()[0], record.stageName, 15000);
-        if (!moved) await host.page.waitForTimeout(1000);
+        if (!chaosDone && checkpoint === 0) {
+          chaosDone = true;
+          if (reloadSeat !== null) {
+            const seat = seats[reloadSeat - 1];
+            await seat.page.reload({ waitUntil: 'load' });
+            await waitStage(seat);
+            const tables = [];
+            for (const entry of active()) tables.push(await readTables(entry));
+            const top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
+            if (!top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) throw new Error('standings differ after reload');
+            stages.push({ label: 'after-reload', phase: await phaseOf(seat), standings: top[0] });
+            await snap(seat, 'after-reload');
+          }
+          if (awaySeat !== null) {
+            const seat = seats[awaySeat - 1];
+            await seat.context.close();
+            seat.closed = true;
+            stages.push({ label: 'away', seat: seat.seat, name: seat.name });
+          }
+          if (hostLeave) {
+            await host.page.getByTestId('quit-lobby').click();
+            await host.page.waitForTimeout(1500);
+            host.closed = true;
+            stages.push({ label: 'host-left', seat: host.seat, name: host.name });
+          }
+        }
+        lastLabel = label;
+        checkpoint++;
       }
-      if (!moved) throw new Error(`stage did not advance after ${record.stageName}`);
-      const advancedAt = Date.now();
-      for (const seat of record.phase === 'Recap' ? [] : active()) {
-        gateWaits.push({
-          stage: record.roundName ?? record.stageName,
-          phase: record.phase,
-          seat: seat.seat,
-          name: seat.name,
-          gateMs: advancedAt - gateAt,
-          afterReadyMs: readyAt.has(seat.seat) ? advancedAt - readyAt.get(seat.seat) : null,
-        });
-      }
-      checkpoint++;
-      if (checkpoint > 30) throw new Error('league did not reach the recap');
+      await host.page.waitForTimeout(100);
     }
+    if (!marks.some((entry) => entry.label === 'recap')) throw new Error('league did not reach the recap');
     const champion = stages[stages.length - 1].champion;
     for (const seat of active()) await snap(seat, 'recap');
     let playAgain = false;
@@ -867,7 +877,7 @@ async function leagueRun() {
       evidence: ev,
     };
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
-    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, checkpoints: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
   } finally {
     await browser.close();
   }

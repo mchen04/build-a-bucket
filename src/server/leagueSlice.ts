@@ -2,7 +2,7 @@ import { LEAGUE_TEAMS, type HumanSeason, type LeagueResult, type SeriesResult } 
 import {
   STAGE_NAMES,
   assembleLeagueView,
-  isCheckpoint,
+  isStageCheckpoint,
   playoffViewsFrom,
   stageGamesTotalFrom,
   stageTotalFrom,
@@ -224,8 +224,48 @@ from r
 
 export async function readLeagueClock(lobbyId: string): Promise<LeagueClock | null> {
   try {
-    const rows = await db().query<{ clock: LeagueClock }>('select clock from league_slices where lobby_id = $1::uuid', [lobbyId]);
-    return rows[0]?.clock ?? null;
+    const rows = await db().query<{
+      clock: LeagueClock;
+      series: SeriesResult[] | null;
+      playin: { conference: 'east' | 'west'; label: string; home: string; away: string; winner: string }[] | null;
+      humans: HumanSeason[] | null;
+      champion: string | null;
+      awards: { mvp: { name: string; team: string }; dpoy: { name: string; team: string } } | null;
+    }>('select clock, series, playin, humans, champion, awards from league_slices where lobby_id = $1::uuid', [lobbyId]);
+    const row = rows[0];
+    if (!row?.clock) return null;
+    const clock = row.clock;
+    if (!clock.qualified) {
+      clock.qualified = [
+        ...new Set((row.series ?? []).filter((entry) => entry.round === 1).flatMap((entry) => [entry.high, entry.low])),
+      ];
+    }
+    if (!clock.humanSeasons) {
+      clock.humanSeasons = (row.humans ?? []).map((entry) => ({
+        participantId: entry.participantId,
+        name: entry.name,
+        team: entry.team,
+        wins: entry.wins,
+        losses: entry.losses,
+        seed: entry.seed,
+      }));
+    }
+    if (!clock.series) {
+      clock.series = (row.series ?? []).map((entry) => ({
+        round: entry.round,
+        name: entry.name,
+        conference: entry.conference,
+        high: entry.high,
+        low: entry.low,
+        winner: entry.winner,
+        wins: entry.wins,
+        losses: entry.losses,
+      }));
+    }
+    if (!clock.playinGames) clock.playinGames = row.playin ?? [];
+    if (clock.champion === undefined) clock.champion = row.champion;
+    if (clock.awards === undefined) clock.awards = row.awards;
+    return clock;
   } catch (error) {
     if (missingTable(error)) return null;
     throw error;
@@ -360,7 +400,7 @@ export async function readLeagueDelta(
     return {
       stage,
       stageCursor: clamped,
-      checkpoint: isCheckpoint(clamped, total),
+      checkpoint: isStageCheckpoint(clock, stage, clamped),
       stageName: STAGE_NAMES[stage] ?? 'Season',
       stageTotal: stageTotalFrom(clock, stage),
       games: [],
@@ -396,7 +436,7 @@ export async function readLeagueDelta(
     return {
       stage,
       stageCursor: clamped,
-      checkpoint: isCheckpoint(clamped, total),
+      checkpoint: isStageCheckpoint(clock, stage, clamped),
       stageName: STAGE_NAMES[stage] ?? 'Season',
       stageTotal: total,
       games,

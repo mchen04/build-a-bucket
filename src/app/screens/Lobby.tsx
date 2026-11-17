@@ -452,7 +452,7 @@ export function Lobby(props: Props) {
               {view.ready.mine ? 'You are ready' : 'Ready up for the next league'}
             </div>
             <div class="tiny muted">
-              {retainedReady}/{retained.length} ready · every retained player must ready
+              {retainedReady}/{retained.length} ready · every present player must ready
             </div>
             {retained.length < 2 ? (
               <div style={{ marginTop: '4px' }}>

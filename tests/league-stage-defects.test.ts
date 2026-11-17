@@ -10,6 +10,7 @@ import {
 } from '../src/server/actions';
 import { loadLocalEnv } from '../scripts/lib.ts';
 import { db } from '../src/server/db';
+import { readLeagueView } from '../src/server/leagueSlice';
 import type { LeagueResult } from '../src/shared/engine/league';
 import { generateSecret, newActionId } from '../src/shared/mp/codes';
 import { stageGamesTotal } from '../src/shared/mp/league';
@@ -105,74 +106,218 @@ async function fastForward(code: string): Promise<void> {
   await db().query("update lobbies set stage_started_at = now() - interval '1 hour', stage_cursor = 100000 where code = $1", [code]);
 }
 
-async function checkpointEvents(code: string): Promise<number> {
-  const rows = await db().query<{ n: number }>(
-    "select count(*)::int as n from events where lobby_id = (select id from lobbies where code = $1) and kind = 'checkpoint'",
-    [code],
-  );
-  return rows[0]?.n ?? 0;
+async function lobbyRow(code: string): Promise<{ id: string; league: LeagueResult }> {
+  const rows = await db().query<{ id: string; league: LeagueResult }>('select id, league from lobbies where code = $1', [code]);
+  const row = rows[0];
+  if (!row) throw new Error('lobby missing');
+  return row;
 }
 
-describeDb('shared league stage defects', () => {
-  it.fails('logs one checkpoint event for the end of the regular season on host Advance', async () => {
+async function participantId(lobbyId: string, seat: number): Promise<string> {
+  const rows = await db().query<{ id: string }>('select id from participants where lobby_id = $1::uuid and seat = $2', [lobbyId, seat]);
+  const id = rows[0]?.id;
+  if (!id) throw new Error('participant missing');
+  return id;
+}
+
+async function setTeams(code: string, teams: [string, string]): Promise<void> {
+  const row = await lobbyRow(code);
+  const seats = await db().query<{ id: string; seat: number }>('select id, seat from participants where lobby_id = $1::uuid order by seat', [row.id]);
+  for (const seat of seats) {
+    await db().query('update lobby_teams set team = $2 where lobby_id = $1::uuid and participant_id = $3::uuid', [row.id, `__tmp-${seat.seat}`, seat.id]);
+  }
+  for (const seat of seats) {
+    const team = teams[seat.seat - 1];
+    if (!team) continue;
+    await db().query('update lobby_teams set team = $2 where lobby_id = $1::uuid and participant_id = $3::uuid', [row.id, team, seat.id]);
+  }
+}
+
+async function setStage(code: string, stage: number, phase: string, cursor = 0): Promise<void> {
+  await db().query(
+    "update lobbies set stage = $2, phase = $3, stage_cursor = $4, stage_started_at = case when $2 = 6 then null else now() - interval '1 hour' end where code = $1",
+    [code, stage, phase, cursor],
+  );
+}
+
+async function eventsOfKind(code: string, kind: string): Promise<{ detail: string | null; key: string | null }[]> {
+  const rows = await db().query<{ detail: string | null; key: string | null }>(
+    "select payload->>'detail' as detail, payload->>'key' as key from events where lobby_id = (select id from lobbies where code = $1) and kind = $2 order by id",
+    [code, kind],
+  );
+  return rows;
+}
+
+async function duplicateEvents(code: string): Promise<{ kind: string; key: string; n: number }[]> {
+  const rows = await db().query<{ kind: string; key: string; n: number }>(
+    `select kind, payload->>'key' as key, count(*)::int as n from events
+     where lobby_id = (select id from lobbies where code = $1) and payload ? 'key'
+     group by kind, payload->>'key' having count(*) > 1`,
+    [code],
+  );
+  return rows;
+}
+
+describeDb('shared league stage behavior', () => {
+  it('moves from the regular season to the awards and logs one season final per human', async () => {
     const { code, seats } = await seasonLeague();
-    const before = await checkpointEvents(code);
     await fastForward(code);
     expect((await advance(code, seats[0]!.secret, 0)).status).toBe(200);
     const after = await view(code, seats[0]!.secret);
-    expect(after.stage).toBe(4);
-    expect(after.phase).toBe('awards');
-    expect((await checkpointEvents(code)) - before).toBe(1);
+    expect(after.stage).toBeGreaterThanOrEqual(4);
+    expect(after.phase === 'awards' || after.phase === 'playin' || after.phase === 'playoffs').toBe(true);
+    expect(await eventsOfKind(code, 'season_final')).toHaveLength(2);
+    expect(await eventsOfKind(code, 'checkpoint')).toHaveLength(0);
   }, 120_000);
 
-  it.fails('shows a playoff checkpoint whose cursor reaches its stageTotal', async () => {
+  it('shows a playoff checkpoint whose cursor reaches its stageTotal', async () => {
     const { code, seats } = await seasonLeague();
-    const rows = await db().query<{ league: LeagueResult }>('select league from lobbies where code = $1', [code]);
-    const league = rows[0]?.league;
-    if (!league) throw new Error('league missing');
-    const actual = stageGamesTotal(league, 6);
+    const row = await lobbyRow(code);
+    const actual = stageGamesTotal(row.league, 7);
     expect(actual).toBeGreaterThan(0);
-    await db().query(
-      "update lobbies set stage = 6, phase = 'playoffs', stage_cursor = $2, stage_started_at = now() - interval '1 hour' where code = $1",
-      [code, actual],
-    );
-    const lobby = await view(code, seats[0]!.secret);
-    expect(lobby.league?.checkpoint).toBe(true);
-    expect(lobby.league?.cursor).toBe(actual);
-    expect(lobby.league?.stageTotal).toBe(actual);
+    const me = await participantId(row.id, seats[0]!.seat);
+    const slice = await readLeagueView(row.id, 7, actual, me);
+    expect(slice?.view.checkpoint).toBe(true);
+    expect(slice?.view.cursor).toBe(actual);
+    expect(slice?.view.stageTotal).toBe(actual);
   }, 120_000);
 
-  it('advances exactly one stage under duplicate, stale and concurrent ready and advance', async () => {
+  it('gates the playoffs on qualifying humans only and lets the host start', async () => {
+    const { code, seats } = await seasonLeague();
+    const row = await lobbyRow(code);
+    const qualified = [...new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]))];
+    const nonQualified = row.league.standings.east.concat(row.league.standings.west).map((entry) => entry.team).filter((team) => !qualified.includes(team));
+    expect(qualified.length).toBeGreaterThan(0);
+    expect(nonQualified.length).toBeGreaterThan(1);
+    await setTeams(code, [qualified[0]!, nonQualified[0]!]);
+    await setStage(code, 6, 'playoffs');
+
+    const host = await view(code, seats[0]!.secret);
+    expect(host.gate?.active).toBe(true);
+    expect(host.gate?.mine).toBe(true);
+    expect(host.gate?.qualified).toBe(1);
+    expect(host.gate?.ready).toBe(0);
+    expect(host.gate?.nextAction).toBe('Ready for the playoffs');
+
+    const guest = await view(code, seats[1]!.secret);
+    expect(guest.gate?.active).toBe(true);
+    expect(guest.gate?.mine).toBe(false);
+    expect(guest.gate?.nextAction).toContain('Waiting on Host');
+
+    expect((await ready(code, seats[1]!.secret, 6)).status).toBe(200);
+    const afterGuest = await view(code, seats[0]!.secret);
+    expect(afterGuest.gate?.active).toBe(true);
+    expect(afterGuest.gate?.ready).toBe(0);
+
+    expect((await ready(code, seats[0]!.secret, 6)).status).toBe(200);
+    const started = await view(code, seats[0]!.secret);
+    expect(started.stage).toBeGreaterThanOrEqual(6);
+    expect(started.gate).toBeNull();
+
+    await setStage(code, 6, 'playoffs');
+    expect((await advance(code, seats[0]!.secret, 6)).status).toBe(200);
+    const advanced = await view(code, seats[0]!.secret);
+    expect(advanced.stage).toBeGreaterThanOrEqual(6);
+    expect(advanced.gate).toBeNull();
+  }, 120_000);
+
+  it('skips the playoff gate when no human qualified', async () => {
+    const { code, seats } = await seasonLeague();
+    const row = await lobbyRow(code);
+    const qualified = new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]));
+    const nonQualified = row.league.standings.east.concat(row.league.standings.west).map((entry) => entry.team).filter((team) => !qualified.has(team));
+    await setTeams(code, [nonQualified[0]!, nonQualified[1]!]);
+    await setStage(code, 6, 'playoffs');
+    const lobby = await view(code, seats[0]!.secret);
+    expect(lobby.stage).toBeGreaterThanOrEqual(6);
+    expect(lobby.gate).toBeNull();
+  }, 120_000);
+
+  it('logs season, series, elimination and champion events once and exposes them to every seat', async () => {
+    const { code, seats } = await seasonLeague();
+    for (let guard = 0; guard < 20; guard++) {
+      let lobby = await view(code, seats[0]!.secret);
+      if (lobby.phase === 'recap') break;
+      await fastForward(code);
+      lobby = await view(code, seats[0]!.secret);
+      if (lobby.phase === 'recap') break;
+      if (lobby.stage === 6) {
+        await Promise.all([
+          advance(code, seats[0]!.secret, 6),
+          ready(code, seats[0]!.secret, 6),
+          ready(code, seats[1]!.secret, 6),
+          view(code, seats[0]!.secret),
+          view(code, seats[1]!.secret),
+        ]);
+      }
+    }
+    const recap = await view(code, seats[0]!.secret);
+    expect(recap.phase).toBe('recap');
+    expect(await eventsOfKind(code, 'season_final')).toHaveLength(2);
+    expect((await eventsOfKind(code, 'champion')).length).toBe(1);
+    const duplicates = await duplicateEvents(code);
+    expect(duplicates, JSON.stringify(duplicates)).toEqual([]);
+    const guest = await view(code, seats[1]!.secret);
+    expect(guest.events.some((event) => event.kind === 'season_final')).toBe(true);
+    expect(guest.events.some((event) => event.kind === 'champion')).toBe(true);
+  }, 180_000);
+
+  it('continues an old-model lobby from a mid-playoff checkpoint', async () => {
+    const { code, seats } = await seasonLeague();
+    await setStage(code, 7, 'playoffs', 100000);
+    const next = await view(code, seats[0]!.secret);
+    expect(next.stage).toBe(8);
+    expect(next.phase).toBe('playoffs');
+    await setStage(code, 4, 'awards', 0);
+    const awards = await view(code, seats[0]!.secret);
+    expect(awards.stage).toBeGreaterThanOrEqual(5);
+  }, 120_000);
+
+  it('advances monotonically under duplicate, stale and concurrent ready, advance and poll', async () => {
     const { code, seats } = await seasonLeague();
     const seen: number[] = [];
     const record = (lobby: LobbyView) => {
       if (seen[seen.length - 1] !== lobby.stage) seen.push(lobby.stage);
     };
-    for (let guard = 0; guard < 12; guard++) {
+    for (let guard = 0; guard < 20; guard++) {
       let lobby = await view(code, seats[0]!.secret);
       record(lobby);
       if (lobby.phase === 'recap') break;
-      await fastForward(code);
-      lobby = await view(code, seats[0]!.secret);
-      record(lobby);
-      if (lobby.phase === 'recap') break;
+      if (lobby.stage !== 6 || !lobby.gate) {
+        await fastForward(code);
+        lobby = await view(code, seats[0]!.secret);
+        record(lobby);
+        if (lobby.phase === 'recap') break;
+      }
       const stage = lobby.stage;
-      const shared = newActionId();
-      const calls = seats.map((seat, index) => ready(code, seat.secret, stage, index === 0 ? shared : newActionId()));
-      calls.push(ready(code, seats[0]!.secret, stage, shared));
-      calls.push(advance(code, seats[0]!.secret, Math.max(0, stage - 1)));
-      calls.push(advance(code, seats[0]!.secret, stage));
-      await Promise.all(calls);
-      const after = await view(code, seats[0]!.secret);
-      expect(after.stage).toBe(stage + 1);
-      expect(after.stage).toBe(lobby.stage + 1);
-      const peer = await view(code, seats[1]!.secret);
-      expect(peer.stage).toBe(after.stage);
-      expect(peer.phase).toBe(after.phase);
-      expect(peer.league?.cursor).toBe(after.league?.cursor);
+      if (stage === 6) {
+        const shared = newActionId();
+        await Promise.all([
+          ready(code, seats[0]!.secret, 6, shared),
+          ready(code, seats[1]!.secret, 6, shared),
+          ready(code, seats[0]!.secret, 6, shared),
+          advance(code, seats[0]!.secret, 5),
+          advance(code, seats[0]!.secret, 6),
+          view(code, seats[0]!.secret),
+          view(code, seats[1]!.secret),
+        ]);
+      }
+      let after = await view(code, seats[0]!.secret);
+      let peer = await view(code, seats[1]!.secret);
+      if (peer.stage !== after.stage) {
+        after = await view(code, seats[0]!.secret);
+        peer = await view(code, seats[1]!.secret);
+      }
+      expect(after.stage).toBeGreaterThanOrEqual(stage);
+      expect(Math.abs(peer.stage - after.stage)).toBeLessThanOrEqual(1);
       record(after);
     }
-    expect(seen).toEqual([0, 4, 5, 6, 7, 8, 9, 10]);
-    expect(await checkpointEvents(code)).toBe(7);
+    expect(seen[seen.length - 1]).toBe(10);
+    for (let index = 1; index < seen.length; index++) expect(seen[index]!).toBeGreaterThanOrEqual(seen[index - 1]!);
+    expect(await duplicateEvents(code)).toEqual([]);
+    const hostFinal = await view(code, seats[0]!.secret);
+    const guestFinal = await view(code, seats[1]!.secret);
+    expect(hostFinal.stage).toBe(10);
+    expect(guestFinal.stage).toBe(10);
   }, 180_000);
 });
