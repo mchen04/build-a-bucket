@@ -239,9 +239,21 @@ async function setupBuilding(mode: LobbySettings['mode'], players: number): Prom
   for (let index = 2; index <= players; index++) seats.push(await join(host.code, `P${index}`));
   const started = await start(host.code, host.host.secret, settings);
   expect(started.status).toBe(200);
-  await Promise.all(seats.map((seat) => draw(host.code, seat.secret)));
-  await lock(host.code, host.host.secret);
   return { code: host.code, seats };
+}
+
+async function buildAll(code: string, seats: Seat[], mode: LobbySettings['mode'] = 'normal'): Promise<void> {
+  for (let index = 0; index < seats.length; index++) {
+    const seat = seats[index] as Seat;
+    await submitOk(code, seat.secret, await buildFor(mode, await view(code, seat.secret), index));
+  }
+}
+
+async function drawTeams(code: string, seats: Seat[]): Promise<void> {
+  expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
+  await Promise.all(seats.map((seat) => draw(code, seat.secret)));
+  await lock(code, seats[0]!.secret);
+  expect((await view(code, seats[0]!.secret)).phase).toBe('preview');
 }
 
 async function runLeague(
@@ -254,14 +266,15 @@ async function runLeague(
   const seats: Seat[] = [host.host];
   for (let index = 2; index <= players; index++) seats.push(await join(host.code, `P${index}`));
   expect((await start(host.code, host.host.secret, settings)).status).toBe(200);
-  await Promise.all(seats.map((seat) => draw(host.code, seat.secret)));
-  await lock(host.code, host.host.secret);
   for (let index = 0; index < seats.length; index++) {
     const seat = seats[index] as Seat;
     const lobby = await view(host.code, seat.secret);
+    expect(lobby.phase).toBe('building');
+    expect(lobby.me.team).toBeNull();
     if (mode === 'salary' && index === 0) expect(v.safeParse(LobbyEnvelopeSchema, { lobby }).success).toBe(true);
     await submitOk(host.code, seat.secret, await buildFor(mode, lobby, index));
   }
+  await drawTeams(host.code, seats);
   for (const seat of seats) await ready(host.code, seat.secret, 0);
   let lobby = await view(host.code, host.host.secret);
   expect(lobby.phase).toBe('season');
@@ -338,6 +351,7 @@ describeDb('shared league API', () => {
       const seatView = await view(code, seats[index]!.secret);
       await submitOk(code, seats[index]!.secret, await buildFor('normal', seatView, index));
     }
+    await drawTeams(code, seats);
     for (const seat of seats) await ready(code, seat.secret, 0);
     let current = await view(code, seats[1]!.secret);
     for (let guard = 0; guard < 12 && current.stage < 8; guard++) {
@@ -404,14 +418,15 @@ describeDb('shared league API', () => {
     const host = await createLobby('Host', settings);
     const guest = await join(host.code, 'Guest');
     expect((await start(host.code, host.host.secret, settings)).status).toBe(200);
+    await buildAll(host.code, [host.host, guest]);
+    expect((await view(host.code, guest.secret)).phase).toBe('draw');
     await draw(host.code, host.host.secret);
     await lock(host.code, host.host.secret);
     const lobby = await view(host.code, guest.secret);
-    expect(lobby.phase).toBe('building');
+    expect(lobby.phase).toBe('preview');
     expect(lobby.teams).toHaveLength(2);
     expect(new Set(lobby.teams.map((entry) => entry.team)).size).toBe(2);
     expect(lobby.me.team).toBeTruthy();
-    await submitOk(host.code, guest.secret, await buildFor('normal', lobby, 1));
   }, 60_000);
 
   it('lets a concurrent join and lock leave every retained player with a team', async () => {
@@ -419,13 +434,14 @@ describeDb('shared league API', () => {
     const host = await createLobby('Host', settings);
     const guest = await join(host.code, 'Guest');
     expect((await start(host.code, host.host.secret, settings)).status).toBe(200);
+    await buildAll(host.code, [host.host, guest]);
     await draw(host.code, host.host.secret);
     const lateSecret = generateSecret();
     const late = joinHandler(authed(lateSecret, `lobby/${host.code}/join`, { name: 'Late', actionId: newActionId() }));
     const locking = lockHandler(authed(host.host.secret, `lobby/${host.code}/lock`, { actionId: newActionId() }));
     await Promise.all([late, locking]);
     const lobby = await view(host.code, guest.secret);
-    expect(lobby.phase).toBe('building');
+    expect(lobby.phase).toBe('preview');
     expect(lobby.teams).toHaveLength(lobby.participants.filter((entry) => entry.status !== 'left').length);
     expect(lobby.participants.every((entry) => entry.status !== 'left' ? Boolean(entry.team) : true)).toBe(true);
   }, 60_000);
@@ -437,6 +453,7 @@ describeDb('shared league API', () => {
       const lobby = await view(code, seat.secret);
       await submitOk(code, seat.secret, await buildFor('normal', lobby, index));
     }
+    await drawTeams(code, seats);
     for (const seat of seats) await ready(code, seat.secret, 0);
     await fastForward(code);
     const before = await view(code, seats[0]!.secret);
@@ -525,6 +542,8 @@ describeDb('shared league API', () => {
     await submitOk(code, seats[0]!.secret, await buildFor('normal', first, 0));
     const response = await advance(code, seats[0]!.secret, 0);
     expect(response.status).toBe(200);
+    expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
+    await lock(code, seats[0]!.secret);
     const preview = await view(code, seats[0]!.secret);
     expect(preview.phase).toBe('preview');
     const missing = preview.participants.filter((entry) => entry.seat !== seats[0]!.seat);
@@ -575,9 +594,11 @@ describeDb('shared league API', () => {
     expect((await advance(code, seats[0]!.secret, 0)).status).toBe(409);
     await ready(code, seats[1]!.secret, 0);
     const next = await view(code, seats[0]!.secret);
-    expect(next.phase).toBe('draw');
+    expect(next.phase).toBe('building');
     const second = await rematch(code, seats[1]!.secret);
     expect(second.status).toBe(403);
+    await buildAll(code, seats);
+    expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
     const firstDraw = await draw(code, seats[0]!.secret);
     expect(firstDraw.teams.find((entry) => entry.seat === seats[0]!.seat)?.rerollUsed).toBe(false);
     const rerolled = await reroll(code, seats[0]!.secret);
@@ -598,7 +619,7 @@ describeDb('shared league API', () => {
     expect(lobby.seatsTaken).toBe(1);
   }, 120_000);
 
-  it('lets the host remove an away participant and open the rematch draw', async () => {
+  it('lets the host remove an away participant and open the rematch builds', async () => {
     const { code, seats } = await runLeague('normal', 3);
     expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
     await db().query(
@@ -611,8 +632,7 @@ describeDb('shared league API', () => {
     expect(afterRemove.participants.find((entry) => entry.seat === seats[2]!.seat)?.status).toBe('left');
     await ready(code, seats[0]!.secret, 0);
     await ready(code, seats[1]!.secret, 0);
-    expect((await advance(code, seats[0]!.secret, 0)).status).toBe(200);
-    expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
+    expect((await view(code, seats[0]!.secret)).phase).toBe('building');
   }, 120_000);
 
   it('reports the minimum-player outcome when an away removal leaves one player', async () => {
@@ -643,6 +663,8 @@ describeDb('shared league API', () => {
     expect(second[0]?.season_secret).not.toBe(firstSecret);
     await ready(code, seats[0]!.secret, 0);
     await ready(code, seats[1]!.secret, 0);
+    expect((await view(code, seats[0]!.secret)).phase).toBe('building');
+    await buildAll(code, seats);
     expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
     await draw(code, seats[0]!.secret);
     const rerolled = await reroll(code, seats[0]!.secret);
@@ -654,6 +676,8 @@ describeDb('shared league API', () => {
     expect(third[0]?.season_secret).not.toBe(second[0]?.season_secret);
     await ready(code, seats[0]!.secret, 0);
     await ready(code, seats[1]!.secret, 0);
+    expect((await view(code, seats[0]!.secret)).phase).toBe('building');
+    await buildAll(code, seats);
     expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
     const drawn = await draw(code, seats[0]!.secret);
     expect(drawn.teams.find((entry) => entry.seat === seats[0]!.seat)?.rerollUsed).toBe(false);
@@ -665,6 +689,8 @@ describeDb('shared league API', () => {
     expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
     await ready(code, seats[0]!.secret, 0);
     await ready(code, seats[1]!.secret, 0);
+    await buildAll(code, seats);
+    expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
     await draw(code, seats[0]!.secret);
     const [a, b] = await Promise.all([reroll(code, seats[0]!.secret), reroll(code, seats[0]!.secret)]);
     const mine = (lobby: LobbyView) => lobby.teams.find((entry) => entry.seat === seats[0]!.seat);
@@ -743,7 +769,7 @@ describeDb('shared league API', () => {
     const response = await viewHandler(pollWith(host.host.secret, host.code, lobby.version, token, events));
     expect(response.status).toBe(200);
     const body = await read<{ lobby?: LobbyView }>(response);
-    expect(body.lobby?.phase).toBe('draw');
+    expect(body.lobby?.phase).toBe('building');
   }, 60_000);
 
   it('decides the cheap path from the version and token', async () => {
@@ -775,18 +801,21 @@ describeDb('shared league API', () => {
   it('still advances a checkpoint and the reveal clock on a poll', async () => {
     const { code, seats } = await setupBuilding('normal', 2);
     await advance(code, seats[0]!.secret, 0);
+    await lock(code, seats[0]!.secret);
     for (const seat of seats) await ready(code, seat.secret, 0);
     const season = await view(code, seats[0]!.secret);
     expect(season.phase).toBe('season');
-    await fastForward(code);
-    for (const seat of seats) await ready(code, seat.secret, season.stage);
     const before = await view(code, seats[0]!.secret);
     await new Promise((resolve) => setTimeout(resolve, 1300));
     const advanced = await viewHandler(pollWith(seats[0]!.secret, code, before.version, progressToken(before), before.events[0]?.id ?? 0));
     expect(advanced.status).toBe(200);
     const next = (await read<{ lobby: LobbyView }>(advanced)).lobby;
     expect(next.version).toBeGreaterThan(before.version);
-    expect(next.stage).toBeGreaterThanOrEqual(season.stage);
+    expect(next.league?.cursor ?? 0).toBeGreaterThan(before.league?.cursor ?? 0);
+    await fastForward(code);
+    const ended = await view(code, seats[0]!.secret);
+    expect(ended.stage).toBe(4);
+    expect(ended.phase).toBe('awards');
   }, 120_000);
 
   it('keeps the draw open for a reroll window after the last draw', async () => {
@@ -794,6 +823,7 @@ describeDb('shared league API', () => {
     const host = await createLobby('Host', settings);
     const guest = await join(host.code, 'Guest');
     expect((await start(host.code, host.host.secret, settings)).status).toBe(200);
+    await buildAll(host.code, [host.host, guest]);
     expect((await draw(host.code, host.host.secret)).phase).toBe('draw');
     expect((await draw(host.code, guest.secret)).phase).toBe('draw');
     const rerolled = await reroll(host.code, host.host.secret);
@@ -803,7 +833,7 @@ describeDb('shared league API', () => {
       "update lobby_teams set created_at = now() - interval '20 seconds' where lobby_id = (select id from lobbies where code = $1)",
       [host.code],
     );
-    expect((await view(host.code, host.host.secret)).phase).toBe('building');
+    expect((await view(host.code, host.host.secret)).phase).toBe('preview');
   }, 60_000);
 
   it('clears the rematch ready flag before the next preview', async () => {
@@ -813,20 +843,15 @@ describeDb('shared league API', () => {
       const lobby = await view(code, seat.secret);
       await submitOk(code, seat.secret, await buildFor('normal', lobby, index));
     }
+    await drawTeams(code, seats);
     for (const seat of seats) await ready(code, seat.secret, 0);
     expect((await view(code, seats[0]!.secret)).phase).toBe('season');
     await db().query("update lobbies set phase = 'recap' where code = $1", [code]);
     expect((await rematch(code, seats[0]!.secret)).status).toBe(200);
     for (const seat of seats) await ready(code, seat.secret, 0);
-    expect((await advance(code, seats[0]!.secret, 0)).status).toBe(200);
-    expect((await view(code, seats[0]!.secret)).phase).toBe('draw');
-    for (const seat of seats) await draw(code, seat.secret);
-    await lock(code, seats[0]!.secret);
-    for (let index = 0; index < seats.length; index++) {
-      const seat = seats[index] as Seat;
-      const lobby = await view(code, seat.secret);
-      await submitOk(code, seat.secret, await buildFor('normal', lobby, index));
-    }
+    expect((await view(code, seats[0]!.secret)).phase).toBe('building');
+    await buildAll(code, seats);
+    await drawTeams(code, seats);
     const preview = await view(code, seats[0]!.secret);
     expect(preview.phase).toBe('preview');
     expect(preview.participants.every((entry) => !entry.ready)).toBe(true);
@@ -857,6 +882,7 @@ describeDb('shared league API', () => {
       const lobby = await view(code, seat.secret);
       await submitOk(code, seat.secret, await buildFor('normal', lobby, index));
     }
+    await drawTeams(code, seats);
     for (const seat of seats) await ready(code, seat.secret, 0);
     expect((await view(code, seats[0]!.secret)).phase).toBe('season');
     const guest = seats[1] as Seat;
@@ -881,6 +907,7 @@ describeDb('shared league API', () => {
       const lobby = await view(code, seat.secret);
       await submitOk(code, seat.secret, await buildFor('normal', lobby, index));
     }
+    await drawTeams(code, seats);
     for (const seat of seats) await ready(code, seat.secret, 0);
     expect((await view(code, seats[0]!.secret)).phase).toBe('season');
     const counts = async () =>
@@ -905,6 +932,7 @@ describeDb('shared league API', () => {
     const hostLobby = await view(code, seats[0]!.secret);
     await submitOk(code, seats[0]!.secret, await buildFor('normal', hostLobby, 0));
     expect((await advance(code, seats[0]!.secret, 0)).status).toBe(200);
+    await lock(code, seats[0]!.secret);
     const rows = await db().query<{ id: string; phase: string }>('select id, phase from lobbies where code = $1', [code]);
     expect(rows[0]?.phase).toBe('preview');
     await db().query(
@@ -927,6 +955,7 @@ describeDb('shared league API', () => {
       const lobby = await view(code, seat.secret);
       await submitOk(code, seat.secret, await buildFor('normal', lobby, index));
     }
+    await drawTeams(code, seats);
     for (const seat of seats) await ready(code, seat.secret, 0);
     expect((await view(code, seats[0]!.secret)).phase).toBe('season');
     await fastForward(code);

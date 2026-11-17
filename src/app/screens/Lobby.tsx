@@ -64,7 +64,6 @@ export function Lobby(props: Props) {
   const [settings, setSettings] = useState<LobbySettings>(EMPTY_SETTINGS);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const seeded = useRef(false);
 
   const updateRun = useCallback(
@@ -75,11 +74,6 @@ export function Lobby(props: Props) {
     },
     [session.code],
   );
-
-  useEffect(() => {
-    const handle = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(handle);
-  }, []);
 
   useEffect(() => {
     if (!view || seeded.current) return;
@@ -94,7 +88,7 @@ export function Lobby(props: Props) {
   }, [session.code]);
 
   useEffect(() => {
-    if (view?.phase === 'draw') updateRun(null);
+    if (view?.phase === 'rematch') updateRun(null);
   }, [view?.phase, updateRun]);
 
   useEffect(() => {
@@ -303,12 +297,6 @@ export function Lobby(props: Props) {
     view.phase === 'playin' ||
     view.phase === 'playoffs' ||
     view.phase === 'recap';
-  const nextReveal =
-    view.stageStartedAt === null || view.league === null || view.league.stageTotal === 0
-      ? 0
-      : view.league.phase === 'playoffs'
-        ? Math.max(0, Date.parse(view.stageStartedAt) + view.league.stageTotal * 1500 - now)
-        : Math.max(0, Date.parse(view.stageStartedAt) + Math.ceil(view.league.stageTotal / 3) * 1200 - now);
 
   return (
     <div class="screen">
@@ -397,7 +385,7 @@ export function Lobby(props: Props) {
             <div class="card">
               <div class="tiny muted">Team draw</div>
               <div style={{ fontWeight: 800, fontSize: '13px' }}>
-                {me.team ? `You are the ${me.team}` : 'Draw a team from the unclaimed pool'}
+                {me.team ? `You are the ${me.team}` : 'Builds are in. Draw a team from the unclaimed pool'}
               </div>
               <div class="tiny muted">
                 {view.teams.length}/{present.length} teams drawn · one reroll each
@@ -495,12 +483,6 @@ export function Lobby(props: Props) {
         ) : null}
 
         {leaguePhase ? <LeaguePanel view={view} busy={busy} onReady={() => void ready()} onAdvance={() => void advance()} /> : null}
-
-        {view.phase === 'season' && view.league && !view.league.checkpoint && nextReveal > 0 ? (
-          <div class="tiny muted" data-testid="next-reveal">
-            Next batch in {Math.ceil(nextReveal / 1000)}s
-          </div>
-        ) : null}
       </div>
 
       <div class="bottom">
@@ -627,7 +609,7 @@ export function Lobby(props: Props) {
                 onClick={() => void advance()}
                 data-testid="rematch-start"
               >
-                Open the draw
+                Start building
               </button>
             ) : null}
           </div>

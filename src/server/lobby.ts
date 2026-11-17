@@ -12,6 +12,8 @@ import { scoutGrade, shuffleColumn, shuffleRow, type ShuffleTarget } from '../sh
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
 import {
   checkpointAtFrom,
+  nextStageFrom,
+  seasonEndsAt,
   clockFromLeague,
   isCheckpoint,
   revealLeague,
@@ -630,7 +632,7 @@ function onlyClockMaintenance(facts: MaintenanceFacts, clock: LeagueClock, now: 
   const startedAt = facts.stageStartedAt ? Date.parse(facts.stageStartedAt) : null;
   const cursor = Math.max(facts.stageCursor, stageCursorAtFrom(clock, facts.stage, startedAt, now));
   const total = stageGamesTotalFrom(clock, facts.stage);
-  if (isCheckpoint(cursor, total) && facts.activeReadyStage) return false;
+  if (isCheckpoint(cursor, total) && (facts.activeReadyStage || seasonEndsAt(clock.counts, facts.stage))) return false;
   return true;
 }
 
@@ -991,7 +993,10 @@ assigned as (
   returning participant_id
 ),
 locked as (
-  update lobbies set phase = 'building', locked_at = coalesce(locked_at, now()),
+  update lobbies set phase = case when exists (
+      select 1 from participants p
+      where p.lobby_id = (select id from l) and p.status <> 'left' and p.build is null
+    ) then 'building' else 'preview' end, locked_at = coalesce(locked_at, now()),
     version = version + 1, updated_at = now()
   where id = (select id from l) and phase = 'draw'
     and (select count(*) from present) >= 2
@@ -1008,7 +1013,11 @@ select (select count(*)::int from locked) as locked
 `;
 
 const BUILDING_PREVIEW_SQL = `
-update lobbies set phase = 'preview', version = version + 1, updated_at = now()
+update lobbies set phase = case when exists (
+    select 1 from participants p
+    where p.lobby_id = $1::uuid and p.status <> 'left'
+      and not exists (select 1 from lobby_teams t where t.lobby_id = p.lobby_id and t.participant_id = p.id)
+  ) then 'draw' else 'preview' end, version = version + 1, updated_at = now()
 where id = $1::uuid and phase = 'building'
   and not exists (
     select 1 from participants p
@@ -1021,7 +1030,7 @@ returning id
 
 const REMATCH_DRAW_SQL = `
 with updated as (
-  update lobbies set phase = 'draw', version = version + 1, updated_at = now()
+  update lobbies set phase = 'building', version = version + 1, updated_at = now()
   where id = $1::uuid and phase = 'rematch'
     and (select count(*) from participants p where p.lobby_id = $1::uuid and p.status <> 'left') >= 2
     and not exists (
@@ -1044,9 +1053,9 @@ async function autoCompleteMissing(
     era: lobby.era === 'alltime' ? 'alltime' : 'current',
     mode: lobby.mode as LeagueMode,
   };
-  const rows = await db().query<{ id: string; name: string; team: string; build: unknown }>(
+  const rows = await db().query<{ id: string; name: string; team: string | null; build: unknown }>(
     `select p.id, p.name, t.team, p.build
-     from participants p join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
+     from participants p left join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
      where p.lobby_id = $1::uuid and p.status <> 'left'`,
     [lobby.id],
   );
@@ -1104,7 +1113,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     if (updated[0]) {
       await db().query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'preview', jsonb_build_object('detail', 'opened the team preview'))`,
+         values ($1::uuid, 'locked', jsonb_build_object('detail', 'locked the builds'))`,
         [raw.id],
       );
     }
@@ -1122,7 +1131,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     if (updated[0]?.id) {
       await db().query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'draw', jsonb_build_object('detail', 'opened the team draw'))`,
+         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds'))`,
         [raw.id],
       );
     }
@@ -1142,8 +1151,8 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
   }
   const total = stageGamesTotalFrom(clock, stage);
   if (!isCheckpoint(cursor, total)) return;
-  if (active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage)) {
-    await advanceStage(raw.id, stage);
+  if (seasonEndsAt(clock.counts, stage) || (active.length > 0 && active.every((entry) => Number(entry.ready_stage) >= stage))) {
+    await advanceStage(raw.id, stage, clock);
     return;
   }
   const checkpointAt = checkpointAtFrom(clock, stage, startedAt);
@@ -1152,7 +1161,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
   if (!activeHost || Number(activeHost.ready_stage) >= stage) return;
   const others = active.filter((entry) => entry.id !== activeHost.id);
   if (others.length === 0 || others.some((entry) => Number(entry.ready_stage) < stage)) return;
-  await advanceStage(raw.id, stage);
+  await advanceStage(raw.id, stage, clock);
 }
 
 interface MaintenanceFacts {
@@ -1217,7 +1226,7 @@ function needsMaintenance(facts: MaintenanceFacts | null, now: number, clock: Le
   const total = stageGamesTotalFrom(clock, facts.stage);
   const cursor = Math.max(facts.stageCursor, stageCursorAtFrom(clock, facts.stage, startedAt, now));
   if (!isCheckpoint(cursor, total)) return false;
-  if (facts.activeReadyStage) return true;
+  if (facts.activeReadyStage || seasonEndsAt(clock.counts, facts.stage)) return true;
   const checkpointAt = checkpointAtFrom(clock, facts.stage, startedAt);
   if (checkpointAt === null || now < checkpointAt + CHECKPOINT_IDLE_MS) return false;
   return (
@@ -1228,8 +1237,8 @@ function needsMaintenance(facts: MaintenanceFacts | null, now: number, clock: Le
   );
 }
 
-async function advanceStage(lobbyId: string, stage: number): Promise<void> {
-  const next = Math.min(10, stage + 1);
+async function advanceStage(lobbyId: string, stage: number, clock: LeagueClock): Promise<void> {
+  const next = nextStageFrom(clock.counts, stage);
   const updated = await db().query<{ id: string }>(
     `update lobbies set stage = $2, stage_cursor = 0, stage_started_at = now(), phase = $3,
        version = version + 1, updated_at = now()
@@ -1467,7 +1476,7 @@ with l as (select id, phase, host_participant from lobbies where code = $1 for u
 me as (select p.id, p.seat, p.name from participants p where p.lobby_id = (select id from l) and p.token_hash = $2 and p.status <> 'left'),
 players as (select count(*)::int as n from participants p where p.lobby_id = (select id from l) and p.status <> 'left'),
 started as (
-  update lobbies lob set phase = 'draw', settings = $3::jsonb, mode = $4, era = $5,
+  update lobbies lob set phase = 'building', settings = $3::jsonb, mode = $4, era = $5,
     version = lob.version + 1, updated_at = now()
   from l, me, players
   where lob.id = l.id and l.phase = 'lobby' and l.host_participant = me.id and players.n >= 2
@@ -1717,7 +1726,10 @@ assigned as (
   returning participant_id
 ),
 locked as (
-  update lobbies set phase = 'building', locked_at = coalesce(locked_at, now()),
+  update lobbies set phase = case when exists (
+      select 1 from participants p
+      where p.lobby_id = (select id from l) and p.status <> 'left' and p.build is null
+    ) then 'building' else 'preview' end, locked_at = coalesce(locked_at, now()),
     version = version + 1, updated_at = now()
   where id = (select id from l) and phase = 'draw' and host_participant = (select id from me)
     and (select count(*) from participants p where p.lobby_id = (select id from l) and p.status <> 'left') >= 2
@@ -1759,7 +1771,7 @@ export async function lockTeams(input: { code: string; secret: string; actionId:
     if (row.host !== row.me_id) {
       return { ok: false, status: 403, error: { error: 'Only the host can lock the teams.', reason: 'forbidden' } };
     }
-    if (row.locked === 0 && row.phase !== 'building') {
+    if (row.locked === 0 && row.phase !== 'building' && row.phase !== 'preview') {
       return { ok: false, status: 409, error: { error: 'The team draw is closed.', reason: 'conflict' } };
     }
     return readLobby({ code: input.code, secret: input.secret });
@@ -1826,9 +1838,6 @@ export async function submitBuild(input: {
     if (!row.me_id) return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
     if (row.phase !== 'building') {
       return { ok: false, status: 409, error: { error: 'The build window is closed.', reason: 'conflict' } };
-    }
-    if (!row.team) {
-      return { ok: false, status: 409, error: { error: 'Draw a team first.', reason: 'conflict' } };
     }
     const settings: LobbySettings = {
       era: row.era === 'alltime' ? 'alltime' : 'current',
@@ -2088,14 +2097,18 @@ export async function advanceLobby(input: { code: string; secret: string; action
       const hostName = hostNameRows[0]?.name ?? 'Host';
       await autoCompleteMissing(lobby, data);
       const updated = await sql.query<{ id: string }>(
-        `update lobbies set phase = 'preview', version = version + 1, updated_at = now()
+        `update lobbies set phase = case when exists (
+           select 1 from participants p
+           where p.lobby_id = $1::uuid and p.status <> 'left'
+             and not exists (select 1 from lobby_teams t where t.lobby_id = p.lobby_id and t.participant_id = p.id)
+         ) then 'draw' else 'preview' end, version = version + 1, updated_at = now()
          where id = $1::uuid and phase = 'building' returning id`,
         [lobby.id],
       );
       if (updated[0]) {
         await sql.query(
           `insert into events (lobby_id, kind, payload)
-           values ($1::uuid, 'preview', jsonb_build_object('detail', 'locked the builds', 'name', $2::text))`,
+           values ($1::uuid, 'locked', jsonb_build_object('detail', 'locked the builds', 'name', $2::text))`,
           [lobby.id, hostName],
         );
       }
@@ -2119,7 +2132,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
         return { ok: false, status: 403, error: { error: 'You are not in this lobby.', reason: 'forbidden' } };
       }
       if (hostRow.host !== hostRow.me_id) {
-        return { ok: false, status: 403, error: { error: 'Only the host can open the draw.', reason: 'forbidden' } };
+        return { ok: false, status: 403, error: { error: 'Only the host can start the builds.', reason: 'forbidden' } };
       }
       if (hostRow.phase !== 'rematch') {
         return readLobby({ code: input.code, secret: input.secret });
@@ -2146,7 +2159,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
       }
       await sql.query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'draw', jsonb_build_object('detail', 'opened the team draw'))`,
+         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds'))`,
         [hostRow.lobby_id],
       );
       return readLobby({ code: input.code, secret: input.secret });
@@ -2176,7 +2189,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
     }
     const checkpointAt = checkpointAtFrom(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null);
     const deadline = checkpointAt === null ? null : new Date(checkpointAt + CHECKPOINT_IDLE_MS).toISOString();
-    const next = Math.min(10, stage + 1);
+    const next = nextStageFrom(clock.counts, stage);
     const rows = await sql.query<{
       lobby_id: string | null;
       phase: LobbyPhase | null;

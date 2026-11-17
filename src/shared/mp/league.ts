@@ -11,10 +11,10 @@ import { stageTotals } from '../engine/league.js';
 
 export const STAGE_COUNT = 11;
 export const STAGE_NAMES = [
-  'First quarter',
-  'Second quarter',
-  'Third quarter',
-  'Fourth quarter',
+  'Regular season',
+  'Regular season',
+  'Regular season',
+  'Regular season',
   'Awards and standings',
   'Play-In',
   'First Round',
@@ -26,6 +26,67 @@ export const STAGE_NAMES = [
 export const REGULAR_BATCH_SIZE = 3;
 export const REGULAR_BATCH_MS = 1200;
 export const PLAYOFF_GAME_MS = 1500;
+export const HUMAN_REGULAR_MS = REGULAR_BATCH_MS / REGULAR_BATCH_SIZE;
+export const CPU_SPEEDUP = 50;
+
+export function nextStageFrom(counts: readonly number[], stage: number): number {
+  let next = stage + 1;
+  while (next <= 3 && (counts[next] ?? 0) === 0) next += 1;
+  return Math.min(10, next);
+}
+
+export function seasonEndsAt(counts: readonly number[], stage: number): boolean {
+  return stage <= 3 && nextStageFrom(counts, stage) === 4;
+}
+
+function revealUnits(league: LeagueResult): number[][] {
+  const humanTeams = new Set(league.humans.map((entry) => entry.team));
+  const involvesHuman = (home: string, away: string) => humanTeams.has(home) || humanTeams.has(away);
+  const units: number[][] = Array.from({ length: 11 }, () => []);
+  let round = -1;
+  let stage = -1;
+  for (const game of league.games) {
+    const list = units[game.stage] as number[];
+    const slow = involvesHuman(game.home, game.away);
+    if (game.round === round && game.stage === stage && list.length > 0) {
+      const last = list[list.length - 1] as number;
+      const size = Math.abs(last) + 1;
+      list[list.length - 1] = last > 0 || slow ? size : -size;
+      continue;
+    }
+    round = game.round;
+    stage = game.stage;
+    list.push(slow ? 1 : -1);
+  }
+  for (let roundNo = 1; roundNo <= 4; roundNo++) {
+    const list = units[roundNo + 5] as number[];
+    for (const series of league.series.filter((entry) => entry.round === roundNo)) {
+      const slow = involvesHuman(series.high, series.low);
+      for (let index = 0; index < series.games.length; index++) list.push(slow ? 1 : -1);
+    }
+  }
+  return units;
+}
+
+function unitMs(stage: number, unit: number): number {
+  const base = stage <= 3 ? HUMAN_REGULAR_MS : PLAYOFF_GAME_MS;
+  return unit > 0 ? base : base / CPU_SPEEDUP;
+}
+
+function pacedCursor(units: readonly number[], stage: number, elapsed: number): number {
+  let time = 0;
+  let cursor = 0;
+  for (const unit of units) {
+    time += unitMs(stage, unit);
+    if (time > elapsed) break;
+    cursor += Math.abs(unit);
+  }
+  return cursor;
+}
+
+function pacedDuration(units: readonly number[], stage: number): number {
+  return units.reduce((sum, unit) => sum + unitMs(stage, unit), 0);
+}
 
 export function stagePhase(stage: number): 'season' | 'awards' | 'playin' | 'playoffs' | 'recap' {
   if (stage <= 3) return 'season';
@@ -51,20 +112,6 @@ export function stageTotal(league: LeagueResult, stage: number): number {
   return 0;
 }
 
-export function stageCursorAt(league: LeagueResult, stage: number, startedAt: number | null, now: number): number {
-  const total = stageGamesTotal(league, stage);
-  if (total === 0) return 0;
-  if (startedAt === null) return 0;
-  const elapsed = Math.max(0, now - startedAt);
-  if (stage <= 3) {
-    return Math.min(total, Math.floor(elapsed / REGULAR_BATCH_MS) * REGULAR_BATCH_SIZE);
-  }
-  if (stage >= 6 && stage <= 9) {
-    return Math.min(total, Math.floor(elapsed / PLAYOFF_GAME_MS));
-  }
-  return total;
-}
-
 export function isCheckpoint(cursor: number, total: number): boolean {
   return cursor >= total;
 }
@@ -74,6 +121,7 @@ export interface LeagueClock {
   playin: number;
   seriesCounts: number[];
   seriesGames: number[];
+  units?: number[][];
 }
 
 export function clockFromLeague(league: LeagueResult): LeagueClock {
@@ -82,7 +130,7 @@ export function clockFromLeague(league: LeagueResult): LeagueClock {
   const seriesGames = [1, 2, 3, 4].map((round) =>
     league.series.filter((entry) => entry.round === round).reduce((sum, entry) => sum + entry.games.length, 0),
   );
-  return { counts, playin: league.playin.length, seriesCounts, seriesGames };
+  return { counts, playin: league.playin.length, seriesCounts, seriesGames, units: revealUnits(league) };
 }
 
 export function stageGamesTotalFrom(clock: LeagueClock, stage: number): number {
@@ -104,6 +152,10 @@ export function stageCursorAtFrom(clock: LeagueClock, stage: number, startedAt: 
   if (total === 0) return 0;
   if (startedAt === null) return 0;
   const elapsed = Math.max(0, now - startedAt);
+  const units = clock.units?.[stage];
+  if (units && units.length > 0 && (stage <= 3 || (stage >= 6 && stage <= 9))) {
+    return Math.min(total, pacedCursor(units, stage, elapsed));
+  }
   if (stage <= 3) {
     return Math.min(total, Math.floor(elapsed / REGULAR_BATCH_MS) * REGULAR_BATCH_SIZE);
   }
@@ -117,6 +169,10 @@ export function checkpointAtFrom(clock: LeagueClock, stage: number, startedAt: n
   if (startedAt === null) return null;
   const total = stageGamesTotalFrom(clock, stage);
   if (total === 0) return startedAt;
+  const units = clock.units?.[stage];
+  if (units && units.length > 0 && (stage <= 3 || (stage >= 6 && stage <= 9))) {
+    return startedAt + Math.ceil(pacedDuration(units, stage));
+  }
   if (stage <= 3) return startedAt + Math.ceil(total / REGULAR_BATCH_SIZE) * REGULAR_BATCH_MS;
   if (stage >= 6 && stage <= 9) return startedAt + total * PLAYOFF_GAME_MS;
   return startedAt;
