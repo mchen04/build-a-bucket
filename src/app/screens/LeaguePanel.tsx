@@ -179,7 +179,7 @@ function LeaguePanelView(props: Props) {
             {nextAction}
           </div>
           {progress !== null && league.stageTotal > 0 ? (
-            <div class="progress" style={{ marginTop: 'var(--space-2)' }}>
+            <div class="progress" key={league.stage} style={{ marginTop: 'var(--space-2)' }}>
               <div style={{ width: `${Math.round((progress / league.stageTotal) * 100)}%` }} />
             </div>
           ) : null}

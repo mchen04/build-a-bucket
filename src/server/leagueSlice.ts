@@ -209,17 +209,20 @@ where lobby_id = $1::uuid and (entry->>'round')::int <= $2 - 5
 
 export async function readLeagueClock(lobbyId: string): Promise<LeagueClock | null> {
   try {
-    const rows = await db().query<{
-      clock: LeagueClock;
+    const rows = await db().query<{ clock: LeagueClock }>('select clock from league_slices where lobby_id = $1::uuid', [lobbyId]);
+    const clock = rows[0]?.clock;
+    if (!clock) return null;
+    if (clock.qualified && clock.humanSeasons && clock.series && clock.playinGames && clock.champion !== undefined && clock.awards !== undefined) {
+      return clock;
+    }
+    const extras = await db().query<{
       series: SeriesResult[] | null;
       playin: { conference: 'east' | 'west'; label: string; home: string; away: string; winner: string }[] | null;
       humans: HumanSeason[] | null;
       champion: string | null;
       awards: { mvp: { name: string; team: string }; dpoy: { name: string; team: string } } | null;
-    }>('select clock, series, playin, humans, champion, awards from league_slices where lobby_id = $1::uuid', [lobbyId]);
-    const row = rows[0];
-    if (!row?.clock) return null;
-    const clock = row.clock;
+    }>('select series, playin, humans, champion, awards from league_slices where lobby_id = $1::uuid', [lobbyId]);
+    const row = extras[0] ?? { series: null, playin: null, humans: null, champion: null, awards: null };
     if (!clock.qualified) {
       clock.qualified = [
         ...new Set((row.series ?? []).filter((entry) => entry.round === 1).flatMap((entry) => [entry.high, entry.low])),

@@ -422,6 +422,24 @@ describeDb('shared league stage behavior', () => {
     expect(lobby.league?.cursor).toBeLessThan(lobby.league?.stageTotal ?? 0);
   }, 120_000);
 
+  it('starts the gate after the idle window when only the host is not ready', async () => {
+    const { code, seats } = await seasonLeague(4);
+    const row = await lobbyRow(code);
+    const qualified = [...new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]))];
+    await setTeams(code, qualified.slice(0, 4));
+    await setStage(code, 6, 'playoffs', 0);
+    for (const seat of seats.slice(1)) await ready(code, seat.secret, 6);
+    await db().query("update lobbies set updated_at = now() - interval '2 minutes' where code = $1", [code]);
+    const lobby = await view(code, seats[0]!.secret);
+    expect(lobby.stage).toBe(6);
+    expect(lobby.league?.checkpoint).toBe(false);
+    const events = await db().query<{ detail: string }>(
+      "select payload->>'detail' as detail from events where lobby_id = (select id from lobbies where code = $1) and kind = 'playoff_start'",
+      [code],
+    );
+    expect(events[0]?.detail).toContain('waiting for');
+  }, 120_000);
+
   it('names every waiting player and the host in the gate action', async () => {
     const { code, seats } = await seasonLeague(4);
     const row = await lobbyRow(code);

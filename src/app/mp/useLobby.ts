@@ -63,6 +63,15 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
   }, []);
 
   useEffect(() => {
+    version.current = 0;
+    token.current = '';
+    events.current = 0;
+    open.current = null;
+    setView(null);
+    setStatus('loading');
+  }, [session?.code]);
+
+  useEffect(() => {
     alive.current = true;
     if (!session) return undefined;
 

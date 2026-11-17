@@ -33,6 +33,7 @@ import {
   type EventView,
   type LobbyBuild,
   type LobbyDelta,
+  CHECKPOINT_IDLE_MS,
   type LobbyGateView,
   type LobbyPhase,
   type LobbySettings,
@@ -90,6 +91,7 @@ interface RawLobby {
   stage_cursor: number | string;
   stage_started_at: string | null;
   locked_at: string | null;
+  updated_at: string;
   rematch: number | string;
   season_secret: string;
 }
@@ -282,7 +284,7 @@ export interface StageEvent {
   key: string;
 }
 
-export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, starterName: string | null = null): StageEvent[] {
+export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, startReason: string | null = null): StageEvent[] {
   const humans = clock.humanSeasons ?? [];
   const byTeam = new Map(humans.map((entry) => [entry.team, entry]));
   const qualified = new Set(clock.qualified ?? []);
@@ -389,11 +391,13 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, sta
         participantId: null,
         kind: 'playoff_start',
         detail:
-          starterName === 'Everyone'
+          startReason === 'all-ready'
             ? 'Everyone was ready, so the playoffs started'
-            : starterName
-              ? `${starterName} started the playoffs`
-              : 'The playoffs started automatically',
+            : startReason?.startsWith('idle:')
+              ? `The playoffs started automatically after waiting for ${startReason.slice(5)}`
+              : startReason
+                ? `${startReason} started the playoffs`
+                : 'The playoffs started automatically',
         key: key(`${stage}:start`),
       });
     }
@@ -410,10 +414,10 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, sta
   return events;
 }
 
-function uniqueStageEvents(stage: number, clock: LeagueClock, leagueNo: number, gateOnly = false, starterName: string | null = null): StageEvent[] {
+function uniqueStageEvents(stage: number, clock: LeagueClock, leagueNo: number, gateOnly = false, startReason: string | null = null): StageEvent[] {
   const source = gateOnly
-    ? stageEvents(stage, clock, leagueNo, starterName).filter((entry) => entry.kind === 'playoff_start')
-    : stageEvents(stage, clock, leagueNo, starterName);
+    ? stageEvents(stage, clock, leagueNo, startReason).filter((entry) => entry.kind === 'playoff_start')
+    : stageEvents(stage, clock, leagueNo, startReason);
   const unique = new Map(source.map((entry) => [`${entry.kind}:${entry.key}`, entry]));
   return [...unique.values()];
 }
@@ -574,7 +578,7 @@ select
     'id', l.id, 'code', l.code, 'phase', l.phase, 'host_participant', l.host_participant,
     'settings', l.settings, 'version', l.version, 'mode', l.mode, 'era', l.era,
     'league_version', l.league_version, 'stage', l.stage, 'stage_cursor', l.stage_cursor,
-    'stage_started_at', l.stage_started_at, 'locked_at', l.locked_at, 'rematch', l.rematch,
+    'stage_started_at', l.stage_started_at, 'locked_at', l.locked_at, 'updated_at', l.updated_at, 'rematch', l.rematch,
     'season_secret', l.season_secret
   ) from l) as lobby,
   (select coalesce(json_agg(json_build_object(
@@ -898,7 +902,7 @@ async function buildClockView(probe: ProbeOk): Promise<LobbyView | null> {
   if (cursor > oldCursor) {
     const updated = await db().query<{ version: number | string; stage_cursor: number | string }>(
       `update lobbies set stage_cursor = greatest(stage_cursor, $2), version = version + 1, updated_at = now()
-       where id = $1::uuid and stage = $3 returning version, stage_cursor`,
+       where id = $1::uuid and stage = $3 and stage_cursor < $2 returning version, stage_cursor`,
       [raw.id, cursor, stage],
     );
     if (!updated[0]) return null;
@@ -1095,7 +1099,7 @@ async function buildLeagueDelta(probe: CompactProbeOk, sinceCursor: number, sinc
   if (cursor > oldCursor) {
     const updated = await db().query<{ version: number | string; stage_cursor: number | string }>(
       `update lobbies set stage_cursor = greatest(stage_cursor, $2), version = version + 1, updated_at = now()
-       where id = $1::uuid and stage = $3 returning version, stage_cursor`,
+       where id = $1::uuid and stage = $3 and stage_cursor < $2 returning version, stage_cursor`,
       [raw.id, cursor, stage],
     );
     if (!updated[0]) return null;
@@ -1358,17 +1362,18 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
   if (cursor > Number(raw.stage_cursor)) {
     await db().query(
       `update lobbies set stage_cursor = greatest(stage_cursor, $2), version = version + 1, updated_at = now()
-       where id = $1::uuid and stage = $3`,
+       where id = $1::uuid and stage = $3 and stage_cursor < $2`,
       [raw.id, cursor, stage],
     );
   }
   if (!isStageCheckpoint(clock, stage, cursor, startedAt)) {
-    if (stage === 6 && cursor >= stageGamesTotalFrom(clock, 6)) {
+    if (stage >= 6 && stage <= 9 && cursor >= stageGamesTotalFrom(clock, stage)) {
+      const round = stage - 5;
       const humanTeams = new Set((clock.humanSeasons ?? []).map((entry) => entry.team));
       const humanRound = (clock.series ?? []).some(
-        (series) => series.round === 1 && (humanTeams.has(series.high) || humanTeams.has(series.low)),
+        (series) => series.round === round && (humanTeams.has(series.high) || humanTeams.has(series.low)),
       );
-      const held = humanRound && stageCursorAtFrom(clock, 6, startedAt, now - PLAYOFF_GAME_MS) < stageGamesTotalFrom(clock, 6);
+      const held = humanRound && stageCursorAtFrom(clock, stage, startedAt, now - PLAYOFF_GAME_MS) < stageGamesTotalFrom(clock, stage);
       if (!held) await advanceStage(raw.id, stage, clock, Number(raw.rematch));
     }
     return;
@@ -1378,8 +1383,20 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     const qualifiedTeams = new Set(clock.qualified ?? []);
     const qualified = present.filter((entry) => entry.team !== null && qualifiedTeams.has(entry.team));
     const activeQualified = qualified.filter((entry) => now - Date.parse(entry.last_seen) <= AWAY_MS);
+    const host = activeQualified.find((entry) => entry.id === raw.host_participant);
+    const others = activeQualified.filter((entry) => entry.id !== raw.host_participant);
+    if (
+      host &&
+      others.length > 0 &&
+      others.every((entry) => Number(entry.ready_stage) >= 6) &&
+      Number(host.ready_stage) < 6 &&
+      now - Date.parse(raw.updated_at) >= CHECKPOINT_IDLE_MS
+    ) {
+      await startPlayoffRound(raw.id, clock, Number(raw.rematch), `idle:${host.name}`);
+      return;
+    }
     if (activeQualified.length > 0 && activeQualified.some((entry) => Number(entry.ready_stage) < 6)) return;
-    await startPlayoffRound(raw.id, clock, Number(raw.rematch), activeQualified.length > 0 ? 'Everyone' : null);
+    await startPlayoffRound(raw.id, clock, Number(raw.rematch), activeQualified.length > 0 ? 'all-ready' : null);
     return;
   }
   await advanceStage(raw.id, stage, clock, Number(raw.rematch));
@@ -1453,7 +1470,7 @@ function needsMaintenance(facts: MaintenanceFacts | null, now: number, clock: Le
     const qualifiedTeams = new Set(clock.qualified ?? []);
     const qualified = facts.activeTeams.filter((entry) => entry.team !== null && qualifiedTeams.has(entry.team));
     if (qualified.length === 0) return true;
-    return qualified.every((entry) => entry.ready);
+    return true;
   }
   return facts.stage < 10;
 }
@@ -1486,8 +1503,8 @@ async function advanceStage(lobbyId: string, stage: number, clock: LeagueClock, 
   return Boolean(updated[0]?.id);
 }
 
-async function startPlayoffRound(lobbyId: string, clock: LeagueClock, leagueNo: number, starterName: string | null = null): Promise<boolean> {
-  const events = uniqueStageEvents(6, clock, leagueNo, true, starterName);
+async function startPlayoffRound(lobbyId: string, clock: LeagueClock, leagueNo: number, startReason: string | null = null): Promise<boolean> {
+  const events = uniqueStageEvents(6, clock, leagueNo, true, startReason);
   const updated = await db().query<{ id: string }>(
     `with updated as (
        update lobbies set stage_cursor = 0, stage_started_at = now(), version = version + 1, updated_at = now()
