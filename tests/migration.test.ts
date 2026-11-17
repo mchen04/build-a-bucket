@@ -5,7 +5,7 @@ import { loadLocalEnv, statementsFrom } from '../scripts/lib.ts';
 import { db } from '../src/server/db';
 
 loadLocalEnv();
-const describeDb = process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = /^postgres(ql)?:\/\/[^@]*@(127\.0\.0\.1|localhost)[:/]/.test(process.env.DATABASE_URL ?? '') ? describe : describe.skip;
 
 const NEW_CODES = [
   'NEWLOBBY',

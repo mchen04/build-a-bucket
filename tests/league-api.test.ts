@@ -42,7 +42,7 @@ const BASE = 'http://localhost:4173/api';
 const created: string[] = [];
 
 loadLocalEnv();
-const describeDb = process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = /^postgres(ql)?:\/\/[^@]*@(127\.0\.0\.1|localhost)[:/]/.test(process.env.DATABASE_URL ?? '') ? describe : describe.skip;
 
 afterAll(async () => {
   if (!created.length) return;

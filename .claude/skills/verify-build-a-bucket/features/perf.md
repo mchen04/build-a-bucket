@@ -8,6 +8,7 @@ How fast the rebuild loads on a phone compared with the original, and how the lo
 - `perf-lobby` p50/p95 per lobby endpoint with 8 players polling and syncing drafts, plus over-capacity joins, poll shape (full view / delta / 204) and bytes per poll.
 - `perf-db` the same workload against dev, preview and production to separate database and function time.
 - `perf-meter` per-journey database requests, database request and response bytes, database time p50/p95/max, API requests and API response bytes, and the static browser payload, all against a local Postgres replay so repeated load never reaches Neon.
+- `perf-league-server` the server-side cost of a shared league on a throwaway local Postgres: pure `simulateLeague` time, the ready request that starts the season, and per-request API wall time with DB request count and DB time for start, poll, ready and advance.
 
 ## How to get to it (user POV)
 
@@ -37,7 +38,8 @@ Preconditions:
 - **Cold cache.** `BAB_DISABLE_LEAGUE_CACHE=1` turns off the in-memory league cache; every poll then reads the league JSON, which is the worst case for a cold serverless instance. Run the same journeys with and without it and report both.
 - **Freshness groups.** `freshness` reports p50/p95/max for the peer-ready, season-start and reveal groups separately; the season start includes the one-time league simulation.
 - **Waiting hint.** The app sends `waiting=1` when its view is in a lobby, draw, building, preview, rematch, recap or at a season checkpoint. The route then answers an unchanged poll from one cheap probe query before the full read. Without the hint every poll takes the full read; the driver sends the same hint from its last view.
-- **Real-time run.** `control.mjs league --players 2 --base <local replay server>` drives the real client with real timers; the server's `db-meter.jsonl` gives that run's per-seat-minute cost and its poll mix, and the league command now reports `phaseTimings`.
+- **Real-time run.** `control.mjs league --players 2 --base <local replay server>` drives the real client with real timers; the server's `db-meter.jsonl` gives that run's per-seat-minute cost and its poll mix. The league summary reports `phaseDurations` (build complete to season start, season end, each round and recap), per-seat `actions` by name after the builds, `gateWaits`, and browser-observed `apiLatency` p50/p95/max per endpoint.
+- **Server-side league meter.** `node .claude/skills/verify-build-a-bucket/scripts/meter/league-meter.mjs --out <dir>` starts a local cluster and the dev server, times five pure `simulateLeague` runs, then drives create, join, start, lock, preview, the season start and an awards checkpoint. `league-meter.json` holds every request's wall time, DB request count and DB time, the endpoint p50/p95/max, and the simulation request; `db-meter.jsonl` and `server.log` sit beside it. Nothing resolves a Neon host.
 - **Repeats.** Each journey runs `--runs` times; the summary reports the median and min-max range per journey. Keep a change only when its median beats the baseline outside the baseline range.
 - **Old lobby baseline.** `--legacy-settings` sends the pre-shared-league settings shape (`positions`, `revealSeconds`) so the same idle journey runs against `main`; the league journeys do not exist there.
 - **Evidence.** `<out>/meter-<tag>-<timestamp>.json` holds the aggregate and every run; `<out>/db-meter.jsonl` is the raw per-query log; `<out>/server.log` is the dev server. The cluster is stopped at the end unless `--keep` is passed.

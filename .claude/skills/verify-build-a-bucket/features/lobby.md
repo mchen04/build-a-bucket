@@ -59,7 +59,11 @@ then at every checkpoint:
 It ends at the recap, compares the champion text across seats, then does Play Again: every retained seat readies, the
 host opens the builds, and the second game's `open-builder` must appear. `evidence/league/summary.json` holds the code,
 mode, era, each checkpoint's visible standings and each seat's record/seed, the champion, Play Again and any page or
-console errors.
+console errors. It also records the wall-clock `phaseDurations` (build complete, season start, season end, each
+playoff round, recap), each seat's `actions` after the builds by control name, its `gateWaits` at every checkpoint
+(gate shown to advance, and its own ready tap to advance), and `apiLatency` per endpoint (count, p50/p95/max, status
+counts) as the browser saw it. Checkpoint controls are clicked only while visible, so the run still works when a later
+version has fewer gates.
 
 Chaos options, applied at the first checkpoint:
 

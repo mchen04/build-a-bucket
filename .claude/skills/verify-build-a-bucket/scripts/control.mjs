@@ -323,6 +323,12 @@ async function leagueRun() {
   const ev = evidenceDir(dir, 'league');
   const names = ['Ava', 'Ben', 'Cara', 'Dev', 'Eli', 'Fay', 'Gus', 'Hana'];
   const seats = [];
+  const apiSamples = new Map();
+  const requestStarts = new WeakMap();
+  const apiKey = (method, url) => {
+    const pathname = new URL(url).pathname.replace(/\/api\/lobby\/[A-Za-z0-9]{6}(?=\/|$)/, '/api/lobby/:code');
+    return `${method} ${pathname}`;
+  };
   for (let index = 0; index < players; index++) {
     const context = await browser.newContext({ ...ctxOpts, viewport });
     const page = await context.newPage();
@@ -336,8 +342,23 @@ async function leagueRun() {
       http.push(entry);
       response.text().then((text) => { entry.body = text.slice(0, 300); }).catch(() => {});
     });
-    seats.push({ index, seat: index + 1, name: names[index], context, page, errors, http, closed: false });
+    page.on('request', (request) => {
+      if (request.url().includes('/api/')) requestStarts.set(request, Date.now());
+    });
+    page.on('response', (response) => {
+      const request = response.request();
+      if (!request.url().includes('/api/')) return;
+      const started = requestStarts.get(request);
+      if (started === undefined) return;
+      const key = apiKey(request.method(), request.url());
+      const sample = apiSamples.get(key) ?? { ms: [], status: {} };
+      sample.ms.push(Date.now() - started);
+      sample.status[response.status()] = (sample.status[response.status()] ?? 0) + 1;
+      apiSamples.set(key, sample);
+    });
+    seats.push({ index, seat: index + 1, name: names[index], context, page, errors, http, closed: false, actions: {} });
   }
+  const tap = (seat, name) => { seat.actions[name] = (seat.actions[name] ?? 0) + 1; };
   const active = () => seats.filter((seat) => !seat.closed);
   const clean = (text) => text.replace(/YOU/g, '').replace(/\s+/g, ' ').trim();
   const snap = async (seat, label) => {
@@ -386,6 +407,12 @@ async function leagueRun() {
     if (!(await card.isVisible().catch(() => false))) return null;
     return clean(await card.locator('.tiny.muted').first().innerText());
   };
+  const roundName = async (seat) => {
+    const playoffs = seat.page.getByTestId('playoffs');
+    if (!(await playoffs.isVisible().catch(() => false))) return null;
+    const names = await playoffs.locator('.round-name').allInnerTexts().catch(() => []);
+    return names.length ? clean(names[names.length - 1]) : null;
+  };
   const waitAdvanced = async (seat, before, timeout = 20000) => {
     try {
       await seat.page.waitForFunction(
@@ -405,12 +432,18 @@ async function leagueRun() {
   };
   const clickReady = async (seat) => {
     const button = seat.page.getByTestId('checkpoint').getByRole('button', { name: 'Ready', exact: true });
-    if ((await button.isVisible().catch(() => false)) && (await button.isEnabled().catch(() => false))) await button.click().catch(() => {});
+    if ((await button.isVisible().catch(() => false)) && (await button.isEnabled().catch(() => false))) {
+      tap(seat, 'Ready');
+      await button.click().catch(() => {});
+      return true;
+    }
+    return false;
   };
   const advanceSeat = async () => {
     for (const seat of active()) {
       const button = seat.page.getByTestId('checkpoint').getByRole('button', { name: 'Advance', exact: true });
       if (await button.isVisible().catch(() => false)) {
+        tap(seat, 'Advance');
         await button.click().catch(() => {});
         return seat;
       }
@@ -421,8 +454,19 @@ async function leagueRun() {
     for (const seat of active()) if (await visible(seat, testId)) return seat;
     return null;
   };
-  const verifyStageInner = async (label) => {
+  const verifyStageInner = async (label, previous) => {
     for (const seat of active()) await waitStage(seat);
+    if (previous) {
+      const deadline = Date.now() + 20000;
+      for (;;) {
+        if (await visible(active()[0], 'recap')) break;
+        const name = (await roundName(active()[0])) ?? (await stageName(active()[0]));
+        if (name !== previous) break;
+        if (Date.now() > deadline) throw new Error(`stage did not change from ${previous} at ${label}`);
+        await sleep(300);
+      }
+      for (const seat of active()) await waitStage(seat);
+    }
     let phases = [];
     let phase = '';
     const phaseDeadline = Date.now() + 30000;
@@ -511,11 +555,23 @@ async function leagueRun() {
       if (!banners.every((value) => value === banners[0])) throw new Error(`champion text differs at ${label}`);
       champion = banners[0];
     }
-    return { label, phase, stageName: await stageName(active()[0]), standings: top[0], mine, champion, at: Date.now() };
+    const cardName = await stageName(active()[0]);
+    const lastRound = await roundName(active()[0]);
+    return {
+      label,
+      phase,
+      stageName: cardName,
+      roundName: lastRound,
+      stageNameMismatch: phase === 'Playoffs' && cardName !== null && lastRound !== null && cardName !== lastRound,
+      standings: top[0],
+      mine,
+      champion,
+      at: Date.now(),
+    };
   };
-  const verifyStage = async (label) => {
+  const verifyStage = async (label, previous) => {
     try {
-      return await verifyStageInner(label);
+      return await verifyStageInner(label, previous);
     } catch (error) {
       const states = [];
       for (const seat of active()) {
@@ -529,6 +585,9 @@ async function leagueRun() {
     }
   };
   const stages = [];
+  const marks = [];
+  const gateWaits = [];
+  const mark = (label) => marks.push({ label, at: Date.now() });
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
   try {
     const host = seats[0];
@@ -595,6 +654,7 @@ async function leagueRun() {
         { timeout: 30000 },
       );
     }
+    mark('build-complete');
     await host.page.getByTestId('draw-team').waitFor();
     await host.page.getByTestId('draw-team').click();
     await host.page.getByTestId('reroll-team').waitFor();
@@ -614,11 +674,20 @@ async function leagueRun() {
     const startNow = host.page.getByTestId('start-season-now');
     if (await startNow.isVisible().catch(() => false)) await startNow.click().catch(() => {});
     await host.page.getByTestId('league-stage').waitFor();
+    mark('season-start');
     let checkpoint = 0;
     let chaosDone = false;
+    let lastStage = null;
     for (;;) {
-      const record = await verifyStage(`checkpoint-${checkpoint}`);
+      const record = await verifyStage(`checkpoint-${checkpoint}`, lastStage);
       stages.push(record);
+      lastStage = record.roundName ?? record.stageName;
+      if (record.phase === 'Awards' && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
+      else if (record.phase === 'Play-In') mark('play-in');
+      else if (record.phase === 'Playoffs') mark(`round:${record.roundName ?? record.stageName}`);
+      else if (record.phase === 'Recap') mark('recap');
+      const gateAt = Date.now();
+      const readyAt = new Map();
       for (const seat of active()) await snap(seat, `checkpoint-${checkpoint}`);
       if (checkpoint === 0) {
         for (const seat of active()) {
@@ -677,12 +746,25 @@ async function leagueRun() {
       }
       let moved = false;
       for (let attempt = 0; attempt < 3 && !moved; attempt++) {
-        for (const seat of active()) await clickReady(seat);
+        for (const seat of active()) {
+          if (await clickReady(seat) && !readyAt.has(seat.seat)) readyAt.set(seat.seat, Date.now());
+        }
         await advanceSeat();
         moved = await waitAdvanced(active()[0], record.stageName, 15000);
         if (!moved) await host.page.waitForTimeout(1000);
       }
       if (!moved) throw new Error(`stage did not advance after ${record.stageName}`);
+      const advancedAt = Date.now();
+      for (const seat of record.phase === 'Recap' ? [] : active()) {
+        gateWaits.push({
+          stage: record.roundName ?? record.stageName,
+          phase: record.phase,
+          seat: seat.seat,
+          name: seat.name,
+          gateMs: advancedAt - gateAt,
+          afterReadyMs: readyAt.has(seat.seat) ? advancedAt - readyAt.get(seat.seat) : null,
+        });
+      }
       checkpoint++;
       if (checkpoint > 30) throw new Error('league did not reach the recap');
     }
@@ -692,6 +774,7 @@ async function leagueRun() {
     let rematchNote = null;
     const rematchHost = await findHost('rematch');
     if (rematchHost) {
+      tap(rematchHost, 'Play Again');
       await rematchHost.page.getByTestId('rematch').click();
       await rematchHost.page.getByTestId('rematch-ready').waitFor();
       if (awaySeat !== null) {
@@ -717,10 +800,16 @@ async function leagueRun() {
       } else {
         for (const seat of active()) {
           const ready = seat.page.getByTestId('rematch-ready');
-          if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
+          if (await ready.isEnabled().catch(() => false)) {
+            tap(seat, 'Rematch Ready');
+            await ready.click().catch(() => {});
+          }
         }
         const start = rematchHost.page.getByTestId('rematch-start');
-        if (await start.isEnabled().catch(() => false)) await start.click().catch(() => {});
+        if (await start.isEnabled().catch(() => false)) {
+          tap(rematchHost, 'Rematch Start');
+          await start.click().catch(() => {});
+        }
         await rematchHost.page.getByTestId('open-builder').waitFor({ timeout: 30000 });
         for (const seat of active()) await snap(seat, 'second-game');
         playAgain = true;
@@ -732,6 +821,28 @@ async function leagueRun() {
       stage: entry.stageName,
       seconds: index + 1 < timed.length ? Math.round((timed[index + 1].at - entry.at) / 1000) : null,
     }));
+    const phaseDurations = marks.slice(1).map((entry, index) => ({
+      from: marks[index].label,
+      to: entry.label,
+      seconds: Math.round((entry.at - marks[index].at) / 1000),
+    }));
+    const actions = seats.map((seat) => ({ seat: seat.seat, name: seat.name, actions: seat.actions }));
+    const gateWaitTotals = seats.map((seat) => ({
+      seat: seat.seat,
+      name: seat.name,
+      gateMs: gateWaits.filter((entry) => entry.seat === seat.seat).reduce((sum, entry) => sum + entry.gateMs, 0),
+      afterReadyMs: gateWaits.filter((entry) => entry.seat === seat.seat).reduce((sum, entry) => sum + (entry.afterReadyMs ?? 0), 0),
+    }));
+    const apiLatency = [...apiSamples.entries()]
+      .map(([endpoint, sample]) => ({
+        endpoint,
+        count: sample.ms.length,
+        p50: median(sample.ms),
+        p95: pct(sample.ms, 95),
+        max: Math.max(...sample.ms),
+        status: sample.status,
+      }))
+      .sort((a, b) => a.endpoint.localeCompare(b.endpoint));
     const summary = {
       code,
       players,
@@ -742,6 +853,12 @@ async function leagueRun() {
       chaos,
       stages,
       phaseTimings,
+      phaseDurations,
+      marks,
+      actions,
+      gateWaits,
+      gateWaitTotals,
+      apiLatency,
       champion,
       playAgain,
       rematchNote,
@@ -750,7 +867,7 @@ async function leagueRun() {
       evidence: ev,
     };
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
-    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, checkpoints: stages.filter((entry) => entry.phase).length, phaseTimings, champion, playAgain, rematchNote, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, checkpoints: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
   } finally {
     await browser.close();
   }
