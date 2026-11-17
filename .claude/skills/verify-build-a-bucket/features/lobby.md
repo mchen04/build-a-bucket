@@ -1,7 +1,7 @@
 # Shared multiplayer league
 
 Two to eight people share one server-authoritative NBA league by invite code. The host picks Normal, Salary Cap or
-Squad and the era. Everyone draws a different team, builds for it, and then watches one 82-game season, play-in and
+Squad and the era. Everyone builds first, then draws a different team, and then watches one 82-game season, play-in and
 playoff bracket with the same results. Checkpoints pause for everyone present; away and left players never block.
 
 ## Sub-features
@@ -9,11 +9,12 @@ playoff bracket with the same results. Checkpoints pause for everyone present; a
 - `lobby-create` creates a lobby with a 6-character code and makes the creator host.
 - `lobby-join` joins by code in any letter case; unknown codes and full lobbies are refused.
 - `lobby-capacity` hands out exactly 8 distinct seats under concurrent joins.
-- `lobby-draw` gives every participant a unique team; `lobby-reroll` spends exactly one reroll into an unclaimed team.
-- `lobby-lock` lets the host lock assignments and open building.
-- `lobby-build` runs the Normal, Salary Cap or Squad builder for the assigned team.
+- `lobby-build` runs the Normal, Salary Cap or Squad builder before any team is assigned.
+- `lobby-draw` opens once every build is in and gives every participant a unique team; `lobby-reroll` spends exactly
+  one reroll into an unclaimed team.
+- `lobby-lock` lets the host lock assignments and open the preview.
 - `lobby-preview` shows every team and build OVR; everyone readies or the host starts the season.
-- `lobby-season` reveals the regular season in batches and pauses at four quarter checkpoints.
+- `lobby-season` reveals the whole regular season in one run, then goes straight to the awards with no stop.
 - `lobby-awards` shows final standings and awards; `lobby-playin` shows the play-in.
 - `lobby-playoffs` reveals each round game by game and never shows a result ahead of the cursor.
 - `lobby-recap` shows the champion, every finish and friend head-to-head; `lobby-rematch` keeps seats and code.
@@ -37,7 +38,7 @@ Preconditions:
 - **Lock and build.** Host: `--step 'click:css:[data-testid="lock-teams"]'`. Each session: `--step 'click:css:[data-testid="open-builder"]' --step spinpick:10 --step 'click:button:Submit build' --step 'see:text:Build submitted'`.
 - **Preview and season.** Each session: `--step 'click:css:[data-testid="preview-ready"]'`. The last ready starts the season; `[data-testid="league-stage"]` appears and `[data-testid="awards"]`, `[data-testid="playoffs"]` and `[data-testid="recap"]` are absent.
 - **Checkpoints.** At a checkpoint the panel shows `Ready` and, for the host, `Advance`. Everyone present readies, or the host advances. A retry never skips a checkpoint.
-- **Recap and rematch.** `--step 'see:css:[data-testid="recap"]' --step 'see:css:[data-testid="champion-banner"]' --step shot:recap`; the host taps `rematch` and the lobby returns to the team draw with the same code and seats.
+- **Recap and rematch.** `--step 'see:css:[data-testid="recap"]' --step 'see:css:[data-testid="champion-banner"]' --step shot:recap`; the host taps `rematch` and the lobby returns to the builds with the same code and seats.
 - **Capacity and API side.** `node .claude/skills/verify-build-a-bucket/scripts/control.mjs lobby-load --players 8 --extra 4 --seconds 10`: `distinctSeats` is 8 and `joinStatuses` shows 7 successes and 4 refusals.
 - **Full scripted proof.** `npm run e2e -- e2e/lobby.spec.ts --project=mobile-chromium` drives two contexts from invite code to recap and rematch (needs port 4173 free).
 
@@ -45,8 +46,9 @@ Preconditions:
 
 `node .claude/skills/verify-build-a-bucket/scripts/control.mjs league --players 2 --mode normal` is the end-to-end
 proof for a shared league. It opens one real browser context per seat (2 to 8), creates the lobby, reads the displayed
-invite link, has every other seat open that link and join by name, draws and rerolls, builds in `--mode`
-(`normal` ten spins, `salary` one card per column plus the Scout power, `squad` five complete builds), previews, and
+invite link, has every other seat open that link and join by name, builds in `--mode`
+(`normal` ten spins, `salary` one card per column plus the Scout power, `squad` five complete builds), draws and
+rerolls, previews, and
 then at every checkpoint:
 
 - reads `standings` from every active seat and fails unless the top ten of each conference agree;
@@ -55,7 +57,7 @@ then at every checkpoint:
 - writes one screenshot and aria snapshot per active seat, then has every seat Ready and the host Advance.
 
 It ends at the recap, compares the champion text across seats, then does Play Again: every retained seat readies, the
-host opens the draw, and the second game's `draw-team` must appear. `evidence/league/summary.json` holds the code,
+host opens the builds, and the second game's `open-builder` must appear. `evidence/league/summary.json` holds the code,
 mode, era, each checkpoint's visible standings and each seat's record/seed, the champion, Play Again and any page or
 console errors.
 
@@ -65,8 +67,8 @@ Chaos options, applied at the first checkpoint:
 - `--away 2` closes seat 2's browser context; the host must still advance and the remaining seats must agree.
 - `--host-leave` taps Leave lobby on the host; another seat must receive Advance and carry the league.
 
-The season reveal is real time. A measured two-seat league took about 12 minutes because each quarter reveals roughly
-300 league games; run it in the background. The command has no internal setters or database jumps.
+The season reveal is real time. The regular season takes about 35 seconds: rounds with a human game reveal at 0.4 s,
+the rest 50 times faster. Playoff series between computer teams also run 50 times faster. The command has no internal setters or database jumps.
 
 ## Gotchas
 

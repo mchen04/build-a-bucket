@@ -13,7 +13,7 @@ and kept in the Cache API (`bab-data-v1`) so a repeat visit skips the fetch.
 - **Salary Cap** — the day's five-column budget board, or an infinite board from a random seed.
 - **Squad Builder** — five slots (PG, SG, SF, PF, C) sharing one seeded season.
 - **Multiplayer** — one shared, server-authoritative NBA league for 2 to 8 friends over an invite code. Each
-  friend draws a different team, builds for it in Normal, Salary Cap or Squad, and watches the same 82-game
+  friend builds in Normal, Salary Cap or Squad, then draws a different team, and watches the same 82-game
   season, play-in and playoff bracket. Checkpoints pause for everyone present; a rematch keeps the group.
 
 Every solo mode keeps its own versioned key (`bab:daily:v1`, `bab:salary:v1`, `bab:squad:v1`) and its seeded

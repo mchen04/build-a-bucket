@@ -553,17 +553,6 @@ async function leagueRun() {
     if (mode !== 'normal') await host.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
     if (era !== 'current') await host.page.getByRole('button', { name: 'All-Time', exact: true }).click();
     await host.page.getByTestId('start-season').click();
-    await host.page.getByTestId('draw-team').waitFor();
-    await host.page.getByTestId('draw-team').click();
-    await host.page.getByTestId('reroll-team').waitFor();
-    await host.page.getByTestId('reroll-team').click();
-    await host.page.waitForTimeout(500);
-    for (const seat of seats.slice(1)) {
-      await seat.page.getByTestId('draw-team').click();
-      await seat.page.getByTestId('draw-team').waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
-    }
-    const lock = host.page.getByTestId('lock-teams');
-    if (await lock.isVisible().catch(() => false)) await lock.click().catch(() => {});
     await host.page.getByTestId('open-builder').waitFor();
     await host.page.waitForTimeout(800);
     for (const seat of seats) {
@@ -598,11 +587,25 @@ async function leagueRun() {
         await seat.page.getByRole('button', { name: 'Submit build', exact: true }).click();
       }
       await seat.page.waitForFunction(
-        () => document.querySelector('[data-testid="building-state"]') || document.querySelector('[data-testid="preview-ready"]'),
+        () =>
+          document.querySelector('[data-testid="building-state"]') ||
+          document.querySelector('[data-testid="draw-team"]') ||
+          document.querySelector('[data-testid="preview-ready"]'),
         null,
         { timeout: 30000 },
       );
     }
+    await host.page.getByTestId('draw-team').waitFor();
+    await host.page.getByTestId('draw-team').click();
+    await host.page.getByTestId('reroll-team').waitFor();
+    await host.page.getByTestId('reroll-team').click();
+    await host.page.waitForTimeout(500);
+    for (const seat of seats.slice(1)) {
+      await seat.page.getByTestId('draw-team').click();
+      await seat.page.getByTestId('draw-team').waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
+    }
+    const lock = host.page.getByTestId('lock-teams');
+    if (await lock.isVisible().catch(() => false)) await lock.click().catch(() => {});
     await host.page.getByTestId('preview-ready').waitFor();
     for (const seat of seats) {
       const ready = seat.page.getByTestId('preview-ready');
@@ -718,7 +721,7 @@ async function leagueRun() {
         }
         const start = rematchHost.page.getByTestId('rematch-start');
         if (await start.isEnabled().catch(() => false)) await start.click().catch(() => {});
-        await rematchHost.page.getByTestId('draw-team').waitFor({ timeout: 30000 });
+        await rematchHost.page.getByTestId('open-builder').waitFor({ timeout: 30000 });
         for (const seat of active()) await snap(seat, 'second-game');
         playAgain = true;
       }
@@ -818,11 +821,7 @@ async function lobbyLoad() {
   const started = await api(base, 'POST', `/api/lobby/${code}/start`, host.secret, { actionId: randomUUID(), settings: { era: 'current', mode: 'normal' } });
   add('start', started);
   if (started.status >= 300) throw new Error(`start ${started.status} ${JSON.stringify(started.json)}`);
-  const draws = await Promise.all(seated.map((p) => api(base, 'POST', `/api/lobby/${code}/draw`, p.secret, { actionId: randomUUID() })));
-  for (const draw of draws) if (draw.status >= 300) throw new Error(`draw ${draw.status} ${JSON.stringify(draw.json)}`);
-  const locked = await api(base, 'POST', `/api/lobby/${code}/lock`, host.secret, { actionId: randomUUID() });
-  if (locked.status >= 300) throw new Error(`lock ${locked.status} ${JSON.stringify(locked.json)}`);
-  absorb(host, locked.json?.lobby);
+  absorb(host, started.json?.lobby);
   const stopAt = Date.now() + seconds * 1000;
   if (o.drafts !== 'off') await loadEngine();
   try {
