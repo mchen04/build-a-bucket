@@ -212,11 +212,14 @@ export function stageCursorAtFrom(clock: LeagueClock, stage: number, startedAt: 
     if (startedAt === null) return 0;
     const total = stageGamesTotalFrom(clock, 6);
     const units = clock.units?.[6];
-    if (!units || units.length === 0) return total;
     const humans = new Set((clock.humanSeasons ?? []).map((entry) => entry.team));
     const humanRound = (clock.series ?? []).some(
       (series) => series.round === 1 && (humans.has(series.high) || humans.has(series.low)),
     );
+    if (!units || units.length === 0) {
+      if (!humanRound) return total;
+      return Math.min(total, Math.floor(Math.max(0, now - startedAt - STAGE6_LEAD_IN_MS) / PLAYOFF_GAME_MS));
+    }
     const leadIn = humanRound ? STAGE6_LEAD_IN_MS : 0;
     return Math.min(total, pacedCursor(units, 6, Math.max(0, now - startedAt - leadIn)));
   }

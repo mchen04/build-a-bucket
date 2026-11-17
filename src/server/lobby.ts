@@ -1383,7 +1383,6 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     const others = activeQualified.filter((entry) => entry.id !== raw.host_participant);
     if (
       host &&
-      others.length > 0 &&
       others.every((entry) => Number(entry.ready_stage) >= 6) &&
       Number(host.ready_stage) < 6 &&
       now - Date.parse(raw.updated_at) >= CHECKPOINT_IDLE_MS

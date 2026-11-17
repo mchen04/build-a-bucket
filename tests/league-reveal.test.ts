@@ -302,7 +302,17 @@ describe('reveal pacing', () => {
   });
 
   it('keeps the old pace for a saved clock without pacing units', () => {
-    const saved = { counts: [300, 310, 300, 320], playin: 6, seriesCounts: [8, 4, 2, 1], seriesGames: [40, 22, 11, 6] };
+    const saved = {
+      counts: [300, 310, 300, 320],
+      playin: 6,
+      seriesCounts: [8, 4, 2, 1],
+      seriesGames: [40, 22, 11, 6],
+      humanSeasons: [{ participantId: 'p1', name: 'Me', team: 'BOS', wins: 50, losses: 32, seed: 1 }],
+      series: [{ round: 1, name: 'First Round', conference: 'east' as const, high: 'BOS', low: 'NYK', winner: 'BOS', wins: 4, losses: 3 }],
+    };
+    expect(stageCursorAtFrom(saved, 6, 0, 0)).toBe(0);
+    expect(stageCursorAtFrom(saved, 6, 0, 1200)).toBe(0);
+    expect(stageCursorAtFrom(saved, 6, 0, 1200 + 700)).toBe(1);
     expect(stageCursorAtFrom(saved, 0, 0, REGULAR_BATCH_MS)).toBe(REGULAR_BATCH_SIZE);
     expect(stageCursorAtFrom(saved, 7, 0, PLAYOFF_GAME_MS * 2)).toBe(2);
     expect(nextStageFrom(saved.counts, 0)).toBe(4);

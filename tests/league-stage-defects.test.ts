@@ -11,7 +11,7 @@ import {
 import { loadLocalEnv } from '../scripts/lib.ts';
 import { db } from '../src/server/db';
 import { readLeagueView } from '../src/server/leagueSlice';
-import type { LeagueResult } from '../src/shared/engine/league';
+import { LEAGUE_TEAMS, type LeagueResult } from '../src/shared/engine/league';
 import { generateSecret, newActionId } from '../src/shared/mp/codes';
 import { stageGamesTotal } from '../src/shared/mp/league';
 import type { LeagueClock } from '../src/shared/mp/league';
@@ -438,6 +438,24 @@ describeDb('shared league stage behavior', () => {
       [code],
     );
     expect(events[0]?.detail).toContain('waiting for');
+  }, 120_000);
+
+  it('starts the gate after the idle window when the host is the only qualifier', async () => {
+    const { code, seats } = await seasonLeague(2);
+    const row = await lobbyRow(code);
+    const qualified = [...new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]))];
+    const spectator = LEAGUE_TEAMS.find((team) => !qualified.includes(team))!;
+    await setTeams(code, [qualified[0]!, spectator]);
+    await setStage(code, 6, 'playoffs', 0);
+    await db().query("update lobbies set updated_at = now() - interval '2 minutes' where code = $1", [code]);
+    const lobby = await view(code, seats[0]!.secret);
+    expect(lobby.stage).toBe(6);
+    expect(lobby.league?.checkpoint).toBe(false);
+    const events = await db().query<{ detail: string }>(
+      "select payload->>'detail' as detail from events where lobby_id = (select id from lobbies where code = $1) and kind = 'playoff_start'",
+      [code],
+    );
+    expect(events[0]?.detail).toContain('waiting for Host');
   }, 120_000);
 
   it('names every waiting player and the host in the gate action', async () => {
