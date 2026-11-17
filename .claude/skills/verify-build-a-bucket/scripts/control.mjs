@@ -882,6 +882,11 @@ async function leagueRun() {
       const max = totals[totals.length - 1] ?? 0;
       if (max < 4) continue;
       const samples = seriesTimeline.get(seat) ?? [];
+      for (let index = 1; index < samples.length; index++) {
+        if (samples[index].key === samples[index - 1].key) continue;
+        const previous = samples[index - 1].score.split('-').reduce((sum, value) => sum + Number(value), 0);
+        if (previous < 4) throw new Error(`human series card left an unfinished series for ${seat}: ${samples[index - 1].score}`);
+      }
       const polls = await active().find((entry) => `${entry.seat}:${entry.name}` === seat)?.page.evaluate(() =>
         performance.getEntriesByType('resource').filter((entry) => entry.name.includes('/api/lobby/')).map((entry) => entry.startTime + performance.timeOrigin),
       ) ?? [];

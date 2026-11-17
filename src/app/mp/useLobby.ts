@@ -31,6 +31,7 @@ export function useLobby(session: MpSession | null, onGone: (message: string) =>
   goneRef.current = onGone;
 
   const apply = useCallback((next: LobbyView) => {
+    if (next.version < version.current) return;
     open.current = next;
     version.current = next.version;
     token.current = progressToken(next);

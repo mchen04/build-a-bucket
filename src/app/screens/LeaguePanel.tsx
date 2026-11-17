@@ -147,7 +147,9 @@ function LeaguePanelView(props: Props) {
               ? 'Awards · play-in next'
               : league.phase === 'playin'
                 ? 'Play-in resolving automatically'
-                : 'Games resolve automatically';
+                : my?.madePlayoffs === false
+                  ? 'You are out · watching the playoffs'
+                  : 'Games resolve automatically';
   const myStats = my
     ? [
         my.ppg !== null ? { label: 'PPG', value: my.ppg.toFixed(1) } : null,
@@ -218,7 +220,7 @@ function LeaguePanelView(props: Props) {
           </div>
           <div class="tiny muted">
             {my.series.wins + my.series.losses === 0
-              ? 'Series not started'
+              ? 'Series starts after the games ahead of it'
               : `${my.series.wins + my.series.losses} game${my.series.wins + my.series.losses === 1 ? '' : 's'} played${
                   my.series.complete
                     ? my.series.advanced

@@ -12,6 +12,7 @@ import { scoutGrade, shuffleColumn, shuffleRow, type ShuffleTarget } from '../sh
 import { cleanName, generateCode, hashSecret } from '../shared/mp/codes.js';
 import {
   nextStage,
+  PLAYOFF_GAME_MS,
   clockFromLeague,
   isStageCheckpoint,
   revealLeague,
@@ -387,7 +388,12 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0, sta
       events.push({
         participantId: null,
         kind: 'playoff_start',
-        detail: starterName ? `${starterName} started the playoffs` : 'The playoffs started automatically',
+        detail:
+          starterName === 'Everyone'
+            ? 'Everyone was ready, so the playoffs started'
+            : starterName
+              ? `${starterName} started the playoffs`
+              : 'The playoffs started automatically',
         key: key(`${stage}:start`),
       });
     }
@@ -1357,7 +1363,14 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     );
   }
   if (!isStageCheckpoint(clock, stage, cursor, startedAt)) {
-    if (stage === 6 && cursor >= stageGamesTotalFrom(clock, 6)) await advanceStage(raw.id, stage, clock, Number(raw.rematch));
+    if (stage === 6 && cursor >= stageGamesTotalFrom(clock, 6)) {
+      const humanTeams = new Set((clock.humanSeasons ?? []).map((entry) => entry.team));
+      const humanRound = (clock.series ?? []).some(
+        (series) => series.round === 1 && (humanTeams.has(series.high) || humanTeams.has(series.low)),
+      );
+      const held = humanRound && stageCursorAtFrom(clock, 6, startedAt, now - PLAYOFF_GAME_MS) < stageGamesTotalFrom(clock, 6);
+      if (!held) await advanceStage(raw.id, stage, clock, Number(raw.rematch));
+    }
     return;
   }
   if (stage >= 10) return;
@@ -1366,7 +1379,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     const qualified = present.filter((entry) => entry.team !== null && qualifiedTeams.has(entry.team));
     const activeQualified = qualified.filter((entry) => now - Date.parse(entry.last_seen) <= AWAY_MS);
     if (activeQualified.length > 0 && activeQualified.some((entry) => Number(entry.ready_stage) < 6)) return;
-    await startPlayoffRound(raw.id, clock, Number(raw.rematch));
+    await startPlayoffRound(raw.id, clock, Number(raw.rematch), activeQualified.length > 0 ? 'Everyone' : null);
     return;
   }
   await advanceStage(raw.id, stage, clock, Number(raw.rematch));
