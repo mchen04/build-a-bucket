@@ -16,7 +16,7 @@ import { generateSecret, newActionId } from '../src/shared/mp/codes';
 import { stageGamesTotal } from '../src/shared/mp/league';
 import type { LeagueClock } from '../src/shared/mp/league';
 import { progressToken } from '../src/shared/mp/progress';
-import { stageEvents } from '../src/server/lobby';
+import { gateViewFor, stageEvents, type RawParticipant } from '../src/server/lobby';
 import type { LobbySettings, LobbyView } from '../src/shared/mp/types';
 
 const BASE = 'http://localhost:4173/api';
@@ -403,9 +403,23 @@ describeDb('shared league stage behavior', () => {
     await setTeams(code, [qualified[0]!, nonQualified[0]!]);
     await setStage(code, 6, 'playoffs', 0);
     expect((await advance(code, seats[0]!.secret, 6)).status).toBe(200);
+    const started = await view(code, seats[0]!.secret);
+    expect(started.stage).toBe(6);
+    expect(started.league?.cursor).toBeLessThan(started.league?.stageTotal ?? 0);
+    expect(started.league?.checkpoint).toBe(false);
     expect((await advance(code, seats[0]!.secret, 6)).status).toBe(200);
     expect(await eventsOfKind(code, 'playoff_start')).toHaveLength(1);
     expect((await view(code, seats[0]!.secret)).gate).toBeNull();
+  }, 120_000);
+
+  it('treats a host advance during a reveal as the current state', async () => {
+    const { code, seats } = await seasonLeague();
+    await setStage(code, 7, 'playoffs', 0);
+    await db().query('update lobbies set stage_started_at = now() where code = $1', [code]);
+    expect((await advance(code, seats[0]!.secret, 7)).status).toBe(200);
+    const lobby = await view(code, seats[0]!.secret);
+    expect(lobby.stage).toBe(7);
+    expect(lobby.league?.cursor).toBeLessThan(lobby.league?.stageTotal ?? 0);
   }, 120_000);
 
   it('names every waiting player and the host in the gate action', async () => {
@@ -441,4 +455,48 @@ describeDb('shared league stage behavior', () => {
     );
     expect(response.status).toBe(204);
   }, 120_000);
+
+  it('hides the gate when no human is qualified', () => {
+    const participant: RawParticipant = {
+      id: 'p1',
+      name: 'Ava',
+      seat: 1,
+      status: 'joined',
+      joined_at: new Date().toISOString(),
+      last_seen: new Date().toISOString(),
+      is_me: true,
+      build: null,
+      build_kind: null,
+      build_summary: null,
+      ready_stage: 0,
+      preview_ready: false,
+      team: 'BKN',
+      reroll_used: false,
+      salary_powers: null,
+    };
+    expect(gateViewFor([participant], { checkpoint: true, playoffs: [{ round: 1, high: 'BOS', low: 'NYK' }] }, 'p1', 'p1', 'playoffs', 6, Date.now())).toBeNull();
+  });
+
+  it('logs every human in shared play-in and series games and every missed playoff team', () => {
+    const clock = {
+      humanSeasons: [
+        { participantId: 'a', name: 'Ava', team: 'POR', wins: 40, losses: 42, seed: 10 },
+        { participantId: 'b', name: 'Ben', team: 'LAC', wins: 41, losses: 41, seed: 8 },
+        { participantId: 'c', name: 'Cara', team: 'PHX', wins: 35, losses: 47, seed: 12 },
+      ],
+      qualified: ['LAC'],
+      playinGames: [{ conference: 'west', label: 'Last spot', home: 'POR', away: 'LAC', winner: 'LAC' }],
+      series: [{ round: 1, name: 'First Round', high: 'POR', low: 'LAC', winner: 'LAC', wins: 2, losses: 4, games: [] }],
+      champion: 'LAC',
+    } as unknown as LeagueClock;
+    const playin = stageEvents(5, clock).filter((entry) => entry.kind === 'playin_result');
+    expect(playin).toHaveLength(2);
+    expect(playin.map((entry) => entry.detail)).toEqual(['lost to LAC in the Last spot play-in', 'beat POR in the Last spot play-in']);
+    expect(stageEvents(4, clock).filter((entry) => entry.kind === 'elimination' && entry.detail?.includes('PHX'))).toHaveLength(1);
+    const series = stageEvents(6, clock).filter((entry) => entry.kind === 'series_result');
+    expect(series).toHaveLength(2);
+    const finals = { ...clock, series: [{ round: 4, name: 'NBA Finals', high: 'POR', low: 'LAC', winner: 'LAC', wins: 2, losses: 4, games: [] }] } as unknown as LeagueClock;
+    expect(stageEvents(9, finals).filter((entry) => entry.kind === 'advance')).toHaveLength(0);
+    expect(stageEvents(9, finals).filter((entry) => entry.kind === 'champion')).toHaveLength(1);
+  });
 });

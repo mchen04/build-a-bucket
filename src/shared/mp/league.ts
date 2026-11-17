@@ -117,8 +117,8 @@ export function isCheckpoint(cursor: number, total: number): boolean {
   return cursor >= total;
 }
 
-export function isStageCheckpoint(clock: LeagueClock, stage: number, cursor: number): boolean {
-  if (stage === 6) return cursor === 0;
+export function isStageCheckpoint(clock: LeagueClock, stage: number, cursor: number, startedAt: number | null = null): boolean {
+  if (stage === 6) return cursor === 0 && startedAt === null;
   return isCheckpoint(cursor, stageGamesTotalFrom(clock, stage));
 }
 
@@ -200,7 +200,7 @@ export function stageCursorAtFrom(clock: LeagueClock, stage: number, startedAt: 
     const total = stageGamesTotalFrom(clock, 6);
     const units = clock.units?.[6];
     if (!units || units.length === 0) return total;
-    return Math.min(total, 1 + pacedCursor(units, 6, Math.max(0, now - startedAt)));
+    return Math.min(total, pacedCursor(units, 6, Math.max(0, now - startedAt)));
   }
   const total = stageGamesTotalFrom(clock, stage);
   if (total === 0) return 0;
@@ -560,6 +560,7 @@ export function assembleLeagueView(
   stage: number,
   cursor: number,
   meParticipantId: string | null,
+  startedAt: number | null = null,
 ): LeagueView {
   const meTeam = data.humans.find((entry) => entry.participantId === meParticipantId)?.team ?? null;
   const humanTeams = new Set(data.humans.map((entry) => entry.team));
@@ -582,6 +583,7 @@ export function assembleLeagueView(
     },
     stage,
     cursor,
+    startedAt,
   );
 
   const visible = data.games.filter((game) => game.gameNo <= revealed);

@@ -405,7 +405,12 @@ async function leagueRun() {
   const stageName = async (seat) => {
     const card = seat.page.getByTestId('league-stage');
     if (!(await card.isVisible().catch(() => false))) return null;
-    return clean(await card.locator('.tiny.muted').first().innerText());
+    return card
+      .locator('.tiny.muted')
+      .first()
+      .innerText({ timeout: 2000 })
+      .then(clean)
+      .catch(() => null);
   };
   const roundName = async (seat) => {
     const playoffs = seat.page.getByTestId('playoffs');
@@ -757,10 +762,18 @@ async function leagueRun() {
             const seat = seats[reloadSeat - 1];
             await seat.page.reload({ waitUntil: 'load' });
             await waitStage(seat);
-            const tables = [];
-            for (const entry of active()) tables.push(await readTables(entry));
-            const top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
-            if (!top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) throw new Error('standings differ after reload');
+            let top = null;
+            for (let attempt = 0; attempt < 6; attempt++) {
+              const labels = await Promise.all(active().map(async (entry) => `${await phaseOf(entry)}:${await stageName(entry)}`));
+              if (new Set(labels).size === 1) {
+                const tables = [];
+                for (const entry of active()) tables.push(await readTables(entry));
+                top = tables.map((conference) => conference.map((rows) => rows.slice(0, 10)));
+                if (top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) break;
+              }
+              await host.page.waitForTimeout(500);
+            }
+            if (!top || !top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) throw new Error('standings differ after reload');
             stages.push({ label: 'after-reload', phase: await phaseOf(seat), standings: top[0] });
             await snap(seat, 'after-reload');
           }

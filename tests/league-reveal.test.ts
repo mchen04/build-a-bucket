@@ -199,6 +199,11 @@ describe('reveal pacing', () => {
     }
   });
 
+  it('starts round one at zero and paces the first game', () => {
+    expect(stageCursorAtFrom(clock, 6, 1000, 1000)).toBe(0);
+    expect(stageCursorAtFrom(clock, 6, 1000, 1001)).toBeLessThanOrEqual(1);
+  });
+
   it('keeps the old pace for a saved clock without pacing units', () => {
     const saved = { counts: [300, 310, 300, 320], playin: 6, seriesCounts: [8, 4, 2, 1], seriesGames: [40, 22, 11, 6] };
     expect(stageCursorAtFrom(saved, 0, 0, REGULAR_BATCH_MS)).toBe(REGULAR_BATCH_SIZE);

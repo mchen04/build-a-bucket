@@ -95,7 +95,7 @@ interface RawLobby {
 
 type LobbyRow = RawLobby;
 
-interface RawParticipant {
+export interface RawParticipant {
   id: string;
   name: string;
   seat: number;
@@ -223,7 +223,7 @@ function toEventViews(row: ReadRow): EventView[] {
   });
 }
 
-function gateViewFor(
+export function gateViewFor(
   participants: RawParticipant[],
   leagueView: { checkpoint: boolean; playoffs: { round: number; high: string; low: string }[] | null | undefined } | null,
   meId: string | null,
@@ -239,6 +239,7 @@ function gateViewFor(
   const me = participants.find((entry) => entry.id === meId) ?? null;
   const qualified = participants.filter((entry) => entry.status !== 'left' && entry.team !== null && qualifiedTeams.has(entry.team));
   const activeQualified = qualified.filter((entry) => now - Date.parse(entry.last_seen) <= AWAY_MS);
+  if (activeQualified.length === 0) return null;
   const ready = activeQualified.filter((entry) => Number(entry.ready_stage) >= 6);
   const waitingOn = activeQualified.filter((entry) => Number(entry.ready_stage) < 6).map((entry) => entry.name);
   const mine = me !== null && me.team !== null && qualifiedTeams.has(me.team);
@@ -305,28 +306,40 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0): St
         key: key(`${stage}:awards`),
       });
     }
+    const playinTeams = new Set((clock.playinGames ?? []).flatMap((game) => [game.home, game.away]));
+    for (const human of humans) {
+      if (qualified.has(human.team) || playinTeams.has(human.team)) continue;
+      events.push({
+        participantId: human.participantId,
+        kind: 'elimination',
+        detail: `missed the playoffs with ${human.team}`,
+        key: key(`${stage}:eliminated:${human.team}`),
+      });
+    }
     return events;
   }
   if (stage === 5) {
     for (const game of clock.playinGames ?? []) {
-      const human = byTeam.get(game.home) ?? byTeam.get(game.away);
-      if (!human) continue;
       const winner = game.winner;
       const loser = winner === game.home ? game.away : game.home;
-      const won = human.team === winner;
-      events.push({
-        participantId: human.participantId,
-        kind: 'playin_result',
-        detail: won ? `beat ${loser} in the ${game.label} play-in` : `lost to ${winner} in the ${game.label} play-in`,
-        key: key(`${stage}:playin:${game.conference}:${game.label}`),
-      });
-      if (!qualified.has(human.team)) {
+      const involved = [byTeam.get(game.home), byTeam.get(game.away)].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      for (const [index, human] of involved.entries()) {
+        const won = human.team === winner;
+        const suffix = index === 0 ? '' : `:${human.team}`;
         events.push({
           participantId: human.participantId,
-          kind: 'elimination',
-          detail: `missed the playoffs with ${human.team}`,
-          key: key(`${stage}:eliminated:${human.team}`),
+          kind: 'playin_result',
+          detail: won ? `beat ${loser} in the ${game.label} play-in` : `lost to ${winner} in the ${game.label} play-in`,
+          key: key(`${stage}:playin:${game.conference}:${game.label}${suffix}`),
         });
+        if (!qualified.has(human.team)) {
+          events.push({
+            participantId: human.participantId,
+            kind: 'elimination',
+            detail: `missed the playoffs with ${human.team}`,
+            key: key(`${stage}:eliminated:${human.team}`),
+          });
+        }
       }
     }
     return events;
@@ -334,22 +347,24 @@ export function stageEvents(stage: number, clock: LeagueClock, leagueNo = 0): St
   if (stage >= 6 && stage <= 9) {
     const round = stage - 5;
     for (const series of (clock.series ?? []).filter((entry) => entry.round === round)) {
-      const human = byTeam.get(series.high) ?? byTeam.get(series.low);
-      if (!human) continue;
       const loser = series.winner === series.high ? series.low : series.high;
       const winnerWins = series.winner === series.high ? series.wins : series.losses;
       const loserWins = series.winner === series.high ? series.losses : series.wins;
-      const won = human.team === series.winner;
-      events.push({
-        participantId: human.participantId,
-        kind: 'series_result',
-        detail: won
-          ? `beat ${loser} ${winnerWins}-${loserWins} in the ${series.name}`
-          : `lost to ${series.winner} ${winnerWins}-${loserWins} in the ${series.name}`,
-        key: key(`${stage}:series:${series.round}:${series.high}:${series.low}`),
-      });
+      const involved = [byTeam.get(series.high), byTeam.get(series.low)].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      for (const [index, human] of involved.entries()) {
+        const won = human.team === series.winner;
+        const suffix = index === 0 ? '' : `:${human.team}`;
+        events.push({
+          participantId: human.participantId,
+          kind: 'series_result',
+          detail: won
+            ? `beat ${loser} ${winnerWins}-${loserWins} in the ${series.name}`
+            : `lost to ${series.winner} ${winnerWins}-${loserWins} in the ${series.name}`,
+          key: key(`${stage}:series:${series.round}:${series.high}:${series.low}${suffix}`),
+        });
+      }
       const winnerHuman = byTeam.get(series.winner);
-      if (winnerHuman) {
+      if (winnerHuman && stage !== 9) {
         events.push({
           participantId: winnerHuman.participantId,
           kind: 'advance',
@@ -799,7 +814,7 @@ function onlyClockMaintenance(facts: MaintenanceFacts, clock: LeagueClock, now: 
   const startedAt = facts.stageStartedAt ? Date.parse(facts.stageStartedAt) : null;
   const cursor = Math.max(facts.stageCursor, stageCursorAtFrom(clock, facts.stage, startedAt, now));
   if (facts.stage === 6 && cursor >= stageGamesTotalFrom(clock, 6)) return false;
-  if (isStageCheckpoint(clock, facts.stage, cursor)) return false;
+  if (isStageCheckpoint(clock, facts.stage, cursor, startedAt)) return false;
   return true;
 }
 
@@ -880,7 +895,7 @@ async function buildClockView(probe: ProbeOk, sinceEvent: number): Promise<Lobby
   const parts = probe.row.p ?? [];
   const me = parts.find((entry) => entry[6]);
   if (!me) return null;
-  const slice = await readLeagueView(raw.id, stage, stageCursor, me[0]);
+  const slice = await readLeagueView(raw.id, stage, stageCursor, me[0], raw.stage_started_at ? Date.parse(raw.stage_started_at) : null);
   if (!slice) return null;
   const events = await db().query<{ events: RawEvent[] }>(EVENTS_SQL, [raw.code, sinceEvent]);
   const row: ReadRow = {
@@ -1076,7 +1091,15 @@ async function buildLeagueDelta(probe: CompactProbeOk, sinceCursor: number, sinc
   }
   const me = probe.participants.find((entry) => entry[7]);
   if (!me) return null;
-  const league = await readLeagueDelta(raw.id, stage, stageCursor, sinceCursor, me[5] || null, clock);
+  const league = await readLeagueDelta(
+    raw.id,
+    stage,
+    stageCursor,
+    sinceCursor,
+    me[5] || null,
+    clock,
+    raw.stage_started_at ? Date.parse(raw.stage_started_at) : null,
+  );
   if (!league) return null;
   const events =
     probe.ev > sinceEvent ? ((await db().query<{ events: EventView[] }>(DELTA_EVENTS_SQL, [probe.code, sinceEvent]))[0]?.events ?? []) : [];
@@ -1319,7 +1342,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
       [raw.id, cursor, stage],
     );
   }
-  if (!isStageCheckpoint(clock, stage, cursor)) {
+  if (!isStageCheckpoint(clock, stage, cursor, startedAt)) {
     if (stage === 6 && cursor >= stageGamesTotalFrom(clock, 6)) await advanceStage(raw.id, stage, clock, Number(raw.rematch));
     return;
   }
@@ -1398,7 +1421,7 @@ function needsMaintenance(facts: MaintenanceFacts | null, now: number, clock: Le
   if (stageCursorAtFrom(clock, facts.stage, startedAt, now) > facts.stageCursor) return true;
   const cursor = Math.max(facts.stageCursor, stageCursorAtFrom(clock, facts.stage, startedAt, now));
   if (facts.stage === 6 && cursor >= stageGamesTotalFrom(clock, 6)) return true;
-  if (!isStageCheckpoint(clock, facts.stage, cursor)) return false;
+  if (!isStageCheckpoint(clock, facts.stage, cursor, startedAt)) return false;
   if (facts.stage === 6) {
     const qualifiedTeams = new Set(clock.qualified ?? []);
     const qualified = facts.activeTeams.filter((entry) => entry.team !== null && qualifiedTeams.has(entry.team));
@@ -1440,8 +1463,8 @@ async function startPlayoffRound(lobbyId: string, clock: LeagueClock, leagueNo: 
   const events = uniqueStageEvents(6, clock, leagueNo, true);
   const updated = await db().query<{ id: string }>(
     `with updated as (
-       update lobbies set stage_cursor = 1, stage_started_at = now(), version = version + 1, updated_at = now()
-       where id = $1::uuid and stage = 6 and stage_cursor = 0 returning id
+       update lobbies set stage_cursor = 0, stage_started_at = now(), version = version + 1, updated_at = now()
+       where id = $1::uuid and stage = 6 and stage_started_at is null returning id
      ), logged as (
        insert into events (lobby_id, participant_id, kind, payload)
        select updated.id, nullif(entry->>'participantId', '')::uuid, entry->>'kind',
@@ -1469,7 +1492,7 @@ async function loadLeague(
   if (!me) return { league: null, clock: null };
   const stage = Number(raw.stage);
   const cursor = Number(raw.stage_cursor);
-  const slice = await readLeagueView(raw.id, stage, cursor, me.id);
+  const slice = await readLeagueView(raw.id, stage, cursor, me.id, raw.stage_started_at ? Date.parse(raw.stage_started_at) : null);
   if (slice) {
     const clock = slice.clock.qualified ? slice.clock : await readLeagueClock(raw.id);
     if (clock) return { league: { humans: slice.humans, view: slice.view }, clock };
@@ -2361,8 +2384,8 @@ export async function advanceLobby(input: { code: string; secret: string; action
       Number(lobby.stage_cursor),
       stageCursorAtFrom(clock, stage, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null, Date.now()),
     );
-    if (!isStageCheckpoint(clock, stage, cursor)) {
-      return { ok: false, status: 409, error: { error: 'This checkpoint is still revealing.', reason: 'conflict' } };
+    if (!isStageCheckpoint(clock, stage, cursor, lobby.stage_started_at ? Date.parse(lobby.stage_started_at) : null)) {
+      return readLobby({ code: input.code, secret: input.secret });
     }
     await advanceStage(lobby.id, stage, clock, Number(lobby.rematch));
     return readLobby({ code: input.code, secret: input.secret });

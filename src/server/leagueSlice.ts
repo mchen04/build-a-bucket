@@ -277,6 +277,7 @@ export async function readLeagueView(
   stage: number,
   cursor: number,
   meParticipantId: string,
+  startedAt: number | null = null,
 ): Promise<LeagueSliceView | null> {
   let metaRows: MetaRow[];
   try {
@@ -343,7 +344,7 @@ export async function readLeagueView(
     checkpoint,
     stage,
   );
-  return { view: assembleLeagueView(data, stage, Number(cursor), meParticipantId), humans, clock };
+  return { view: assembleLeagueView(data, stage, Number(cursor), meParticipantId, startedAt), humans, clock };
 }
 
 export interface LeagueDeltaData {
@@ -368,6 +369,7 @@ export async function readLeagueDelta(
   sinceCursor: number,
   meTeam: string | null,
   clock: LeagueClock,
+  startedAt: number | null = null,
 ): Promise<LeagueDeltaData | null> {
   const total = stageGamesTotalFrom(clock, stage);
   const clamped = Math.max(0, Math.min(Number(cursor), total));
@@ -400,7 +402,7 @@ export async function readLeagueDelta(
     return {
       stage,
       stageCursor: clamped,
-      checkpoint: isStageCheckpoint(clock, stage, clamped),
+      checkpoint: isStageCheckpoint(clock, stage, clamped, startedAt),
       stageName: STAGE_NAMES[stage] ?? 'Season',
       stageTotal: stageTotalFrom(clock, stage),
       games: [],
@@ -436,7 +438,7 @@ export async function readLeagueDelta(
     return {
       stage,
       stageCursor: clamped,
-      checkpoint: isStageCheckpoint(clock, stage, clamped),
+      checkpoint: isStageCheckpoint(clock, stage, clamped, startedAt),
       stageName: STAGE_NAMES[stage] ?? 'Season',
       stageTotal: total,
       games,
@@ -507,7 +509,7 @@ export async function readLeagueDelta(
     checkpoint,
     stage,
   );
-  const full = assembleLeagueView(data, stage, clamped, meParticipantId);
+  const full = assembleLeagueView(data, stage, clamped, meParticipantId, startedAt);
   const humanTeams = new Set(humans.map((entry) => entry.team));
   const meIndex = meTeam ? LEAGUE_TEAMS.indexOf(meTeam) : -1;
   const games: LeagueGameView[] = newGames.map((game) => ({
