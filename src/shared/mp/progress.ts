@@ -7,7 +7,7 @@ import {
   type ParticipantView,
 } from './types.js';
 import type { LeagueGameView, LeagueView } from './league.js';
-import { stagePhase } from './league.js';
+import { playoffSeriesForTeam, stagePhase } from './league.js';
 import { LEAGUE_TEAMS } from '../engine/league.js';
 import { EAST_SET } from '../engine/rules.js';
 
@@ -69,21 +69,27 @@ function mergeLeagueDelta(view: LeagueView, delta: LeagueDelta): LeagueView {
   const standings = delta.rows ? rowsToStandings(delta.rows, view) : delta.standings !== undefined ? delta.standings : view.standings;
   const playoffs = delta.playoffs !== undefined ? delta.playoffs : view.playoffs;
   let my = delta.rows ? myFromRows(delta.rows, view) : delta.my !== undefined ? delta.my : view.my;
-  if (my?.series && playoffs) {
-    const series = playoffs.find((entry) => entry.id === my?.series?.id) ?? playoffs.find((entry) => entry.high === my?.team || entry.low === my?.team);
-    if (series) {
-      my = {
-        ...my,
-        series: {
-          ...my.series,
-          wins: series.wins,
-          losses: series.losses,
-          complete: series.complete,
-          winner: series.winner,
-          advanced: series.complete ? series.winner === my.team : my.series.advanced,
-        },
-      };
-    }
+  if (my && playoffs) {
+    const picked = playoffSeriesForTeam(playoffs, my.team);
+    my = {
+      ...my,
+      series: picked.series
+        ? {
+            id: picked.series.id,
+            round: picked.series.round,
+            name: picked.series.name,
+            high: picked.series.high,
+            low: picked.series.low,
+            wins: picked.series.wins,
+            losses: picked.series.losses,
+            complete: picked.series.complete,
+            winner: picked.series.winner,
+            advanced: picked.series.complete && picked.series.winner === my.team,
+          }
+        : null,
+      eliminated: picked.eliminated,
+      eliminatedRound: picked.eliminatedRound,
+    };
   }
   return {
     ...view,

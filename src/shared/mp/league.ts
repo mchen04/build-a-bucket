@@ -25,7 +25,7 @@ export const STAGE_NAMES = [
 ];
 export const REGULAR_BATCH_SIZE = 3;
 export const REGULAR_BATCH_MS = 1200;
-export const PLAYOFF_GAME_MS = 700;
+export const PLAYOFF_GAME_MS = 1200;
 export const HUMAN_REGULAR_MS = 60;
 export const CPU_SPEEDUP = 2.4;
 
@@ -515,6 +515,18 @@ export function playoffViewsFrom(data: RevealData, stage: number, cursor: number
   return out;
 }
 
+export function playoffSeriesForTeam(
+  playoffs: SeriesView[] | null | undefined,
+  team: string,
+): { series: SeriesView | null; eliminated: boolean; eliminatedRound: string | null } {
+  const series =
+    (playoffs ?? [])
+      .filter((entry) => entry.high === team || entry.low === team)
+      .sort((a, b) => b.round - a.round)[0] ?? null;
+  const eliminated = series !== null && series.complete && series.winner !== team;
+  return { series, eliminated, eliminatedRound: eliminated && series ? series.name : null };
+}
+
 function myViewFrom(
   data: RevealData,
   stage: number,
@@ -529,10 +541,9 @@ function myViewFrom(
   const playInRevealed = stage >= 5;
   const recapRevealed = stage >= 10;
   const partial = standings.find((row) => row.team === human.team) ?? null;
-  const mine = (playoffs ?? [])
-    .filter((series) => series.high === human.team || series.low === human.team)
-    .sort((a, b) => b.round - a.round)[0] ?? null;
-  const eliminated = mine !== null && mine.complete && mine.winner !== human.team;
+  const picked = playoffSeriesForTeam(playoffs, human.team);
+  const mine = picked.series;
+  const eliminated = picked.eliminated;
   return {
     team: human.team,
     wins: awardsRevealed ? human.wins : partial?.wins ?? 0,
@@ -555,7 +566,7 @@ function myViewFrom(
         }
       : null,
     eliminated,
-    eliminatedRound: eliminated && mine ? mine.name : null,
+    eliminatedRound: picked.eliminatedRound,
     finish: recapRevealed ? human.finish : null,
     champion: recapRevealed ? human.champion : null,
     ppg: awardsRevealed ? human.ppg : null,
