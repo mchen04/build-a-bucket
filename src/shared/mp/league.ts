@@ -25,7 +25,7 @@ export const STAGE_NAMES = [
 ];
 export const REGULAR_BATCH_SIZE = 3;
 export const REGULAR_BATCH_MS = 1200;
-export const PLAYOFF_GAME_MS = 1200;
+export const PLAYOFF_GAME_MS = 700;
 export const HUMAN_REGULAR_MS = 60;
 export const CPU_SPEEDUP = 2.4;
 

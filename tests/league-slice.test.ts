@@ -438,10 +438,15 @@ describe('league slice views', () => {
             const delta = await readLeagueDelta('delta-walk', stage, cursor, 0, human.team, clock);
             expect(delta).toBeTruthy();
             if (!delta) continue;
+            const expected = sliceView(slice, stage, cursor, human.participantId);
+            expect(delta.playoffs).toEqual(expected.playoffs);
+            for (const series of delta.playoffs ?? []) {
+              if (!series.complete) expect(series.winner).toBeNull();
+              expect(series.wins + series.losses).toBeLessThanOrEqual(series.games.length);
+            }
             const payload = { version: ++version, serverTime: new Date().toISOString(), phase: 'playoffs', events: [], participants: [], league: delta };
             expect(v.safeParse(LobbyDeltaSchema, payload).success).toBe(true);
             const merged = mergeDelta({ version: version - 1, league: view, participants: [], events: [] } as unknown as LobbyView, payload as unknown as LobbyDelta).league as LeagueView;
-            const expected = sliceView(slice, stage, cursor, human.participantId);
             expect(merged.my).toEqual(expected.my);
             view = merged;
           }

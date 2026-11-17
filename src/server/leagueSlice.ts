@@ -202,24 +202,9 @@ async function readGamesAfter(lobbyId: string, after: number, upTo: number): Pro
 }
 
 const SERIES_READ = `
-with s as (
-  select entry, ord, jsonb_array_length(entry->'games') as len
-  from league_slices, jsonb_array_elements(series) with ordinality as t(entry, ord)
-  where lobby_id = $1::uuid and (entry->>'round')::int <= $2 - 5
-), r as (
-  select entry, ord, len,
-    coalesce(sum(len) over (order by ord rows between unbounded preceding and 1 preceding), 0) as before
-  from s
-)
-select coalesce(jsonb_agg(
-  jsonb_set(entry, '{games}', (
-    select coalesce(jsonb_agg(g order by gord), '[]'::jsonb)
-    from jsonb_array_elements(entry->'games') with ordinality as gt(g, gord)
-    where gord <= greatest(0, least(len, $3 - before))
-  ))
-  order by ord
-), '[]'::jsonb) as series
-from r
+select coalesce(jsonb_agg(entry order by ord), '[]'::jsonb) as series
+from league_slices, jsonb_array_elements(series) with ordinality as t(entry, ord)
+where lobby_id = $1::uuid and (entry->>'round')::int <= $2 - 5
 `;
 
 export async function readLeagueClock(lobbyId: string): Promise<LeagueClock | null> {
@@ -376,7 +361,7 @@ export async function readLeagueDelta(
   if (stage >= 6) {
     let series: SeriesResult[] | null;
     try {
-      const rows = await db().query<{ series: SeriesResult[] | null }>(SERIES_READ, [lobbyId, stage, clamped]);
+      const rows = await db().query<{ series: SeriesResult[] | null }>(SERIES_READ, [lobbyId, stage]);
       series = rows[0]?.series ?? null;
     } catch (error) {
       if (missingTable(error)) return null;

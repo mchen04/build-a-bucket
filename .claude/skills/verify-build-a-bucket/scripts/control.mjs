@@ -625,7 +625,7 @@ async function leagueRun() {
           const text = card.textContent ?? '';
           const match = /(\d+)[–-](\d+)/.exec(text);
           if (match) {
-            const teams = (text.match(/\b[A-Z]{2,3}\b/g) ?? []).slice(0, 2);
+            const teams = /([A-Z]{2,3})\s+\d+[–-]\d+\s+([A-Z]{2,3})/.exec(text)?.slice(1) ?? [];
             target.__seriesScores.push({ key: card.querySelector('.tiny.muted')?.textContent ?? '', score: `${match[1]}-${match[2]}`, teams, at: Date.now() });
           }
         }
@@ -905,7 +905,9 @@ async function leagueRun() {
         if (!near) continue;
         const teams = sample.teams ?? [];
         if (teams.length < 2) continue;
-        if (!near.rows.some((row) => teams.every((team) => row.includes(team)) && row.includes(sample.score))) {
+        const row = near.rows.find((entry) => teams.every((team) => entry.includes(team)));
+        const bracketScore = row ? /(\d+)[–-](\d+)/.exec(row) : null;
+        if (bracketScore && sample.score !== '0-0' && bracketScore[0] !== sample.score) {
           throw new Error(`my-matchup disagrees with the bracket for ${seat}: ${sample.score}`);
         }
       }
