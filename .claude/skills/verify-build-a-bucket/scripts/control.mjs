@@ -593,6 +593,18 @@ async function leagueRun() {
       if (!marks.some((entry) => entry.label === label)) mark(label);
     }
   };
+  const seriesScores = new Map();
+  const recordSeries = async (seat) => {
+    const card = seat.page.getByTestId('my-matchup');
+    if (!(await card.isVisible().catch(() => false))) return;
+    const text = await card.innerText().catch(() => '');
+    const match = /(\d+)[–-](\d+)/.exec(text);
+    if (!match) return;
+    const key = `${seat.seat}:${seat.name}`;
+    if (!seriesScores.has(key)) seriesScores.set(key, new Set());
+    seriesScores.get(key).add(`${match[1]}-${match[2]}`);
+  };
+  const logText = async (seat) => seat.page.getByTestId('activity-log').innerText().catch(() => '');
   const buildAndStart = async (hostSeat, activeSeats, recordMarks, chooseSettings) => {
     if (chooseSettings) {
       if (mode !== 'normal') await hostSeat.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
@@ -707,8 +719,11 @@ async function leagueRun() {
           if (!(await visible(seat, 'activity-log'))) throw new Error(`activity log missing at the playoff gate for seat ${seat.seat}`);
           const next = (await seat.page.getByTestId('next-action').innerText()).trim();
           if (!next) throw new Error(`next action missing at the playoff gate for seat ${seat.seat}`);
+          await recordSeries(seat);
           await snap(seat, `gate-${checkpoint}`);
         }
+        const gateLogs = await Promise.all(active().map(logText));
+        if (new Set(gateLogs).size > 1) throw new Error('activity logs differ at the playoff gate');
         const gateAt = Date.now();
         const readyAt = new Map();
         for (const seat of active()) if (await clickReady(seat)) readyAt.set(seat.seat, Date.now());
@@ -754,6 +769,7 @@ async function leagueRun() {
         for (const seat of active()) {
           if (await visible(seat, 'checkpoint')) throw new Error(`unexpected checkpoint at ${label} for seat ${seat.seat}`);
           if (!(await visible(seat, 'activity-log'))) throw new Error(`activity log missing at ${label} for seat ${seat.seat}`);
+          await recordSeries(seat);
           await snap(seat, `stage-${checkpoint}`);
         }
         if (!chaosDone && checkpoint === 0) {
@@ -799,6 +815,11 @@ async function leagueRun() {
     if (!marks.some((entry) => entry.label === 'recap')) throw new Error('league did not reach the recap');
     const champion = stages[stages.length - 1].champion;
     for (const seat of active()) await snap(seat, 'recap');
+    const recapLogs = await Promise.all(active().map(logText));
+    if (new Set(recapLogs).size > 1) throw new Error('activity logs differ at the recap');
+    const seenSeries = [...seriesScores.values()].some((scores) => scores.size > 0);
+    const movedSeries = [...seriesScores.values()].some((scores) => scores.size > 1);
+    if (seenSeries && !movedSeries) throw new Error('human series card did not advance game by game');
     let playAgain = false;
     let rematchNote = null;
     let secondGameLog = null;
@@ -896,6 +917,7 @@ async function leagueRun() {
       actions,
       gateWaits,
       gateWaitTotals,
+      seriesScores: Object.fromEntries([...seriesScores].map(([seat, scores]) => [seat, [...scores]])),
       apiLatency,
       champion,
       playAgain,

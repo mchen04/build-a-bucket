@@ -99,7 +99,7 @@ export function LeaguePanel(props: Props) {
     friends: humanTeams.has(game.home) && humanTeams.has(game.away),
   }));
   const visibleGames =
-    league.phase === 'playoffs' && playoffGames.length
+    (league.phase === 'playoffs' || league.phase === 'recap') && playoffGames.length
       ? playoffGames
       : league.phase === 'playin' && playinGames.length
         ? playinGames
@@ -162,7 +162,7 @@ export function LeaguePanel(props: Props) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div class="tiny muted">{league.stageName}</div>
               <div style={{ fontWeight: 900, fontSize: 'var(--text-md)' }}>
-                {progress !== null ? `${progress} / ${league.stageTotal}` : 'Checkpoint'}
+                {gate?.active ? 'Game 1 next' : progress !== null ? `${progress} / ${league.stageTotal}` : 'Checkpoint'}
               </div>
             </div>
             <div class="tiny muted" style={{ textAlign: 'right' }}>

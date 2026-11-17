@@ -25,9 +25,9 @@ export const STAGE_NAMES = [
 ];
 export const REGULAR_BATCH_SIZE = 3;
 export const REGULAR_BATCH_MS = 1200;
-export const PLAYOFF_GAME_MS = 120;
+export const PLAYOFF_GAME_MS = 450;
 export const HUMAN_REGULAR_MS = 60;
-export const CPU_SPEEDUP = PLAYOFF_GAME_MS / 50;
+export const CPU_SPEEDUP = 2.4;
 
 export function nextStage(stage: number): number {
   if (stage <= 3) return 4;
@@ -695,7 +695,13 @@ export function assembleLeagueView(
   };
 }
 
-export function revealLeague(league: LeagueResult, stage: number, cursor: number, meParticipantId: string | null): LeagueView {
+export function revealLeague(
+  league: LeagueResult,
+  stage: number,
+  cursor: number,
+  meParticipantId: string | null,
+  startedAt: number | null = null,
+): LeagueView {
   return assembleLeagueView(
     {
       games: league.games,
@@ -718,5 +724,6 @@ export function revealLeague(league: LeagueResult, stage: number, cursor: number
     stage,
     cursor,
     meParticipantId,
+    startedAt,
   );
 }

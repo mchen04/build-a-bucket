@@ -390,6 +390,11 @@ export function Lobby(props: Props) {
               <div class="tiny muted">
                 {view.teams.length}/{present.length} teams drawn · one reroll each
               </div>
+              <div class="tiny muted" style={{ marginTop: '2px' }}>
+                {view.teams.length < present.length
+                  ? 'Waiting for every team to be drawn.'
+                  : 'All teams drawn. Teams lock automatically about 15 seconds after the last draw; use your reroll before then.'}
+              </div>
             </div>
             {view.teams.length ? (
               <div class="card">

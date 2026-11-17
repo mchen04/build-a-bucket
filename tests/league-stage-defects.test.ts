@@ -432,10 +432,10 @@ describeDb('shared league stage behavior', () => {
     const guest = await view(code, seats[1]!.secret);
     expect(host.gate?.nextAction).toContain('Start the playoffs');
     expect(guest.gate?.nextAction).toContain('Host can start');
-    for (const name of ['Host', 'P2', 'P3', 'P4']) {
-      expect(host.gate?.nextAction).toContain(name);
-      expect(guest.gate?.nextAction).toContain(name);
-    }
+    expect(host.gate?.nextAction).toContain('you');
+    for (const name of ['P2', 'P3', 'P4']) expect(host.gate?.nextAction).toContain(name);
+    expect(guest.gate?.nextAction).toContain('you');
+    for (const name of ['Host', 'P3', 'P4']) expect(guest.gate?.nextAction).toContain(name);
   }, 120_000);
 
   it('answers a waiting gate poll without a full read', async () => {
@@ -476,6 +476,52 @@ describeDb('shared league stage behavior', () => {
     };
     expect(gateViewFor([participant], { checkpoint: true, playoffs: [{ round: 1, high: 'BOS', low: 'NYK' }] }, 'p1', 'p1', 'playoffs', 6, Date.now())).toBeNull();
   });
+
+  it('addresses the viewer as you in the gate action', () => {
+    const base = (id: string, name: string, team: string): RawParticipant => ({
+      id,
+      name,
+      seat: 1,
+      status: 'joined',
+      joined_at: new Date().toISOString(),
+      last_seen: new Date().toISOString(),
+      is_me: id === 'ben',
+      build: null,
+      build_kind: null,
+      build_summary: null,
+      ready_stage: 0,
+      preview_ready: false,
+      team,
+      reroll_used: false,
+      salary_powers: null,
+    });
+    const view = gateViewFor(
+      [base('ava', 'Ava', 'NYK'), base('ben', 'Ben', 'BOS'), base('cara', 'Cara', 'LAL')],
+      { checkpoint: true, playoffs: [{ round: 1, high: 'BOS', low: 'NYK' }] },
+      'ben',
+      'ava',
+      'playoffs',
+      6,
+      Date.now(),
+    );
+    expect(view?.nextAction).toContain('you');
+    expect(view?.nextAction).not.toContain('Ben');
+  });
+
+  it('returns the current state for a repeated host action id', async () => {
+    const { code, seats } = await seasonLeague();
+    const row = await lobbyRow(code);
+    const qualified = [...new Set(row.league.series.filter((series) => series.round === 1).flatMap((series) => [series.high, series.low]))];
+    const nonQualified = row.league.standings.east.concat(row.league.standings.west).map((entry) => entry.team).filter((team) => !qualified.includes(team));
+    await setTeams(code, [qualified[0]!, nonQualified[0]!]);
+    await setStage(code, 6, 'playoffs', 0);
+    const actionId = newActionId();
+    const first = await advanceHandler(authed(seats[0]!.secret, `lobby/${code}/advance`, { actionId, stage: 6 }));
+    const second = await advanceHandler(authed(seats[0]!.secret, `lobby/${code}/advance`, { actionId, stage: 6 }));
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(await eventsOfKind(code, 'playoff_start')).toHaveLength(1);
+  }, 120_000);
 
   it('logs every human in shared play-in and series games and every missed playoff team', () => {
     const clock = {

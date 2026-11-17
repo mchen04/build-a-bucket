@@ -245,7 +245,7 @@ export function gateViewFor(
   const mine = me !== null && me.team !== null && qualifiedTeams.has(me.team);
   const host = me !== null && me.id === hostId;
   const hostName = participants.find((entry) => entry.id === hostId)?.name ?? 'the host';
-  const waitingNames = waitingOn.join(', ');
+  const waitingNames = waitingOn.map((name) => (me && name === me.name ? 'you' : name)).join(', ');
   let nextAction = 'Starting the playoffs';
   let actor: string | null = null;
   if (waitingOn.length > 0) {
@@ -579,7 +579,6 @@ select
     'id', e.id, 'kind', e.kind, 'payload', e.payload, 'participant_id', e.participant_id, 'at', e.created_at
   ) order by e.id desc), '[]'::json) from (
     select * from events where lobby_id = (select id from l)
-      and (id > $3 or id = (select max(id) from events where lobby_id = (select id from l)))
     order by id desc limit ${EVENT_LIMIT}
   ) e) as events
 `;
@@ -1192,13 +1191,20 @@ locked as (
   where id = (select id from l) and phase = 'draw'
     and (select count(*) from present) >= 2
     and not exists (select 1 from present where team is null)
-    and now() - (select max(created_at) from lobby_teams where lobby_id = (select id from l))
-      >= make_interval(secs => $4::int)
+    and (
+      now() - (select max(created_at) from lobby_teams where lobby_id = (select id from l))
+        >= make_interval(secs => $4::int)
+      or not exists (
+        select 1 from participants p
+        join lobby_teams t on t.lobby_id = p.lobby_id and t.participant_id = p.id
+        where p.lobby_id = (select id from l) and p.status <> 'left' and not coalesce(t.reroll_used, false)
+      )
+    )
   returning id
 ),
 log as (
   insert into events (lobby_id, kind, payload)
-  select id, 'locked', jsonb_build_object('detail', 'locked the teams') from locked
+  select id, 'locked', jsonb_build_object('detail', 'locked the teams', 'name', 'Automatically') from locked
 )
 select (select count(*)::int from locked) as locked
 `;
@@ -1306,7 +1312,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     if (updated[0]) {
       await db().query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'locked', jsonb_build_object('detail', 'locked the builds'))`,
+         values ($1::uuid, 'locked', jsonb_build_object('detail', 'locked the builds', 'name', 'Automatically'))`,
         [raw.id],
       );
     }
@@ -1324,7 +1330,7 @@ async function maintain(row: ReadRow, clock: LeagueClock | null): Promise<void> 
     if (updated[0]?.id) {
       await db().query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds'))`,
+         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds', 'name', 'Automatically'))`,
         [raw.id],
       );
     }
@@ -1502,7 +1508,10 @@ async function loadLeague(
   const full = await leagueFor(raw.id, Number(raw.league_version));
   if (!full) return { league: null, clock: null };
   return {
-    league: { humans: full.humans, view: revealLeague(full, stage, cursor, me.id) },
+    league: {
+      humans: full.humans,
+      view: revealLeague(full, stage, cursor, me.id, raw.stage_started_at ? Date.parse(raw.stage_started_at) : null),
+    },
     clock: clockFromLeague(full),
   };
 }
@@ -1511,7 +1520,7 @@ export async function readLobby(input: { code: string; secret: string; sinceEven
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
   try {
-    const rows = await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash, input.sinceEvent ?? 0]);
+    const rows = await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]);
     let row = rows[0];
     if (!row?.lobby) {
       return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
@@ -1526,7 +1535,7 @@ export async function readLobby(input: { code: string; secret: string; sinceEven
       const fresh = await sql.query<LobbyRow>(LOBBY_ROW_SQL, [input.code]);
       if (fresh[0]) {
         if (fresh[0].phase !== before.phase) {
-          row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash, input.sinceEvent ?? 0]))[0] ?? row;
+          row = (await sql.query<ReadRow>(READ_SQL, [input.code, tokenHash]))[0] ?? row;
         } else {
           row = { ...row, lobby: { ...before, ...fresh[0] } };
           const events = await sql.query<{ events: RawEvent[] }>(EVENTS_SQL, [input.code, input.sinceEvent ?? 0]);
@@ -1776,14 +1785,15 @@ export async function startLobby(input: {
   }
 }
 
-async function recordAction(code: string, tokenHash: string, actionId: string): Promise<void> {
-  await db().query(
+async function recordAction(code: string, tokenHash: string, actionId: string): Promise<boolean> {
+  const rows = await db().query<{ id: string }>(
     `insert into actions (participant_id, action_id, lobby_id)
      select p.id, $3::uuid, p.lobby_id from participants p
      where p.lobby_id = (select id from lobbies where code = $1) and p.token_hash = $2 and p.status <> 'left'
-     on conflict do nothing`,
+     on conflict do nothing returning participant_id::text as id`,
     [code, tokenHash, actionId],
   );
+  return rows.length > 0;
 }
 
 const DRAW_SQL = `
@@ -1973,7 +1983,8 @@ locked as (
 ),
 log as (
   insert into events (lobby_id, kind, payload)
-  select id, 'locked', jsonb_build_object('detail', 'locked the teams') from locked
+  select id, 'locked', jsonb_build_object('detail', 'locked the teams', 'name',
+    (select p.name from participants p where p.id = (select host_participant from l))) from locked
 )
 select
   (select id from l) as lobby_id,
@@ -2199,7 +2210,8 @@ reset_l as (
 ),
 log as (
   insert into events (lobby_id, kind, payload)
-  select id, 'rematch', jsonb_build_object('detail', 'started a rematch') from reset_l
+  select id, 'rematch', jsonb_build_object('detail', 'started a rematch', 'name',
+    (select p.name from participants p where p.id = (select host_participant from l))) from reset_l
 )
 select
   (select id from l) as lobby_id,
@@ -2212,7 +2224,7 @@ select
 export async function advanceLobby(input: { code: string; secret: string; actionId: string; stage: number }): Promise<Outcome> {
   const sql = db();
   const tokenHash = await hashSecret(input.secret);
-  await recordAction(input.code, tokenHash, input.actionId);
+  const fresh = await recordAction(input.code, tokenHash, input.actionId);
   try {
     const context = await sql.query<{
       id: string;
@@ -2233,6 +2245,7 @@ export async function advanceLobby(input: { code: string; secret: string; action
     );
     const lobby = context[0];
     if (!lobby) return { ok: false, status: 404, error: { error: 'No lobby found for that code.', reason: 'not_found' } };
+    if (!fresh) return readLobby({ code: input.code, secret: input.secret });
     if (lobby.phase === 'draw') return readLobby({ code: input.code, secret: input.secret });
     if (lobby.phase === 'preview') {
       const rows = await sql.query<{ lobby_id: string | null; phase: LobbyPhase | null; host: string | null; me_id: string | null }>(
@@ -2342,8 +2355,9 @@ export async function advanceLobby(input: { code: string; secret: string; action
       }
       await sql.query(
         `insert into events (lobby_id, kind, payload)
-         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds'))`,
-        [hostRow.lobby_id],
+         values ($1::uuid, 'rematch', jsonb_build_object('detail', 'opened the builds', 'name',
+           (select p.name from participants p where p.id = $2::uuid)))`,
+        [hostRow.lobby_id, hostRow.me_id],
       );
       return readLobby({ code: input.code, secret: input.secret });
     }
