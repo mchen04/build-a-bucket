@@ -91,34 +91,69 @@ export async function startSupervisor({
 }) {
   const children = [];
   let postgres = null;
+  let postgresChild = null;
+  let postgresPort = null;
   let stopping = false;
+  let stopPromise = null;
   let poll = null;
   let handoff = null;
-  const stop = async () => {
-    if (stopping) return;
-    stopping = true;
-    if (poll) clock.clearInterval(poll);
-    if (handoff) clock.clearTimeout(handoff);
-    const results = [];
-    if (postgres) results.push(await stopService({ service: { name: 'postgres', kind: 'postgres', port: postgres.port }, child: postgres.child, controls }));
-    for (const { service, child } of children) results.push(await stopService({ service, child, controls }));
-    writeJson(receiptPath, { ok: results.every((result) => result.state === 'clean'), services: results });
-    exit(0);
-    return results;
+  const stopPostgres = async () => {
+    if (postgres) return stopService({ service: { name: 'postgres', kind: 'postgres', port: postgres.port }, child: postgres.child, controls });
+    if (postgresChild) return stopService({ service: { name: 'postgres', kind: 'postgres', port: postgresPort }, child: postgresChild, controls });
+    return null;
   };
-  const fail = async (error) => {
-    const reason = error instanceof Error ? error.message : String(error);
-    const results = [];
-    if (postgres) results.push(await stopService({ service: { name: 'postgres', kind: 'postgres', port: postgres.port }, child: postgres.child, controls }));
-    for (const { service, child } of children) results.push(await stopService({ service, child, controls }));
-    writeJson(path.join(runDir, 'supervisor-init.json'), { state: 'failed', reason });
-    writeJson(receiptPath, { ok: false, reason, services: results });
-    exit(1);
+  const stop = () => {
+    if (!stopPromise) {
+      stopping = true;
+      stopPromise = (async () => {
+        if (poll) clock.clearInterval(poll);
+        if (handoff) clock.clearTimeout(handoff);
+        const results = [];
+        const pg = await stopPostgres();
+        if (pg) results.push(pg);
+        for (const { service, child } of children) results.push(await stopService({ service, child, controls }));
+        writeJson(receiptPath, { ok: results.every((result) => result.state === 'clean'), services: results });
+        exit(0);
+        return results;
+      })();
+    }
+    return stopPromise;
+  };
+  const fail = (error) => {
+    if (!stopPromise) {
+      stopping = true;
+      stopPromise = (async () => {
+        if (poll) clock.clearInterval(poll);
+        if (handoff) clock.clearTimeout(handoff);
+        const reason = error instanceof Error ? error.message : String(error);
+        const results = [];
+        const pg = await stopPostgres();
+        if (pg) results.push(pg);
+        for (const { service, child } of children) results.push(await stopService({ service, child, controls }));
+        writeJson(path.join(runDir, 'supervisor-init.json'), { state: 'failed', reason });
+        writeJson(receiptPath, { ok: false, reason, services: results });
+        exit(1);
+        return results;
+      })();
+    }
+    return stopPromise;
   };
   try {
     if (postgresInit) {
-      postgres = await createOwnedPostgres({ ...postgresInit, spawn, clock });
-      writeJson(path.join(runDir, 'supervisor-init.json'), { state: 'initialized', database: postgres.database, sockDir: postgres.sockDir });
+      postgres = await createOwnedPostgres({
+        ...postgresInit,
+        spawn,
+        clock,
+        onChild: (child, port) => {
+          postgresChild = child;
+          postgresPort = port;
+          child.on('error', (error) => fail(error));
+          child.on('exit', (code, signal) => {
+            if (!stopping && code !== 0) fail(new Error(`postgres exited ${code ?? signal}`));
+          });
+        },
+      });
+      writeJson(path.join(runDir, 'supervisor-init.json'), { state: 'initialized', database: postgres.database, dataDir: postgres.dataDir, sockDir: postgres.sockDir });
     }
     for (const service of services) {
       const stdio = service.logPath ? ['ignore', fs.openSync(service.logPath, 'a'), fs.openSync(service.logPath, 'a')] : (service.stdio ?? 'ignore');
@@ -132,7 +167,7 @@ export async function startSupervisor({
     }
   } catch (error) {
     await fail(error);
-    return { children, stop };
+    return { children, stop, fail };
   }
   writeJson(path.join(runDir, 'supervisor.json'), { pid: process.pid, controlPath, receiptPath, ackPath, services: children.map(({ service, child }) => ({ name: service.name, pid: child.pid })) });
   poll = clock.setInterval(() => {
@@ -144,7 +179,7 @@ export async function startSupervisor({
   handoff = clock.setTimeout(() => {
     if (!fs.existsSync(ackPath)) stop();
   }, handoffMs);
-  return { children, stop };
+  return { children, stop, fail };
 }
 
 export async function requestStop({ controlPath, receiptPath, timeoutMs = 60000, clock = { setTimeout: globalThis.setTimeout } }) {
@@ -174,12 +209,19 @@ export async function runSupervised({ services = [], children = null, command, c
   return { code: exit?.code ?? 1, results };
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [runDir, controlPath, receiptPath, ackPath, specPath] = process.argv.slice(2);
+export async function runSupervisorCli(argv, deps = {}) {
+  const [runDir, controlPath, receiptPath, ackPath, specPath] = argv;
   const spec = readJson(specPath);
   const { descendants, groupMembers, probePid, probePort, readProcessIdentity } = await import('./process-control.mjs');
   const controls = { readIdentity: readProcessIdentity, groupMembers, descendants, probe: probePid, probePort, clock: { setTimeout: globalThis.setTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, clearTimeout: globalThis.clearTimeout } };
-  startSupervisor({ runDir, controlPath, receiptPath, ackPath, services: spec.services, controls }).catch((error) => {
+  const supervisor = await startSupervisor({ runDir, controlPath, receiptPath, ackPath, postgresInit: spec.postgresInit, services: spec.services, controls, ...deps });
+  process.on('uncaughtException', (error) => supervisor.fail(error));
+  process.on('unhandledRejection', (error) => supervisor.fail(error));
+  return supervisor;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runSupervisorCli(process.argv.slice(2)).catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   });

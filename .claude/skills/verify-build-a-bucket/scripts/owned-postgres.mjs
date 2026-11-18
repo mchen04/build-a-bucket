@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn as realSpawn } from 'node:child_process';
 
@@ -41,7 +42,7 @@ export async function createOwnedPostgres({
   logPath,
 }) {
   const dataDir = fs.mkdtempSync(path.join(root, 'pgdata-'));
-  const sockDir = fs.mkdtempSync(path.join(root, 'pgsock-'));
+  const sockDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bab-pgsock-'));
   fs.chmodSync(dataDir, 0o700);
   fs.chmodSync(sockDir, 0o700);
   const sock = checkSocketPath(sockDir, port);

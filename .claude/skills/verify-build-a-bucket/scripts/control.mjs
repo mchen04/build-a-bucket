@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
+import { buildSupervisorSpec } from './supervisor-spec.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -61,20 +62,14 @@ async function launch() {
   const mode = o.prod ? 'prod' : 'dev';
   const local = mode === 'dev' && !o.neon;
   const prepared = local ? { pgPort: Number(o['pg-port'] ?? 55500 + Math.floor(Math.random() * 400)), database: 'bab_local' } : null;
-  const env = process.env;
   const log = fs.openSync(path.join(dir, 'server.log'), 'a');
-  const services = [];
-  if (mode === 'prod') {
-    execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: ['ignore', log, log] });
-    services.push({ name: 'app', kind: 'app', command: path.join(repo, 'node_modules/.bin/vite'), args: ['preview', '--port', String(port), '--strictPort'], cwd: repo, env, envFromPostgres: false, detached: true, logPath: path.join(dir, 'server.log') });
-  } else {
-    services.push({ name: 'app', kind: 'app', command: process.execPath, args: ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], cwd: repo, env, envFromPostgres: Boolean(prepared), detached: true, logPath: path.join(dir, 'server.log') });
-  }
+  if (mode === 'prod') execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: ['ignore', log, log] });
+  const spec = buildSupervisorSpec({ mode, port, dir, repo, prepared });
   const specPath = path.join(dir, 'supervisor-spec.json');
   const controlPath = path.join(dir, 'supervisor-control.json');
   const receiptPath = path.join(dir, 'supervisor-receipt.json');
   const ackPath = path.join(dir, 'supervisor-ack.json');
-  fs.writeFileSync(specPath, JSON.stringify({ postgresInit: prepared ? { root: dir, port: prepared.pgPort, database: prepared.database, schema: path.join(repo, 'db', 'schema.sql') } : null, services }, null, 2));
+  fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));
   const supervisor = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'supervisor.mjs'), dir, controlPath, receiptPath, ackPath, specPath], { detached: true, stdio: 'ignore' });
   supervisor.unref();
   const base = `http://localhost:${port}`;

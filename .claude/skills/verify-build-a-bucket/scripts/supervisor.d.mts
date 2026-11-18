@@ -61,3 +61,4 @@ export function runSupervised(options: {
   controls: Controls & { spawn: unknown };
   receiptPath?: string;
 }): Promise<{ code: number; results: ServiceResult[] }>;
+export function runSupervisorCli(argv: string[], deps?: Record<string, unknown>): Promise<{ children: unknown[]; stop: () => Promise<ServiceResult[]>; fail: (error: unknown) => Promise<ServiceResult[]> }>;

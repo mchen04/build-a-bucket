@@ -1,11 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { requestStop, runSupervised, startSupervisor, stopService } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
+import { requestStop, runSupervised, runSupervisorCli, startSupervisor, stopService } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
 import type { Controls } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
 import { descendants } from '../.claude/skills/verify-build-a-bucket/scripts/process-control.mjs';
 import { createStopOnce, startLocalDb } from '../scripts/local-db.mjs';
+import { buildSupervisorSpec } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor-spec.mjs';
+import { createOwnedPostgres } from '../.claude/skills/verify-build-a-bucket/scripts/owned-postgres.mjs';
 
 class FakeChild {
   pid: number;
@@ -31,6 +33,11 @@ class FakeChild {
 
   on(event: string, listener: (code: number | null, signal: string | null) => void) {
     return this.once(event, listener);
+  }
+
+  emit(event: string, ...args: unknown[]) {
+    if (event === 'exit') this.exit(args[0] as number, args[1] as string);
+    else for (const listener of this.listeners.splice(0)) listener(args[0] as number, args[1] as string);
   }
 
   kill(signal: string) {
@@ -474,5 +481,135 @@ describe('in-process suite supervision', () => {
     expect(result.results[0]?.state).toBe('uncertain');
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
+  });
+});
+
+describe('supervisor CLI', () => {
+  function specFor(dir: string, prepared: { pgPort: number; database: string } | null, postgres: FakeChild, order: string[] = []) {
+    const spec: any = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared });
+    if (prepared) {
+      spec.postgresInit.initdb = ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+        writeFileSync(path.join(dataDir, 'postmaster.pid'), `${postgres.pid}\n`);
+        writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+      };
+      spec.postgresInit.psql = () => '1';
+      spec.postgresInit.schemaLoad = () => {
+        order.push('schema');
+      };
+    }
+    return spec;
+  }
+
+  it('initializes Postgres and spawns the app with the socket env', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const app = new FakeChild(100);
+    const order: string[] = [];
+    const children = [postgres, app];
+    const spec = specFor(dir, { pgPort: 55434, database: 'bab_local' }, postgres, order);
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    const supervisor = await startSupervisor({
+      runDir: dir,
+      services: spec.services,
+      controlPath: path.join(dir, 'control.json'),
+      receiptPath: path.join(dir, 'receipt.json'),
+      ackPath: path.join(dir, 'ack.json'),
+      postgresInit: spec.postgresInit,
+      spawn: () => {
+        const child = children.shift();
+        order.push(child === postgres ? 'postgres' : 'app');
+        return child;
+      },
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+    });
+    expect(order).toEqual(['postgres', 'schema', 'app']);
+    await supervisor.stop();
+  });
+
+  it('passes the socket check with a replay-length run dir', async () => {
+    const dir = path.join(tempDir(), 'replay-r21', '20261118T124105Z', 'bab-home', '2026-11-18T12-41-05-000Z');
+    mkdirSync(dir, { recursive: true });
+    const postgres = new FakeChild(200);
+    const spec = specFor(dir, { pgPort: 55434, database: 'bab_local' }, postgres);
+    const owned = await createOwnedPostgres({ ...spec.postgresInit, spawn: () => postgres, clock: { setTimeout: (fn: () => void) => fn() } });
+    expect(owned.sockDir.startsWith(os.tmpdir())).toBe(true);
+    expect(Buffer.byteLength(path.join(owned.sockDir, `.s.PGSQL.${owned.port}`))).toBeLessThanOrEqual(103);
+  });
+
+  it('stops Postgres and names it when init fails after spawn', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    let appSpawns = 0;
+    let calls = 0;
+    const spec = specFor(dir, { pgPort: 55434, database: 'bab_local' }, postgres);
+    spec.postgresInit.psql = () => {
+      throw new Error('init failed');
+    };
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+      spawn: () => {
+        calls += 1;
+        if (calls === 1) return postgres;
+        appSpawns += 1;
+        return new FakeChild(100);
+      },
+      clock: clock({ timeout: true }),
+      controls: controls(),
+      exit: () => {},
+    });
+    expect(appSpawns).toBe(0);
+    expect(postgres.signals).toEqual(['SIGINT']);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.services.some((service: { name: string }) => service.name === 'postgres')).toBe(true);
+    process.removeAllListeners('uncaughtException');
+    process.removeAllListeners('unhandledRejection');
+  });
+
+  it('stops each child once when a service exits and errors', async () => {
+    const dir = tempDir();
+    const app = new FakeChild(100);
+    const spec = specFor(dir, null, app);
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+      spawn: () => app,
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+    });
+    app.exit(1);
+    app.emit('error', new Error('boom'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(app.signals).toEqual([]);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    process.removeAllListeners('uncaughtException');
+    process.removeAllListeners('unhandledRejection');
+  });
+
+  it('cleans up on an uncaught exception', async () => {
+    const dir = tempDir();
+    const app = new FakeChild(100);
+    const spec = specFor(dir, null, app);
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+      spawn: () => app,
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+    });
+    process.emit('uncaughtException', new Error('boom'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(app.signals).toEqual(['SIGTERM']);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    process.removeAllListeners('uncaughtException');
+    process.removeAllListeners('unhandledRejection');
   });
 });
