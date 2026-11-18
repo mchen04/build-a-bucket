@@ -213,34 +213,20 @@ function checkSuite(step, out) {
 }
 
 function checkReport(step, dir) {
-  const failures = [];
-  const required = step.required?.files ?? {};
-  if (!Object.keys(required).length) return ['plan has no required files'];
   const report = readJson(path.join(dir, 'report.json'));
   if (!report) return ['missing or malformed report.json'];
+  if (step.id === '05-e2e-local-db') return checkPlaywrightReport(step, report);
+  const required = step.required?.files ?? {};
+  if (!Object.keys(required).length) return ['plan has no required files'];
+  if (!Array.isArray(report.testResults)) return ['report.json has no testResults'];
   const entries = new Map();
-  if (Array.isArray(report.testResults)) {
-    for (const file of report.testResults) {
-      const raw = String(file.name ?? '');
-      const name = path.isAbsolute(raw) ? path.relative(REPO, raw) : raw;
-      const tests = Array.isArray(file.assertionResults) ? file.assertionResults : [];
-      entries.set(name, tests.map((test) => ({ name: test.fullName ?? test.title ?? '', status: test.status })));
-    }
-  } else if (Array.isArray(report.suites)) {
-    const walk = (suite) => {
-      for (const spec of suite.specs ?? []) {
-        const name = path.join(step.rootDir ?? 'e2e', String(spec.file ?? suite.file ?? ''));
-        const tests = (spec.tests ?? []).map((test) => ({ name: spec.title ?? '', status: test.status }));
-        if (!entries.has(name)) entries.set(name, []);
-        entries.get(name).push(...tests);
-      }
-      for (const child of suite.suites ?? []) walk(child);
-    };
-    for (const suite of report.suites) walk(suite);
-  } else {
-    return ['report.json has no testResults or suites'];
+  for (const file of report.testResults) {
+    const raw = String(file.name ?? '');
+    const name = path.isAbsolute(raw) ? path.relative(REPO, raw) : raw;
+    const tests = Array.isArray(file.assertionResults) ? file.assertionResults : [];
+    entries.set(name, tests.map((test) => ({ name: test.fullName ?? test.title ?? '', status: test.status })));
   }
-  const expectedStatus = step.id === '05-e2e-local-db' ? 'expected' : 'passed';
+  const failures = [];
   for (const [file, count] of Object.entries(required)) {
     if (!entries.has(file)) {
       failures.push(`report missing ${file}`);
@@ -249,7 +235,53 @@ function checkReport(step, dir) {
     const tests = entries.get(file);
     if (tests.length !== count) failures.push(`${file} has ${tests.length} tests, expected ${count}`);
     for (const test of tests) {
-      if (test.status !== expectedStatus) failures.push(`${file} ${test.name} is ${test.status}`);
+      if (test.status !== 'passed') failures.push(`${file} ${test.name} is ${test.status}`);
+    }
+  }
+  return failures;
+}
+
+function checkPlaywrightReport(step, report) {
+  const failures = [];
+  const rootDir = report.config?.rootDir;
+  if (!rootDir || path.resolve(rootDir) !== path.join(REPO, 'e2e')) return ['report rootDir does not resolve to this repo e2e'];
+  const projects = step.required?.projects ?? {};
+  if (!Object.keys(projects).length) return ['plan has no required projects'];
+  const seen = new Set();
+  const counts = new Map();
+  const walk = (suite) => {
+    for (const spec of suite.specs ?? []) {
+      const file = path.join('e2e', String(spec.file ?? ''));
+      const title = String(spec.title ?? '');
+      for (const test of spec.tests ?? []) {
+        const project = String(test.projectName ?? '');
+        const key = `${file}\u0000${title}\u0000${project}`;
+        if (seen.has(key)) failures.push(`duplicate ${file} ${title} ${project}`);
+        seen.add(key);
+        if (!projects[project]) {
+          failures.push(`unexpected project ${project}`);
+          continue;
+        }
+        if (projects[project][file] === undefined) {
+          failures.push(`unexpected file ${file} in ${project}`);
+          continue;
+        }
+        const results = Array.isArray(test.results) ? test.results : [];
+        if (test.expectedStatus !== 'passed') failures.push(`${file} ${title} ${project} expectedStatus ${test.expectedStatus}`);
+        if (test.status !== 'expected') failures.push(`${file} ${title} ${project} status ${test.status}`);
+        if (results.length !== 1) failures.push(`${file} ${title} ${project} has ${results.length} results`);
+        else if (results[0].status !== 'passed') failures.push(`${file} ${title} ${project} result ${results[0].status}`);
+        const countKey = `${project}\u0000${file}`;
+        counts.set(countKey, (counts.get(countKey) ?? 0) + 1);
+      }
+    }
+    for (const child of suite.suites ?? []) walk(child);
+  };
+  for (const suite of report.suites ?? []) walk(suite);
+  for (const [project, files] of Object.entries(projects)) {
+    for (const [file, count] of Object.entries(files)) {
+      const actual = counts.get(`${project}\u0000${file}`) ?? 0;
+      if (actual !== count) failures.push(`${project} ${file} has ${actual} tests, expected ${count}`);
     }
   }
   return failures;
