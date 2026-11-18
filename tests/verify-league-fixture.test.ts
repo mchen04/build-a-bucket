@@ -22,14 +22,25 @@ const validRun = {
   pidAlive: (pid: number) => pid === 100 || pid === 200,
 };
 
-function runnerStub() {
+function connectStub(options: { failOn?: string } = {}) {
   const calls: { sql: string; params: unknown[] }[] = [];
-  const runner = async (sql: string, params: unknown[] = []) => {
-    calls.push({ sql, params });
-    if (sql.startsWith('insert into lobbies')) return [{ id: 'lobby-uuid' }];
-    return [];
+  const targets: unknown[] = [];
+  let closed = false;
+  const connect = async (target: unknown) => {
+    targets.push(target);
+    return {
+      query: async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params });
+        if (options.failOn && sql.startsWith(options.failOn)) throw new Error('insert failed');
+        if (sql.startsWith('insert into lobbies')) return [{ id: 'lobby-uuid' }];
+        return [];
+      },
+      close: async () => {
+        closed = true;
+      },
+    };
   };
-  return { calls, runner };
+  return { calls, targets, connect, isClosed: () => closed };
 }
 
 describe('league fixture guard', () => {
@@ -83,15 +94,17 @@ describe('league fixture writer', () => {
       { ...validRun, socket: '/other/.s.PGSQL.55434' },
     ];
     for (const run of refusals) {
-      const { calls, runner } = runnerStub();
-      await expect(applyLeagueFixture({ entry, run, runner, secrets })).rejects.toThrow();
+      const { calls, targets, connect } = connectStub();
+      await expect(applyLeagueFixture({ entry, run, connect, secrets })).rejects.toThrow();
       expect(calls).toHaveLength(0);
+      expect(targets).toHaveLength(0);
     }
   });
 
-  it('writes one transaction on the owned target', async () => {
-    const { calls, runner } = runnerStub();
-    const result = await applyLeagueFixture({ entry, run: validRun, runner, secrets });
+  it('connects only to the guarded target and writes one transaction', async () => {
+    const { calls, targets, connect, isClosed } = connectStub();
+    const result = await applyLeagueFixture({ entry, run: validRun, connect, secrets });
+    expect(targets).toEqual([{ socketDir: '/owned/socket', port: 55434, database: 'bab' }]);
     expect(result.lobbyId).toBe('lobby-uuid');
     expect(result.code).toBe(entry.code);
     expect(result.participantIds).toEqual(entry.participants.map((participant: { id: string }) => participant.id));
@@ -101,6 +114,7 @@ describe('league fixture writer', () => {
     expect(calls.filter((call) => call.sql.startsWith('insert into lobbies'))).toHaveLength(1);
     expect(calls.filter((call) => call.sql.startsWith('insert into participants'))).toHaveLength(entry.players);
     expect(calls.filter((call) => call.sql.startsWith('insert into lobby_teams'))).toHaveLength(entry.players);
+    expect(isClosed()).toBe(true);
     const lobbyCall = calls.find((call) => call.sql.startsWith('insert into lobbies'));
     expect(lobbyCall?.params[0]).toBe(entry.code);
     expect(lobbyCall?.params[1]).toBe('preview');
@@ -115,13 +129,21 @@ describe('league fixture writer', () => {
     }
   });
 
+  it('rolls back and rethrows after a failed insert', async () => {
+    const { calls, connect, isClosed } = connectStub({ failOn: 'insert into participants' });
+    await expect(applyLeagueFixture({ entry, run: validRun, connect, secrets })).rejects.toThrow('insert failed');
+    expect(calls.map((call) => (call.sql.startsWith('insert into lobbies') ? 'insert into lobbies' : call.sql.startsWith('insert into participants') ? 'insert into participants' : call.sql))).toEqual(['BEGIN', 'insert into lobbies', 'insert into participants', 'ROLLBACK']);
+    expect(calls.some((call) => call.sql === 'COMMIT')).toBe(false);
+    expect(isClosed()).toBe(true);
+  });
+
   it('keeps secrets out of the result and logs', async () => {
-    const { runner } = runnerStub();
+    const { connect } = connectStub();
     const logs: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...args) => {
       logs.push(args.map(String).join(' '));
     });
-    const result = await applyLeagueFixture({ entry, run: validRun, runner, secrets });
+    const result = await applyLeagueFixture({ entry, run: validRun, connect, secrets });
     spy.mockRestore();
     const text = JSON.stringify(result) + logs.join('\n');
     for (const secret of secrets) expect(text).not.toContain(secret);

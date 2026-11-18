@@ -25,12 +25,13 @@ export type FixtureEntry = {
 };
 
 export type FixtureTarget = { socketDir: string; port: number; database: string };
+export type FixtureRunner = { query: (sql: string, params?: unknown[]) => Promise<unknown[]>; close?: () => Promise<void> };
 
 export function hashSecret(secret: string): string;
 export function guardOwnedRun(args: { run: FixtureRun | null; base?: string; readFile?: (path: string, encoding: string) => string; pidAlive?: (pid: number) => boolean }): FixtureTarget;
 export function applyLeagueFixture(args: {
   entry: FixtureEntry;
   run: FixtureRun | null;
-  runner: (sql: string, params?: unknown[]) => Promise<unknown[]>;
+  connect?: (target: FixtureTarget) => Promise<FixtureRunner> | FixtureRunner;
   secrets: string[];
 }): Promise<{ lobbyId: string; code: string; participantIds: string[]; target: FixtureTarget }>;
