@@ -199,6 +199,11 @@ function checkSuite(step, out) {
   const output = readText(path.join(dir, 'output.log'));
   if (output === null || output.trim().length === 0) failures.push('missing or empty output.log');
   if (!exactZero(path.join(dir, 'exit'))) failures.push('exit is not exactly 0');
+  if (step.id === '04-test-local-db' || step.id === '05-e2e-local-db') {
+    const receipt = readJson(path.join(dir, 'postgres-receipt.json'));
+    if (!receipt) failures.push('missing postgres-receipt.json');
+    else if (receipt.ok !== true) failures.push('postgres receipt is not clean');
+  }
   return failures;
 }
 

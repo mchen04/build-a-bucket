@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
-import { cleanupAll, probePid, probePort, readProcessIdentity } from './process-control.mjs';
+import { requestStop } from './supervisor.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -45,29 +45,6 @@ const median = (arr) => pct(arr, 50);
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
 function portOwner(port) { try { return execFileSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).map(Number); } catch { return []; } }
 function descendants(pid) { try { const kids = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).map(Number); return kids.flatMap((k) => [k, ...descendants(k)]); } catch { return []; } }
-function readPostmasterPid(dataDir) {
-  try {
-    const text = fs.readFileSync(path.join(dataDir, 'postmaster.pid'), 'utf8');
-    const pid = Number(text.split('\n')[0].trim());
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-function groupMembers(pgid) {
-  try {
-    const out = execFileSync('ps', ['-A', '-o', 'pid=,pgid=,lstart=,command='], { encoding: 'utf8' });
-    const members = out.split('\n').map((line) => {
-      const match = /^\s*(\d+)\s+(\d+)\s+(.{24})\s+(.*)$/.exec(line);
-      if (!match) return null;
-      return { pid: Number(match[1]), pgid: Number(match[2]), startTime: match[3].trim(), command: match[4].trim() };
-    }).filter((entry) => entry && entry.pgid === pgid);
-    return { ok: true, members };
-  } catch (error) {
-    return { ok: false, reason: error?.message ?? 'ps failed' };
-  }
-}
-
 async function probe(base) {
   const out = { base };
   try { const r = await fetch(base + '/', { signal: AbortSignal.timeout(10000) }); const t = await r.text(); out.app = r.status; out.appIdentity = /<title>[^<]*<\/title>/.exec(t)?.[0] ?? null; } catch (e) { out.app = String(e.message); }
@@ -84,48 +61,50 @@ async function launch() {
   fs.mkdirSync(evidenceDir(dir), { recursive: true });
   const mode = o.prod ? 'prod' : 'dev';
   const local = mode === 'dev' && !o.neon;
-  const localHandle = local
-    ? await localDb.startLocalDb({
+  const prepared = local
+    ? localDb.prepareLocalDb({
         root: repo,
         dataDir: path.join(dir, 'pgdata'),
         pgPort: Number(o['pg-port'] ?? 55500 + Math.floor(Math.random() * 400)),
       })
     : null;
-  const env = localHandle ? { ...process.env, ...localDb.localDbEnv(localHandle) } : process.env;
-  let child;
+  const env = prepared ? { ...process.env, ...localDb.localDbEnv(prepared) } : process.env;
   const log = fs.openSync(path.join(dir, 'server.log'), 'a');
+  const services = [];
+  if (prepared) {
+    services.push({
+      name: 'postgres',
+      kind: 'postgres',
+      port: prepared.pgPort,
+      command: path.join(process.env.BAB_PG_BIN ?? '/opt/homebrew/bin', 'postgres'),
+      args: ['-D', prepared.dataDir, '-p', String(prepared.pgPort), '-k', '/tmp', '-c', 'listen_addresses=127.0.0.1', '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off', '-c', 'max_connections=100'],
+    });
+  }
   if (mode === 'prod') {
     execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: ['ignore', log, log] });
-    child = spawn(path.join(repo, 'node_modules/.bin/vite'), ['preview', '--port', String(port), '--strictPort'], { cwd: repo, detached: true, stdio: ['ignore', log, log] });
+    services.push({ name: 'app', kind: 'app', command: path.join(repo, 'node_modules/.bin/vite'), args: ['preview', '--port', String(port), '--strictPort'], cwd: repo, env });
   } else {
-    child = spawn(process.execPath, ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], { cwd: repo, detached: true, stdio: ['ignore', log, log], env });
+    services.push({ name: 'app', kind: 'app', command: process.execPath, args: ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], cwd: repo, env });
   }
-  child.unref();
+  const specPath = path.join(dir, 'supervisor-spec.json');
+  const controlPath = path.join(dir, 'supervisor-control.json');
+  const receiptPath = path.join(dir, 'supervisor-receipt.json');
+  fs.writeFileSync(specPath, JSON.stringify({ services }, null, 2));
+  const supervisor = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'supervisor.mjs'), dir, controlPath, receiptPath, specPath], { detached: true, stdio: 'ignore' });
+  supervisor.unref();
   const base = `http://localhost:${port}`;
   const head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-  const postmasterPid = localHandle ? readPostmasterPid(localHandle.dataDir) : null;
-  const postmasterIdentity = postmasterPid ? readProcessIdentity(postmasterPid) : null;
   const state = {
     id,
     dir,
     mode,
     port,
-    pid: child.pid,
-    identity: readProcessIdentity(child.pid),
+    pid: supervisor.pid,
     base,
     head,
     lobbies: [],
-    localDb: localHandle
-      ? {
-          dataDir: localHandle.dataDir,
-          pgPort: localHandle.pgPort,
-          database: localHandle.database,
-          url: localHandle.url,
-          runnerPath: localHandle.runnerPath,
-          postmasterPid,
-          postmasterIdentity,
-        }
-      : null,
+    localDb: prepared ? { ...prepared, remove: true } : null,
+    supervisor: { pid: supervisor.pid, controlPath, receiptPath },
     startedAt: new Date().toISOString(),
   };
   saveState(dir, state);
@@ -140,7 +119,9 @@ async function launch() {
   }
   console.log(JSON.stringify({ run: dir, ...state, probe: last }, null, 2));
   if (!(mode === 'prod' ? last.app === 200 : last.ready)) {
-    if (localHandle) await localDb.stopLocalDb(localHandle);
+    const receipt = await requestStop({ controlPath, receiptPath, timeoutMs: 60000 });
+    state.cleanup = receipt;
+    saveState(dir, state);
     process.exitCode = 1;
   }
 }
@@ -1328,29 +1309,22 @@ async function coldLoad() {
 
 async function cleanup() {
   const { dir, state } = currentRun();
-  const result = await cleanupAll({
-    state,
-    controls: {
-      readIdentity: readProcessIdentity,
-      signal: process.kill,
-      sleep,
-      probe: probePid,
-      groupMembers,
-      probePort,
-      removeDir: (target) => fs.rmSync(target, { recursive: true, force: true }),
-    },
-  });
+  const receipt = state.supervisor
+    ? await requestStop({ controlPath: state.supervisor.controlPath, receiptPath: state.supervisor.receiptPath, timeoutMs: 60000 })
+    : { ok: false, services: [], reason: 'no supervisor recorded' };
   let removed = [];
   if (!state.localDb && state.lobbies.length && state.mode === 'dev') {
     const outText = execFileSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'drop-lobbies.ts'), ...state.lobbies], { cwd: repo, encoding: 'utf8' });
     removed = JSON.parse(outText);
   }
+  if (receipt.ok && state.localDb?.remove) fs.rmSync(state.localDb.dataDir, { recursive: true, force: true });
   fs.rmSync(path.join(home, 'current'), { force: true });
   for (const f of fs.readdirSync(dir)) if (f.startsWith('session-')) fs.rmSync(path.join(dir, f));
   const evidence = path.join(dir, 'evidence');
-  const appGroup = result.uncertain.length || result.failures.length ? 'uncertain' : 'clean';
-  console.log(JSON.stringify({ stopped: result.stopped, uncertain: result.uncertain, failures: result.failures, portState: result.portState, portFree: result.portState === 'absent', appGroup, postgres: result.postgres, lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
-  if (appGroup !== 'clean' || result.portState !== 'absent' || result.postgres.state !== 'clean') process.exitCode = 1;
+  const appGroup = receipt.ok ? 'clean' : 'uncertain';
+  const postgres = receipt.services?.find((service) => service.name === 'postgres') ?? { state: 'uncertain', reason: 'no postgres receipt' };
+  console.log(JSON.stringify({ supervisor: receipt, appGroup, postgres, lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
+  if (!receipt.ok) process.exitCode = 1;
 }
 
 async function perf() {

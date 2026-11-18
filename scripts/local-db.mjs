@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { groupMembers, probePid, probePort, readProcessIdentity } from '../.claude/skills/verify-build-a-bucket/scripts/process-control.mjs';
+import { runSupervised, stopService } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PG_BIN = process.env.BAB_PG_BIN ?? '/opt/homebrew/bin';
@@ -22,9 +24,16 @@ function psql(port, database, sql) {
   });
 }
 
-function pgCtl(dataDir, args, options = {}) {
-  return execFileSync(tool('pg_ctl'), ['-D', dataDir, ...args], { encoding: 'utf8', stdio: options.stdio ?? ['ignore', 'pipe', 'pipe'] });
+function controls() {
+  return { readIdentity: readProcessIdentity, groupMembers, probe: probePid, probePort, clock: { setTimeout: globalThis.setTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval } };
 }
+
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value, null, 2));
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function localDbEnv(handle) {
   return {
@@ -37,33 +46,15 @@ export function localDbEnv(handle) {
   };
 }
 
-export async function startLocalDb(options = {}) {
+export function prepareLocalDb(options = {}) {
   const root = options.root ?? REPO;
   const pgPort = Number(options.pgPort ?? process.env.BAB_LOCAL_PG_PORT ?? 55434);
   const database = options.database ?? 'bab_local';
   const dataDir = options.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'bab-local-db-'));
-  const schema = options.schema ?? path.join(root, 'db', 'schema.sql');
   fs.mkdirSync(dataDir, { recursive: true });
   if (!fs.existsSync(path.join(dataDir, 'PG_VERSION'))) {
     execFileSync(tool('initdb'), ['-D', dataDir, '-A', 'trust', '-U', USER, '--no-sync'], { stdio: 'ignore' });
   }
-  try {
-    pgCtl(dataDir, ['status'], { stdio: 'ignore' });
-  } catch {
-    pgCtl(dataDir, [
-      '-l',
-      path.join(dataDir, 'pg.log'),
-      '-o',
-      `-p ${pgPort} -k /tmp -c listen_addresses=${HOST} -c fsync=off -c full_page_writes=off -c synchronous_commit=off -c max_connections=100`,
-      '-w',
-      'start',
-    ]);
-  }
-  psql(pgPort, 'postgres', `drop database if exists ${database}`);
-  psql(pgPort, 'postgres', `create database ${database}`);
-  execFileSync(tool('psql'), ['-h', HOST, '-p', String(pgPort), '-U', USER, '-d', database, '-v', 'ON_ERROR_STOP=1', '-q', '-f', schema], {
-    stdio: 'ignore',
-  });
   return {
     dataDir,
     pgPort,
@@ -75,14 +66,43 @@ export async function startLocalDb(options = {}) {
   };
 }
 
-export async function stopLocalDb(handle) {
-  if (!handle) return;
-  try {
-    pgCtl(handle.dataDir, ['-m', 'fast', '-w', 'stop'], { stdio: 'ignore' });
-  } catch {
-    return;
+export async function startLocalDb(options = {}) {
+  const prepared = prepareLocalDb(options);
+  const { dataDir, pgPort, database, root } = prepared;
+  const schema = options.schema ?? path.join(root, 'db', 'schema.sql');
+  const child = spawn(
+    tool('postgres'),
+    ['-D', dataDir, '-p', String(pgPort), '-k', '/tmp', '-c', `listen_addresses=${HOST}`, '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off', '-c', 'max_connections=100'],
+    { stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  let ready = false;
+  for (let attempt = 0; attempt < 120; attempt++) {
+    try {
+      psql(pgPort, 'postgres', 'select 1');
+      ready = true;
+      break;
+    } catch {
+      await sleep(250);
+    }
   }
-  if (handle.remove) fs.rmSync(handle.dataDir, { recursive: true, force: true });
+  if (!ready) {
+    const result = await stopService({ service: { name: 'postgres', kind: 'postgres', port: pgPort }, child, controls: controls() });
+    if (options.receiptPath) writeJson(options.receiptPath, { ok: result.state === 'clean', services: [result] });
+    throw new Error('local postgres did not become ready');
+  }
+  psql(pgPort, 'postgres', `drop database if exists ${database}`);
+  psql(pgPort, 'postgres', `create database ${database}`);
+  execFileSync(tool('psql'), ['-h', HOST, '-p', String(pgPort), '-U', USER, '-d', database, '-v', 'ON_ERROR_STOP=1', '-q', '-f', schema], {
+    stdio: 'ignore',
+  });
+  return { ...prepared, child };
+}
+
+export async function stopLocalDb(handle) {
+  if (!handle?.child) return { state: 'clean', reason: null };
+  const result = await stopService({ service: { name: 'postgres', kind: 'postgres', port: handle.pgPort }, child: handle.child, controls: controls() });
+  if (result.state === 'clean' && handle.remove) fs.rmSync(handle.dataDir, { recursive: true, force: true });
+  return result;
 }
 
 async function main() {
@@ -97,16 +117,24 @@ async function main() {
     const index = flags.indexOf(`--${name}`);
     return index >= 0 ? flags[index + 1] ?? fallback : fallback;
   };
+  const receiptPath = process.env.BAB_LOCAL_DB_RECEIPT;
   const handle = await startLocalDb({
     pgPort: value('pg-port', process.env.BAB_LOCAL_PG_PORT ?? 55434),
     dataDir: value('data-dir', undefined),
     remove: !flags.includes('--keep'),
+    receiptPath,
   });
   process.stderr.write(`local postgres ${handle.url}\n`);
-  const child = spawn(command[0], command.slice(1), { cwd: handle.root, env: { ...process.env, ...localDbEnv(handle) }, stdio: 'inherit' });
-  const code = await new Promise((resolve) => child.once('exit', resolve));
-  await stopLocalDb(handle);
-  process.exitCode = typeof code === 'number' ? code : 1;
+  const result = await runSupervised({
+    children: [{ service: { name: 'postgres', kind: 'postgres', port: handle.pgPort }, child: handle.child }],
+    command,
+    commandEnv: { ...process.env, ...localDbEnv(handle) },
+    commandCwd: handle.root,
+    controls: { ...controls(), spawn },
+    receiptPath,
+  });
+  if (result.results[0]?.state === 'clean' && handle.remove) fs.rmSync(handle.dataDir, { recursive: true, force: true });
+  process.exitCode = result.code;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

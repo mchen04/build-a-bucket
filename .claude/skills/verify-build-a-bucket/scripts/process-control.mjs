@@ -16,6 +16,20 @@ export function readProcessIdentity(pid) {
   }
 }
 
+export function groupMembers(pgid) {
+  try {
+    const out = execFileSync('ps', ['-A', '-o', 'pid=,pgid=,lstart=,command='], { encoding: 'utf8' });
+    const members = out.split('\n').map((line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.{24})\s+(.*)$/.exec(line);
+      if (!match) return null;
+      return { pid: Number(match[1]), pgid: Number(match[2]), startTime: match[3].trim(), command: match[4].trim() };
+    }).filter((entry) => entry && entry.pgid === pgid);
+    return { ok: true, members };
+  } catch (error) {
+    return { ok: false, reason: error?.message ?? 'ps failed' };
+  }
+}
+
 export function probePid(pid, controls = {}) {
   const kill = controls.kill ?? process.kill;
   try {
