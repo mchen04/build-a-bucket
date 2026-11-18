@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertRefreshCoverage, compareStandings, createLeagueEvidenceDir } from './standings-check.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -312,6 +313,7 @@ async function leagueRun() {
     ? { width: Number(String(o.viewport).split('x')[0]), height: Number(String(o.viewport).split('x')[1]) }
     : { width: 390, height: 844 };
   const reloadSeat = o.reload === undefined ? null : Number(o.reload);
+  const reload = { ran: false, revision: null, seats: [], rowsCompared: 0 };
   const awaySeat = o.away === undefined ? null : Number(o.away);
   const hostLeave = Boolean(o['host-leave']);
   for (const [flag, value] of [['--reload', reloadSeat], ['--away', awaySeat]]) {
@@ -320,7 +322,7 @@ async function leagueRun() {
   if (awaySeat !== null && hostLeave) throw new Error('--away and --host-leave are separate scenarios');
   const base = o.base ?? state.base;
   const browser = await pw[browserName].launch({ headless: true });
-  const ev = evidenceDir(dir, 'league');
+  const ev = createLeagueEvidenceDir(path.join(dir, 'evidence'));
   const names = ['Ava', 'Ben', 'Cara', 'Dev', 'Eli', 'Fay', 'Gus', 'Hana'];
   const seats = [];
   const apiSamples = new Map();
@@ -392,12 +394,7 @@ async function leagueRun() {
       const lines = (stage?.innerText ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
       const revision = `${lines[0] ?? ''}:${lines[1] ?? ''}`;
       const tables = [...document.querySelectorAll('[data-testid="standings"] .table')].map((table) =>
-        [...table.querySelectorAll('.table-row:not(.head)')]
-          .map((row) => (row.innerText || '').replace(/YOU/g, '').replace(/\s+/g, ' ').trim())
-          .filter((row) => {
-            const seed = /^(\d+)\s/.exec(row);
-            return seed !== null && Number(seed[1]) <= 10;
-          }),
+        [...table.querySelectorAll('.table-row:not(.head)')].map((row) => row.innerText || ''),
       );
       return { revision, tables };
     });
@@ -832,26 +829,17 @@ async function leagueRun() {
             let common = null;
             for (let attempt = 0; attempt < 40; attempt++) {
               const reads = await Promise.all(active().map(async (entry) => ({ seat: entry, ...(await readStandingsRevision(entry)) })));
-              const byRevision = new Map();
-              for (const read of reads) {
-                if (!byRevision.has(read.revision)) byRevision.set(read.revision, []);
-                byRevision.get(read.revision).push(read);
-              }
-              for (const [revision, group] of byRevision) {
-                if (group.length < 2) continue;
-                const mine = group.find((entry) => entry.seat === seat);
-                if (!mine) continue;
-                const top = group.map((entry) => entry.tables.map((conference) => conference.map((rows) => rows.slice(0, 10))));
-                if (top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) {
-                  common = { revision, standings: top[0], seats: group.map((entry) => `${entry.seat.seat}:${entry.seat.name}`) };
-                  break;
-                }
-                throw new Error(`standings differ at revision ${revision}: ${JSON.stringify(top)}`);
-              }
+              const result = compareStandings(reads, seat);
+              if (!result.ok && result.reason.startsWith('standings differ')) throw new Error(result.reason);
+              if (result.ok) common = result;
               if (common) break;
               await host.page.waitForTimeout(250);
             }
             if (!common) throw new Error('no common standings revision after reload');
+            reload.ran = true;
+            reload.revision = common.revision;
+            reload.seats = common.seats;
+            reload.rowsCompared = common.rowsCompared;
             stages.push({ label: 'after-reload', phase: await phaseOf(seat), revision: common.revision, seats: common.seats, standings: common.standings });
             await snap(seat, 'after-reload');
           }
@@ -1031,6 +1019,7 @@ async function leagueRun() {
       device: o.device ?? 'iphone',
       viewport,
       chaos,
+      reload,
       stages,
       phaseTimings,
       phaseDurations,
@@ -1050,8 +1039,9 @@ async function leagueRun() {
       httpErrors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, responses: seat.http })),
       evidence: ev,
     };
+    assertRefreshCoverage(reloadSeat !== null, reload);
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
-    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reload, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
   } finally {
     await browser.close();
   }
