@@ -26,6 +26,7 @@ export function waitForExit(child, timeoutMs, clock) {
       resolve(value);
     };
     child.once('exit', (code, signal) => finish({ code, signal }));
+    child.once('error', (error) => finish({ error }));
     if (timeoutMs > 0) clock.setTimeout(() => finish(null), timeoutMs);
   });
 }
@@ -37,6 +38,9 @@ function alreadyExited(child) {
 }
 
 export async function stopService({ service, child, controls }) {
+  if (child.pid === undefined || child.pid === null || child.spawnError) {
+    return { name: service.name, pid: child.pid ?? null, state: 'uncertain', reason: 'not started' };
+  }
   const { groupMembers, descendants, probe, probePort, clock } = controls;
   const group = groupMembers(child.pid);
   const tree = descendants ? descendants(child.pid) : { ok: true, pids: [] };

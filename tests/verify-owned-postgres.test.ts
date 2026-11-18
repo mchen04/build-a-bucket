@@ -17,6 +17,12 @@ class FakeChild {
     this.exitCode = 0;
     return true;
   }
+  once() {
+    return this;
+  }
+  on() {
+    return this;
+  }
 }
 
 const temps: string[] = [];
@@ -85,7 +91,7 @@ describe('owned postgres', () => {
         },
         clock: { setTimeout: (fn: () => void) => fn() },
       }),
-    ).rejects.toThrow('did not become ready');
+    ).rejects.toThrow('postgres exited before readiness');
     expect(sql).toEqual([]);
   });
 

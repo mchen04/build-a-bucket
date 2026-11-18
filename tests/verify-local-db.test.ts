@@ -22,12 +22,19 @@ class FakeChild {
     if (event === 'exit') {
       if (this.exited) listener(this.exitCode, this.signalCode);
       else this.listeners.push(listener);
+    } else if (event === 'error') {
+      this.listeners.push(listener);
     }
     return this;
   }
 
   on(event: string, listener: (code: number | null, signal: string | null) => void) {
     return this.once(event, listener);
+  }
+
+  emit(event: string, ...args: unknown[]) {
+    if (event === 'exit') this.exit(args[0] as number, args[1] as string);
+    else for (const listener of this.listeners.splice(0)) listener(args[0] as number, args[1] as string);
   }
 
   kill(signal: string) {
@@ -122,5 +129,95 @@ describe('local-db main', () => {
     expect(receipt.services[0]?.state).toBe('clean');
     process.removeAllListeners('SIGTERM');
     process.removeAllListeners('SIGINT');
+  });
+
+  it('fails promptly on an async command spawn error', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300, { exitOn: new Set() });
+    let calls = 0;
+    let code: number | null = null;
+    const promise = main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    test.emit('error', new Error('spawn ENOENT'));
+    await promise;
+    expect(postgres.signals).toEqual(['SIGINT']);
+    expect(code).toBe(1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.reason).toContain('spawn ENOENT');
+  });
+
+  it('fails promptly on an async Postgres spawn error', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200, { exitOn: new Set() });
+    postgres.pid = undefined as unknown as number;
+    let sql = 0;
+    let code: number | null = null;
+    const promise = main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => postgres,
+      initdb: () => {},
+      psql: () => {
+        sql += 1;
+        return '1';
+      },
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    postgres.emit('error', new Error('spawn ENOENT'));
+    await promise;
+    expect(sql).toBe(0);
+    expect(postgres.signals).toEqual([]);
+    expect(code).toBe(1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.services[0]?.reason).toContain('not started');
+  });
+
+  it('exits non-zero when the Postgres stop is uncertain', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200, { exitOn: new Set() });
+    const test = new FakeChild(300);
+    test.exit(0);
+    let calls = 0;
+    let code: number | null = null;
+    await main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    expect(code).toBe(1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
   });
 });

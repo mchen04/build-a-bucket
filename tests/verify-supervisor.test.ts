@@ -28,6 +28,8 @@ class FakeChild {
     if (event === 'exit') {
       if (this.exited) listener(this.exitCode, this.signalCode);
       else this.listeners.push(listener);
+    } else if (event === 'error') {
+      this.listeners.push(listener);
     }
     return this;
   }
@@ -294,7 +296,7 @@ describe('supervisor lifecycle', () => {
         appSpawns += 1;
         return new FakeChild(100);
       },
-      clock: clock(),
+      clock: clock({ timeout: true }),
       controls: controls(),
       exit: () => {},
     });
@@ -678,6 +680,7 @@ describe('owned database evidence', () => {
     });
     expect(order).toEqual(['postgres', 'schema', 'app']);
     expect(captured?.BAB_PG_SOCKET_DIR).toBeTruthy();
+    expect(captured?.BAB_DB_RUNNER).toBe(path.resolve('.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs'));
     await supervisor.stop();
     process.removeAllListeners('uncaughtException');
     process.removeAllListeners('unhandledRejection');
@@ -696,5 +699,76 @@ describe('owned database evidence', () => {
     expect(existsSync(dataDir)).toBe(false);
     expect(existsSync(sockDir)).toBe(false);
     expect(existsSync(other)).toBe(true);
+  });
+});
+
+describe('supervisor async spawn errors', () => {
+  it('fails promptly on an async Postgres spawn error', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200, { exitOn: new Set() });
+    postgres.pid = undefined as unknown as number;
+    let appSpawns = 0;
+    let calls = 0;
+    const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    const promise = runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+      spawn: () => {
+        calls += 1;
+        if (calls === 1) return postgres;
+        appSpawns += 1;
+        return new FakeChild(100);
+      },
+      clock: clock({ timeout: true }),
+      controls: controls(),
+      exit: () => {},
+      postgresTools: { initdb: () => {}, psql: () => '1', schemaLoad: () => {} },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    postgres.emit('error', new Error('spawn ENOENT'));
+    await promise;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(appSpawns).toBe(0);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    process.removeAllListeners('uncaughtException');
+    process.removeAllListeners('unhandledRejection');
+  });
+
+  it('fails promptly on an async app spawn error', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const app = new FakeChild(100, { exitOn: new Set() });
+    app.pid = undefined as unknown as number;
+    let calls = 0;
+    const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    const promise = runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : app;
+      },
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+      postgresTools: {
+        initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+          writeFileSync(path.join(dataDir, 'postmaster.pid'), `${postgres.pid}\n`);
+          writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+        },
+        psql: () => '1',
+        schemaLoad: () => {},
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    app.emit('error', new Error('spawn ENOENT'));
+    await promise;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(postgres.signals).toEqual(['SIGINT']);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    process.removeAllListeners('uncaughtException');
+    process.removeAllListeners('unhandledRejection');
   });
 });

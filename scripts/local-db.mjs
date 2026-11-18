@@ -20,7 +20,7 @@ function writeJson(file, value) {
 }
 
 export function localDbEnv(handle) {
-  return { ...ownedPostgresEnv(handle), BAB_DB_RUNNER: RUNNER };
+  return ownedPostgresEnv(handle);
 }
 
 export function createStopOnce(stop) {
@@ -114,14 +114,20 @@ export async function main({
     active = { ...(active ?? {}), handle };
     const testChild = spawn(command[0], command.slice(1), { cwd: handle.root, env: { ...process.env, ...localDbEnv(handle) }, stdio: 'inherit' });
     active.testChild = testChild;
+    let testError = null;
+    testChild.once('error', (error) => {
+      testError = error;
+    });
+    testChild.once('exit', () => {});
     const exitResult = await waitForExit(testChild, 0, clock);
     const result = await stopPostgres();
-    if (receiptPath) writeJson(receiptPath, { ok: result.state === 'clean', services: [result] });
-    if (result.state === 'clean' && handle.remove) {
+    const ok = result.state === 'clean' && !testError && !exitResult?.error;
+    if (receiptPath) writeJson(receiptPath, { ok, reason: testError?.message ?? exitResult?.error?.message, services: [result] });
+    if (ok && handle.remove) {
       fs.rmSync(handle.dataDir, { recursive: true, force: true });
       fs.rmSync(handle.sockDir, { recursive: true, force: true });
     }
-    exit(exitResult?.code ?? 1);
+    exit(ok ? (exitResult?.code ?? 1) : 1);
   } catch (error) {
     const result = await stopPostgres();
     if (receiptPath) writeJson(receiptPath, { ok: false, services: [result], reason: error instanceof Error ? error.message : String(error) });

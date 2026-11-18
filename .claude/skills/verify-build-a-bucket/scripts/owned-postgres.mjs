@@ -2,9 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn as realSpawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const USER = 'postgres';
 const PG_BIN = process.env.BAB_PG_BIN ?? '/opt/homebrew/bin';
+const RUNNER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'meter/local-pg.mjs');
 
 export function socketPath(sockDir, port) {
   return path.join(sockDir, `.s.PGSQL.${port}`);
@@ -23,6 +25,7 @@ export function ownedPostgresEnv({ sockDir, port, database }) {
     BAB_PG_PORT: String(port),
     BAB_PG_DATABASE: database,
     BAB_PG_USER: USER,
+    BAB_DB_RUNNER: RUNNER,
     DATABASE_URL: `postgresql://${USER}@/${database}?host=${encodeURIComponent(sockDir)}&port=${port}`,
   };
 }
@@ -51,6 +54,11 @@ export async function createOwnedPostgres({
   init({ dataDir, sockDir, port });
   const log = logPath ? fs.openSync(logPath, 'a') : 'ignore';
   const child = spawn(path.join(PG_BIN, 'postgres'), ['-D', dataDir, '-k', sockDir, '-c', "listen_addresses=''", '-p', String(port), '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off', '-c', 'max_connections=100'], { stdio: ['ignore', log, log] });
+  let spawnError = null;
+  child.once('error', (error) => {
+    spawnError = error;
+  });
+  child.once('exit', () => {});
   if (onChild) onChild(child, port);
   const prove = () => {
     if (child.exitCode !== null || child.signalCode) throw new Error('postgres exited before ownership proof');
@@ -61,6 +69,8 @@ export async function createOwnedPostgres({
   const psqlFn = psql ?? ((sql, db = 'postgres') => execFileSync(path.join(PG_BIN, 'psql'), ['-h', sockDir, '-p', String(port), '-U', USER, '-d', db, '-v', 'ON_ERROR_STOP=1', '-tAc', sql], { encoding: 'utf8' }));
   let ready = false;
   for (let attempt = 0; attempt < 120; attempt++) {
+    if (spawnError) throw spawnError;
+    if (child.exitCode !== null || child.signalCode) throw new Error('postgres exited before readiness');
     try {
       prove();
       psqlFn('select 1');
