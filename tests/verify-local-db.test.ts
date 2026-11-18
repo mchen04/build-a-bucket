@@ -111,8 +111,15 @@ describe('local-db main', () => {
   it('stops Postgres on SIGTERM during the command', async () => {
     const dir = tempDir();
     const postgres = new FakeChild(200);
-    const test = new FakeChild(300, { exitOn: new Set() });
+    const test = new FakeChild(300, { exitOn: new Set(['SIGTERM']) });
     const signals = new EventEmitter();
+    const order: string[] = [];
+    test.on('exit', () => order.push('child-exit'));
+    const kill = postgres.kill.bind(postgres);
+    postgres.kill = (signal: string) => {
+      order.push(`postgres-${signal}`);
+      return kill(signal);
+    };
     let calls = 0;
     let code: number | null = null;
     const promise = main({
@@ -137,6 +144,7 @@ describe('local-db main', () => {
     await promise;
     expect(postgres.signals).toEqual(['SIGINT']);
     expect(code).toBe(1);
+    expect(order).toEqual(['child-exit', 'postgres-SIGINT']);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.services[0]?.state).toBe('clean');
     expect(signals.listenerCount('SIGTERM')).toBe(0);

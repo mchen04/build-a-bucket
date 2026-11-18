@@ -97,19 +97,17 @@ export async function main({
     return Promise.resolve({ state: 'clean', reason: null });
   });
   const shutdown = async () => {
-    if (active?.testChild) active.testChild.kill('SIGTERM');
+    if (active?.testChild) {
+      active.testChild.kill('SIGTERM');
+      await waitForExit(active.testChild, 0, clock);
+    }
     const result = await stopPostgres();
     if (receiptPath) writeJson(receiptPath, { ok: result.state === 'clean', services: [result] });
     exit(1);
   };
   let shutdownPromise = null;
-  let resolveShutdown;
-  const shutdownSignal = new Promise((resolve) => {
-    resolveShutdown = resolve;
-  });
   const onSignal = () => {
     shutdownPromise = shutdown();
-    resolveShutdown();
   };
   signals.on('SIGINT', onSignal);
   signals.on('SIGTERM', onSignal);
@@ -135,7 +133,7 @@ export async function main({
       testError = error;
     });
     testChild.once('exit', () => {});
-    const exitResult = await Promise.race([waitForExit(testChild, 0, clock), shutdownSignal]);
+    const exitResult = await waitForExit(testChild, 0, clock);
     const result = await stopPostgres();
     const ok = result.state === 'clean' && !testError && !exitResult?.error;
     if (receiptPath) writeJson(receiptPath, { ok, reason: testError?.message ?? exitResult?.error?.message, services: [result] });
