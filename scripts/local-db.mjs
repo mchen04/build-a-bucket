@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { groupMembers, probePid, probePort, readProcessIdentity } from '../.claude/skills/verify-build-a-bucket/scripts/process-control.mjs';
-import { runSupervised, stopService } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
+import { stopService, waitForExit } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PG_BIN = process.env.BAB_PG_BIN ?? '/opt/homebrew/bin';
@@ -46,6 +46,14 @@ export function localDbEnv(handle) {
   };
 }
 
+export function createStopOnce(stop) {
+  let promise = null;
+  return () => {
+    if (!promise) promise = stop();
+    return promise;
+  };
+}
+
 export function prepareLocalDb(options = {}) {
   const root = options.root ?? REPO;
   const pgPort = Number(options.pgPort ?? process.env.BAB_LOCAL_PG_PORT ?? 55434);
@@ -70,16 +78,20 @@ export async function startLocalDb(options = {}) {
   const prepared = prepareLocalDb(options);
   const { dataDir, pgPort, database, root } = prepared;
   const schema = options.schema ?? path.join(root, 'db', 'schema.sql');
+  const spawnFn = options.spawn ?? spawn;
+  const psqlFn = options.psql ?? psql;
+  const schemaLoad = options.schemaLoad ?? (() => execFileSync(tool('psql'), ['-h', HOST, '-p', String(pgPort), '-U', USER, '-d', database, '-v', 'ON_ERROR_STOP=1', '-q', '-f', schema], { stdio: 'ignore' }));
   const pgLog = fs.openSync(path.join(dataDir, 'pg.log'), 'a');
-  const child = spawn(
+  const child = spawnFn(
     tool('postgres'),
     ['-D', dataDir, '-p', String(pgPort), '-k', '/tmp', '-c', `listen_addresses=${HOST}`, '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off', '-c', 'max_connections=100'],
     { stdio: ['ignore', pgLog, pgLog] },
   );
+  if (options.onChild) options.onChild(child, pgPort);
   let ready = false;
   for (let attempt = 0; attempt < 120; attempt++) {
     try {
-      psql(pgPort, 'postgres', 'select 1');
+      psqlFn(pgPort, 'postgres', 'select 1');
       ready = true;
       break;
     } catch {
@@ -92,11 +104,9 @@ export async function startLocalDb(options = {}) {
     throw new Error('local postgres did not become ready');
   }
   try {
-    psql(pgPort, 'postgres', `drop database if exists ${database}`);
-    psql(pgPort, 'postgres', `create database ${database}`);
-    execFileSync(tool('psql'), ['-h', HOST, '-p', String(pgPort), '-U', USER, '-d', database, '-v', 'ON_ERROR_STOP=1', '-q', '-f', schema], {
-      stdio: 'ignore',
-    });
+    psqlFn(pgPort, 'postgres', `drop database if exists ${database}`);
+    psqlFn(pgPort, 'postgres', `create database ${database}`);
+    schemaLoad();
   } catch (error) {
     const result = await stopService({ service: { name: 'postgres', kind: 'postgres', port: pgPort }, child, controls: controls() });
     if (options.receiptPath) writeJson(options.receiptPath, { ok: result.state === 'clean', services: [result] });
@@ -126,12 +136,17 @@ async function main() {
   };
   const receiptPath = process.env.BAB_LOCAL_DB_RECEIPT;
   let active = null;
+  const stopPostgres = createStopOnce(() => {
+    const child = active?.handle?.child ?? active?.child;
+    const port = active?.handle?.pgPort ?? active?.pgPort;
+    return child
+      ? stopService({ service: { name: 'postgres', kind: 'postgres', port }, child, controls: controls() })
+      : Promise.resolve({ state: 'clean', reason: null });
+  });
   const shutdown = async () => {
     if (active?.testChild) active.testChild.kill('SIGTERM');
-    if (active?.handle) {
-      const result = await stopService({ service: { name: 'postgres', kind: 'postgres', port: active.handle.pgPort }, child: active.handle.child, controls: controls() });
-      if (receiptPath) writeJson(receiptPath, { ok: result.state === 'clean', services: [result] });
-    }
+    const result = await stopPostgres();
+    if (receiptPath) writeJson(receiptPath, { ok: result.state === 'clean', services: [result] });
     process.exit(1);
   };
   process.on('SIGINT', shutdown);
@@ -141,22 +156,19 @@ async function main() {
     dataDir: value('data-dir', undefined),
     remove: !flags.includes('--keep'),
     receiptPath,
-  });
-  active = { handle };
-  process.stderr.write(`local postgres ${handle.url}\n`);
-  const result = await runSupervised({
-    children: [{ service: { name: 'postgres', kind: 'postgres', port: handle.pgPort }, child: handle.child }],
-    command,
-    commandEnv: { ...process.env, ...localDbEnv(handle) },
-    commandCwd: handle.root,
-    controls: { ...controls(), spawn },
-    receiptPath,
-    onTestChild: (child) => {
-      active.testChild = child;
+    onChild: (child, pgPort) => {
+      active = { ...(active ?? {}), child, pgPort };
     },
   });
-  if (result.results[0]?.state === 'clean' && handle.remove) fs.rmSync(handle.dataDir, { recursive: true, force: true });
-  process.exitCode = result.code;
+  active = { ...(active ?? {}), handle };
+  process.stderr.write(`local postgres ${handle.url}\n`);
+  const testChild = spawn(command[0], command.slice(1), { cwd: handle.root, env: { ...process.env, ...localDbEnv(handle) }, stdio: 'inherit' });
+  active.testChild = testChild;
+  const exit = await waitForExit(testChild, 0, { setTimeout: globalThis.setTimeout });
+  const result = await stopPostgres();
+  if (receiptPath) writeJson(receiptPath, { ok: result.state === 'clean', services: [result] });
+  if (result.state === 'clean' && handle.remove) fs.rmSync(handle.dataDir, { recursive: true, force: true });
+  process.exitCode = exit?.code ?? 1;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

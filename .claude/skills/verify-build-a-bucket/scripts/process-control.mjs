@@ -30,11 +30,18 @@ export function groupMembers(pgid) {
   }
 }
 
-export function descendants(pid) {
+export function descendants(pid, controls = {}) {
+  const pgrep = controls.pgrep ?? ((value) => execFileSync('pgrep', ['-P', String(value)], { encoding: 'utf8' }));
   try {
-    const out = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }).trim();
+    const out = pgrep(pid).trim();
     const kids = out ? out.split('\n').filter(Boolean).map(Number) : [];
-    return { ok: true, pids: kids.flatMap((kid) => [kid, ...descendants(kid).pids]) };
+    const pids = [];
+    for (const kid of kids) {
+      const nested = descendants(kid, controls);
+      if (!nested.ok) return nested;
+      pids.push(kid, ...nested.pids);
+    }
+    return { ok: true, pids };
   } catch (error) {
     if (error?.status === 1) return { ok: true, pids: [] };
     return { ok: false, reason: error?.message ?? 'pgrep failed' };

@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { requestStop, runSupervised, startSupervisor, stopService } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
 import type { Controls } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
+import { descendants } from '../.claude/skills/verify-build-a-bucket/scripts/process-control.mjs';
+import { createStopOnce, startLocalDb } from '../scripts/local-db.mjs';
 
 class FakeChild {
   pid: number;
@@ -258,6 +260,44 @@ describe('supervisor lifecycle', () => {
 });
 
 describe('in-process suite supervision', () => {
+  it('propagates a nested descendant enumeration failure', () => {
+    const pgrep = (pid: number) => {
+      if (pid === 100) return '101\n';
+      throw Object.assign(new Error('failed'), { status: 2 });
+    };
+    expect(descendants(100, { pgrep })).toEqual({ ok: false, reason: 'failed' });
+  });
+
+  it('stops a child once through the shared guard', async () => {
+    let calls = 0;
+    const stop = createStopOnce(async () => {
+      calls += 1;
+      return { state: 'clean' };
+    });
+    await stop();
+    await stop();
+    expect(calls).toBe(1);
+  });
+
+  it('exposes the Postgres child as soon as it is spawned', async () => {
+    const dir = tempDir();
+    writeFileSync(path.join(dir, 'PG_VERSION'), '14\n');
+    const child = new FakeChild(200);
+    let seen: FakeChild | null = null;
+    const handle = await startLocalDb({
+      dataDir: dir,
+      pgPort: 55434,
+      spawn: () => child,
+      psql: () => '1',
+      schemaLoad: () => {},
+      onChild: (value: FakeChild) => {
+        seen = value;
+      },
+    });
+    expect(seen).toBe(child);
+    expect(handle.child).toBe(child);
+  });
+
   it('stops Postgres after a failed suite command', async () => {
     const dir = tempDir();
     const postgres = new FakeChild(200);

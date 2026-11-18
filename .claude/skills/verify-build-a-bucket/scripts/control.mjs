@@ -110,7 +110,6 @@ async function launch() {
     startedAt: new Date().toISOString(),
   };
   saveState(dir, state);
-  fs.writeFileSync(ackPath, 'ack\n');
   fs.mkdirSync(home, { recursive: true });
   fs.writeFileSync(path.join(home, 'current'), dir);
   const deadline = Date.now() + 90000;
@@ -126,6 +125,8 @@ async function launch() {
     state.cleanup = receipt;
     saveState(dir, state);
     process.exitCode = 1;
+  } else {
+    fs.writeFileSync(ackPath, 'ack\n');
   }
 }
 

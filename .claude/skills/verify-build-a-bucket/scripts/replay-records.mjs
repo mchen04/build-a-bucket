@@ -149,6 +149,24 @@ function parseFlags(args) {
   return out;
 }
 
+export function selectRunDir({ out, launchAttempted, verifyHome }) {
+  let runDir = '';
+  try {
+    runDir = JSON.parse(fs.readFileSync(path.join(out, 'launch.json'), 'utf8')).run ?? '';
+  } catch {
+    runDir = '';
+  }
+  if (!runDir && launchAttempted) {
+    try {
+      const current = fs.readFileSync(path.join(verifyHome, 'current'), 'utf8').trim();
+      if (current.startsWith(verifyHome + path.sep)) runDir = current;
+    } catch {
+      runDir = '';
+    }
+  }
+  return runDir;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [command, ...rest] = process.argv.slice(2);
   const flags = parseFlags(rest);
@@ -176,8 +194,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log(JSON.stringify(buildMetaRecord({ head: flags.head, out: flags.out, babVerifyHome: flags['bab-home'], port: Number(flags.port), e2ePort: Number(flags['e2e-port']), suitePgPort: Number(flags['suite-pg-port']) })));
   } else if (command === 'tracked') {
     console.log(JSON.stringify(buildTrackedRecord({ pid: Number(flags.pid), port: Number(flags.port), pgPort: flags['pg-port'] ? Number(flags['pg-port']) : null })));
+  } else if (command === 'select-run-dir') {
+    console.log(selectRunDir({ out: flags.out, launchAttempted: flags['launch-attempted'] === '1', verifyHome: flags['verify-home'] }));
   } else {
-    console.error('usage: replay-records.mjs cleanup|run|meta|tracked [--key value]');
+    console.error('usage: replay-records.mjs cleanup|run|meta|tracked|select-run-dir [--key value]');
     process.exit(2);
   }
 }

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { checkReplay } from '../.claude/skills/verify-build-a-bucket/scripts/replay-check.mjs';
-import { buildCleanupLines, buildControlFixture } from '../.claude/skills/verify-build-a-bucket/scripts/replay-records.mjs';
+import { buildCleanupLines, buildControlFixture, selectRunDir } from '../.claude/skills/verify-build-a-bucket/scripts/replay-records.mjs';
 
 const temps: string[] = [];
 afterEach(() => {
@@ -338,5 +338,34 @@ describe('replay checker', () => {
     const dir = control();
     writeFileSync(path.join(dir, 'cleanup.exit'), '1\n');
     expect(check(dir).ok).toBe(false);
+  });
+});
+
+describe('run dir selection', () => {
+  it('selects the launched run dir from launch.json', () => {
+    const out = mkdtempSync(path.join(os.tmpdir(), 'r26-'));
+    temps.push(out);
+    const run = path.join(out, 'bab-home', 'id');
+    mkdirSync(run, { recursive: true });
+    writeFileSync(path.join(out, 'launch.json'), JSON.stringify({ run }));
+    expect(selectRunDir({ out, launchAttempted: true, verifyHome: path.join(out, 'bab-home') })).toBe(run);
+  });
+
+  it('falls back to current only inside the verify home', () => {
+    const out = mkdtempSync(path.join(os.tmpdir(), 'r26-'));
+    temps.push(out);
+    const home = path.join(out, 'bab-home');
+    const run = path.join(home, 'id');
+    mkdirSync(run, { recursive: true });
+    writeFileSync(path.join(home, 'current'), run);
+    expect(selectRunDir({ out, launchAttempted: true, verifyHome: home })).toBe(run);
+    writeFileSync(path.join(home, 'current'), '/tmp/other');
+    expect(selectRunDir({ out, launchAttempted: true, verifyHome: home })).toBe('');
+  });
+
+  it('returns empty when no launch was attempted', () => {
+    const out = mkdtempSync(path.join(os.tmpdir(), 'r26-'));
+    temps.push(out);
+    expect(selectRunDir({ out, launchAttempted: false, verifyHome: path.join(out, 'bab-home') })).toBe('');
   });
 });
