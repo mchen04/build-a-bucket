@@ -16,7 +16,18 @@ export function cleanupOwned(options: {
   controls: {
     readIdentity: (pid: number) => ProcessIdentity | null;
     signal: (pid: number, signal: string) => void;
-    sleep: (ms: number) => void;
+    sleep: (ms: number) => void | Promise<void>;
     probe: (pid: number) => ProbeState;
   };
-}): CleanupResult;
+}): Promise<CleanupResult>;
+export function cleanupRun(options: {
+  state: { pid: number; port: number; identity?: ProcessIdentity | null };
+  controls: {
+    readIdentity: (pid: number) => ProcessIdentity | null;
+    signal: (pid: number, signal: string) => void;
+    sleep: (ms: number) => void | Promise<void>;
+    probe: (pid: number) => ProbeState;
+    descendants: (pid: number) => number[];
+    probePort: (port: number) => ProbeState;
+  };
+}): Promise<CleanupResult & { portState: ProbeState }>;

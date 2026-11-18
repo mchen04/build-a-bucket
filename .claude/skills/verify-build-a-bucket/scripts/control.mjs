@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
-import { cleanupOwned, probePid, probePort, readProcessIdentity } from './process-control.mjs';
+import { cleanupRun, probePid, probePort, readProcessIdentity } from './process-control.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -1302,11 +1302,17 @@ async function coldLoad() {
 
 async function cleanup() {
   const { dir, state } = currentRun();
-  const root = state.identity ?? null;
-  const descendants = root ? descendants(state.pid).map((pid) => readProcessIdentity(pid)).filter(Boolean) : [];
-  const result = root
-    ? cleanupOwned({ root, descendants, controls: { readIdentity: readProcessIdentity, signal: process.kill, sleep, probe: probePid } })
-    : { stopped: [], uncertain: [{ pid: state.pid, reason: 'no launch identity recorded' }], failures: [] };
+  const result = await cleanupRun({
+    state,
+    controls: {
+      readIdentity: readProcessIdentity,
+      signal: process.kill,
+      sleep,
+      probe: probePid,
+      descendants,
+      probePort,
+    },
+  });
   let removed = [];
   if (!state.localDb && state.lobbies.length && state.mode === 'dev') {
     const outText = execFileSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'drop-lobbies.ts'), ...state.lobbies], { cwd: repo, encoding: 'utf8' });
@@ -1316,9 +1322,8 @@ async function cleanup() {
   fs.rmSync(path.join(home, 'current'), { force: true });
   for (const f of fs.readdirSync(dir)) if (f.startsWith('session-')) fs.rmSync(path.join(dir, f));
   const evidence = path.join(dir, 'evidence');
-  const portState = probePort(state.port);
-  console.log(JSON.stringify({ stopped: result.stopped, uncertain: result.uncertain, failures: result.failures, portState, portFree: portState === 'absent', lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
-  if (result.uncertain.length || result.failures.length || portState !== 'absent') process.exitCode = 1;
+  console.log(JSON.stringify({ stopped: result.stopped, uncertain: result.uncertain, failures: result.failures, portState: result.portState, portFree: result.portState === 'absent', lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
+  if (result.uncertain.length || result.failures.length || result.portState !== 'absent') process.exitCode = 1;
 }
 
 async function perf() {

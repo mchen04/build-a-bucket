@@ -35,11 +35,20 @@ export function probePort(port, controls = {}) {
   }
 }
 
-export function cleanupOwned({ root, descendants = [], controls }) {
+export async function cleanupOwned({ root, descendants = [], controls }) {
   const { readIdentity, signal, sleep, probe } = controls;
   const stopped = [];
   const uncertain = [];
   const failures = [];
+  const rootCurrent = readIdentity(root.pid);
+  if (!rootCurrent) {
+    if (probe(root.pid) !== 'absent') uncertain.push({ pid: root.pid, reason: 'root identity unavailable' });
+    return { stopped, uncertain, failures };
+  }
+  if (!sameIdentity(root, rootCurrent)) {
+    uncertain.push({ pid: root.pid, reason: 'root identity changed before cleanup' });
+    return { stopped, uncertain, failures };
+  }
   for (const expected of [...descendants].reverse().concat(root)) {
     const current = readIdentity(expected.pid);
     if (!current) {
@@ -62,7 +71,7 @@ export function cleanupOwned({ root, descendants = [], controls }) {
       uncertain.push({ pid: expected.pid, reason: `SIGTERM failed: ${error?.code ?? error?.message}` });
     }
   }
-  sleep(1500);
+  await sleep(1500);
   for (const pid of stopped) {
     const expected = pid === root.pid ? root : descendants.find((entry) => entry.pid === pid);
     const current = readIdentity(pid);
@@ -91,6 +100,16 @@ export function cleanupOwned({ root, descendants = [], controls }) {
     else if (state === 'unknown') failures.push({ pid: expected.pid, reason: 'process state unknown' });
   }
   return { stopped, uncertain, failures };
+}
+
+export async function cleanupRun({ state, controls }) {
+  const root = state.identity ?? null;
+  if (!root) {
+    return { stopped: [], uncertain: [{ pid: state.pid, reason: 'no launch identity recorded' }], failures: [], portState: controls.probePort(state.port) };
+  }
+  const descendantIdentities = controls.descendants(root.pid).map((pid) => controls.readIdentity(pid)).filter(Boolean);
+  const result = await cleanupOwned({ root, descendants: descendantIdentities, controls });
+  return { ...result, portState: controls.probePort(state.port) };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
