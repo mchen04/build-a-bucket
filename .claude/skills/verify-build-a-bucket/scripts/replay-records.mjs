@@ -98,7 +98,7 @@ export function buildControlSummary(run) {
     reload:
       run.reloadSeat === null
         ? undefined
-        : { ran: true, revision, seats, rowsCompared: 20, refreshedSeat: { seat: run.reloadSeat, name: `P${run.reloadSeat}` }, coverage: 'ok' },
+        : { classification: 'stable-match', ran: true, revision, seats, rowsCompared: 20, refreshedSeat: { seat: run.reloadSeat, name: `P${run.reloadSeat}` }, navigation: { observed: true }, attempts: null, coverage: 'ok' },
     stages,
     errors: seatEntries(run.players, 'errors'),
     httpErrors: seatEntries(run.players, 'responses'),
@@ -156,7 +156,14 @@ export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, p
     const runDir = path.join(out, 'runs', run.name);
     writeJson(path.join(runDir, 'run.json'), buildRunRecord(run));
     writeText(path.join(runDir, 'exit'), '0\n');
-    writeJson(path.join(runDir, 'evidence', 'league-2026-01-01T00-00-00-000Z-abc', 'summary.json'), buildControlSummary(run));
+    const evidenceDir = path.join(runDir, 'evidence', 'league-2026-01-01T00-00-00-000Z-abc');
+    const summary = buildControlSummary(run);
+    if (run.reloadSeat !== null) {
+      const attemptsPath = path.join(evidenceDir, 'reload-attempts.json');
+      summary.reload.attempts = attemptsPath;
+      writeJson(attemptsPath, { classification: 'stable-match', reason: null, revision: summary.reload.revision, seats: summary.reload.seats, rowsCompared: summary.reload.rowsCompared, samples: [{ attempt: 0, ms: 0, recap: false, seats: [] }] });
+    }
+    writeJson(path.join(evidenceDir, 'summary.json'), summary);
   }
   return out;
 }

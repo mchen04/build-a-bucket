@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
+import { allEliminated, awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
 import { buildSupervisorSpec } from './supervisor-spec.mjs';
@@ -318,6 +318,8 @@ async function leagueRun() {
   const ev = createLeagueEvidenceDir(path.join(dir, 'evidence'));
   const names = ['Ava', 'Ben', 'Cara', 'Dev', 'Eli', 'Fay', 'Gus', 'Hana'];
   const seats = [];
+  const lifecycle = [];
+  browser.on('disconnected', () => lifecycle.push({ event: 'browser-disconnected', at: new Date().toISOString() }));
   const apiSamples = new Map();
   const requestStarts = new WeakMap();
   const apiKey = (method, url) => {
@@ -329,6 +331,9 @@ async function leagueRun() {
     const page = await context.newPage();
     const errors = [];
     const http = [];
+    page.on('crash', () => lifecycle.push({ seat: index + 1, name: names[index], event: 'page-crash', at: new Date().toISOString() }));
+    page.on('close', () => lifecycle.push({ seat: index + 1, name: names[index], event: 'page-close', at: new Date().toISOString() }));
+    context.on('close', () => lifecycle.push({ seat: index + 1, name: names[index], event: 'context-close', at: new Date().toISOString() }));
     page.on('pageerror', (error) => errors.push(String(error).slice(0, 200)));
     page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text().slice(0, 200)); });
     page.on('response', (response) => {
@@ -359,6 +364,13 @@ async function leagueRun() {
   const snap = async (seat, label) => {
     await seat.page.screenshot({ path: path.join(ev, `${seat.seat}-${seat.name}-${label}.png`) });
     fs.writeFileSync(path.join(ev, `${seat.seat}-${seat.name}-${label}.aria.txt`), await seat.page.locator('body').ariaSnapshot());
+  };
+  const snapReload = async (seat, phase) => {
+    await seat.page.screenshot({ path: path.join(ev, `reload-${phase}-${seat.seat}-${seat.name}.png`) });
+    fs.writeFileSync(path.join(ev, `reload-${phase}-${seat.seat}-${seat.name}.aria.txt`), await seat.page.locator('body').ariaSnapshot());
+  };
+  const snapFailure = async (seat) => {
+    await seat.page.screenshot({ path: path.join(ev, `failure-${seat.seat}-${seat.name}.png`) }).catch(() => {});
   };
   const visible = async (seat, testId) => seat.page.getByTestId(testId).isVisible().catch(() => false);
   const anyVisible = async (testId) => {
@@ -702,6 +714,7 @@ async function leagueRun() {
     if (await startNow.isVisible().catch(() => false)) await startNow.click().catch(() => {});
     await hostSeat.page.getByTestId('league-stage').waitFor();
     if (recordMarks) mark('season-start');
+    reload.armed = true;
   };
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
   let code = null;
@@ -737,6 +750,25 @@ async function leagueRun() {
         const record = await verifyStage(`recap-${checkpoint}`, null);
         stages.push(record);
         mark('recap');
+        if (reloadSeat !== null && !reload.ran) {
+          const seat = seats[reloadSeat - 1];
+          const other = active().find((entry) => entry.seat !== seat.seat);
+          const out = await Promise.all(active().map((entry) => entry.page.getByText('You are out').first().isVisible().catch(() => false)));
+          const activity = await Promise.all(active().map(logText));
+          if (allEliminated({ out, activity })) {
+            await snapReload(seat, 'before');
+            if (other) await snapReload(other, 'before');
+            await snapReload(seat, 'after');
+            if (other) await snapReload(other, 'after');
+            const proof = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: seat, wait: async () => {}, attempts: 1 });
+            reload.classification = proof.classification;
+            reload.reason = proof.reason;
+            reload.samples = proof.attempts;
+            reload.ran = false;
+            fs.writeFileSync(path.join(ev, 'reload-attempts.json'), JSON.stringify({ classification: proof.classification, reason: proof.reason, revision: null, seats: [], rowsCompared: 0, samples: proof.attempts }, null, 2));
+            reload.attempts = path.join(ev, 'reload-attempts.json');
+          }
+        }
         break;
       }
       if (await visible(host, 'playoff-gate')) {
@@ -756,6 +788,47 @@ async function leagueRun() {
         const gateLogs = await Promise.all(active().map(logText));
         if (new Set(gateLogs).size > 1) throw new Error('activity logs differ at the playoff gate');
         for (const seat of active()) await installSeriesObserver(seat);
+        if (reloadSeat !== null && !reload.ran) {
+          const seat = seats[reloadSeat - 1];
+          const other = active().find((entry) => entry.seat !== seat.seat);
+          reload.refreshedSeat = { seat: seat.seat, name: seat.name };
+          await snapReload(seat, 'before');
+          if (other) await snapReload(other, 'before');
+          await seat.page.evaluate(() => {
+            window.__reloadMarker = 'before';
+          });
+          await seat.page.reload({ waitUntil: 'load' });
+          const navigation = await seat.page.evaluate(() => {
+            const entry = performance.getEntriesByType('navigation')[0];
+            return { marker: window.__reloadMarker ?? null, type: entry?.type ?? null };
+          });
+          reload.navigation = { observed: navigation.marker === null && navigation.type === 'reload', type: navigation.type, marker: navigation.marker };
+          await waitStage(seat);
+          await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
+          const proof = await awaitReloadProof({
+            readAll: async () => Promise.all(active().map(async (entry) => ({ seat: entry, ...(await entry.page.evaluate(readLeagueStandings)) }))),
+            isRecap: () => visible(seat, 'recap'),
+            refreshedSeat: seat,
+            wait: () => host.page.waitForTimeout(250),
+            attempts: 40,
+            navigation: reload.navigation,
+          });
+          reload.classification = proof.classification;
+          reload.reason = proof.reason ?? null;
+          reload.samples = proof.attempts;
+          reload.ran = proof.classification === 'stable-match';
+          reload.revision = proof.revision;
+          reload.seats = proof.seats;
+          reload.rowsCompared = proof.rowsCompared;
+          await snapReload(seat, 'after');
+          if (other) await snapReload(other, 'after');
+          fs.writeFileSync(path.join(ev, 'reload-attempts.json'), JSON.stringify({ classification: proof.classification, reason: proof.reason ?? null, revision: proof.revision, seats: proof.seats, rowsCompared: proof.rowsCompared, samples: proof.attempts }, null, 2));
+          reload.attempts = path.join(ev, 'reload-attempts.json');
+          if (proof.classification === 'stable-match') {
+            stages.push({ label: 'after-reload', phase: await phaseOf(seat), revision: proof.revision, seats: proof.seats, standings: proof.standings });
+            await snap(seat, 'after-reload');
+          }
+        }
         const gateAt = Date.now();
         const readyAt = new Map();
         for (const seat of active()) if (await clickReady(seat)) readyAt.set(seat.seat, Date.now());
@@ -806,41 +879,6 @@ async function leagueRun() {
         }
         if (!chaosDone && checkpoint === 0) {
           chaosDone = true;
-          if (reloadSeat !== null) {
-            const seat = seats[reloadSeat - 1];
-            reload.refreshedSeat = { seat: seat.seat, name: seat.name };
-            await seat.page.reload({ waitUntil: 'load' });
-            await waitStage(seat);
-            await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
-            let common = null;
-            let refreshedInvalid = false;
-            for (let attempt = 0; attempt < 40; attempt++) {
-              const reads = await Promise.all(active().map(async (entry) => ({ seat: entry, ...(await entry.page.evaluate(readLeagueStandings)) })));
-              const refreshed = reads.find((entry) => entry.seat.seat === seat.seat && entry.seat.name === seat.name);
-              if (!isValidRevision(refreshed?.revision)) {
-                refreshedInvalid = true;
-                if (await visible(seat, 'recap')) break;
-                await host.page.waitForTimeout(250);
-                continue;
-              }
-              refreshedInvalid = false;
-              const result = compareStandings(reads, seat);
-              if (!result.ok && result.reason.startsWith('standings differ')) throw new Error(result.reason);
-              if (result.ok) common = result;
-              if (common) break;
-              await host.page.waitForTimeout(250);
-            }
-            if (!common) {
-              if (refreshedInvalid) throw new Error(`refreshed seat ${seat.seat} has no valid displayed revision after reload (stage and progress required)`);
-              throw new Error('no common standings revision after reload');
-            }
-            reload.ran = true;
-            reload.revision = common.revision;
-            reload.seats = common.seats;
-            reload.rowsCompared = common.rowsCompared;
-            stages.push({ label: 'after-reload', phase: await phaseOf(seat), revision: common.revision, seats: common.seats, standings: common.standings });
-            await snap(seat, 'after-reload');
-          }
           if (awaySeat !== null) {
             const seat = seats[awaySeat - 1];
             await seat.context.close();
@@ -1038,13 +1076,16 @@ async function leagueRun() {
       evidence: ev,
     });
     summary.reload = reloadRecord(reloadSeat !== null, reload);
+    summary.lifecycle = lifecycle;
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
     summaryWritten = true;
     console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reload: summary.reload, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
     if (summary.reload.coverage !== 'ok') throw new Error(`refresh coverage missing: ${summary.reload.coverage}`);
   } catch (error) {
+    for (const seat of active()) await snapFailure(seat);
     if (!summaryWritten) {
       const failure = leagueFailureSummary({ error, code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reloadRequested: reloadSeat !== null, reload, evidence: ev, at: new Date().toISOString() });
+      failure.lifecycle = lifecycle;
       fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(failure, null, 2));
     }
     throw error;

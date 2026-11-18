@@ -166,6 +166,7 @@ function checkRun(run, dir) {
   if (summary.playAgain !== true) failures.push('Play Again not reached');
   if (run.reloadSeat !== null) {
     const reload = summary.reload;
+    if (reload?.classification !== 'stable-match') failures.push(`reload classification is '${reload?.classification}'`);
     if (!reload || reload.ran !== true) failures.push('reload.ran is not true');
     if (!reload || !isPositiveInt(reload.rowsCompared)) failures.push('reload.rowsCompared is not a positive integer');
     if (!reload || !validRevision(reload.revision)) failures.push('reload.revision is not valid');
@@ -175,6 +176,17 @@ function checkRun(run, dir) {
     if (identities.size < 2) failures.push(`reload.seats has ${identities.size} distinct seats`);
     if (!identities.has(run.reloadSeat)) failures.push(`reload.seats does not include seat ${run.reloadSeat}`);
     for (const number of identities.keys()) if (number < 1 || number > run.players) failures.push(`reload.seats has out-of-range seat ${number}`);
+    if (reload?.navigation?.observed !== true) failures.push('reload navigation not observed');
+    if (!reload?.attempts) failures.push('reload attempts file missing');
+    else {
+      const attempts = readJson(path.resolve(reload.attempts));
+      if (!attempts) failures.push('reload attempts file malformed');
+      else {
+        if (attempts.classification !== reload.classification) failures.push('reload attempts classification mismatch');
+        if (JSON.stringify(attempts.revision) !== JSON.stringify(reload.revision)) failures.push('reload attempts revision mismatch');
+        if (!Array.isArray(attempts.samples) || attempts.samples.length > 60) failures.push('reload attempts count out of bound');
+      }
+    }
     const after = stages.find((stage) => stage?.label === 'after-reload');
     if (!after) failures.push('summary has no after-reload stage');
     else {

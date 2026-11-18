@@ -85,6 +85,63 @@ export function canonicalTables(tables) {
   return tables.map((rows) => (Array.isArray(rows) ? rows.slice(0, 10).map(normalizeRow) : []));
 }
 
+function countRows(tables) {
+  return Array.isArray(tables) ? tables.reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0) : 0;
+}
+
+export function allEliminated({ out, activity }) {
+  return (
+    Array.isArray(out) &&
+    out.length > 0 &&
+    out.every(Boolean) &&
+    Array.isArray(activity) &&
+    activity.length > 0 &&
+    activity.every((text) => String(text).includes('The playoffs started automatically'))
+  );
+}
+
+export async function awaitReloadProof({ readAll, isRecap, refreshedSeat, wait, attempts = 40, gate = true, navigation = null }) {
+  if (!gate) return { classification: 'no-held-boundary', reason: 'no held playoff gate', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: [] };
+  if (navigation && navigation.observed !== true) {
+    return { classification: 'invalid-display', reason: navigation.reason ?? 'reload navigation not observed', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: [] };
+  }
+  const start = Date.now();
+  const samples = [];
+  let refreshedInvalid = false;
+  let recapBeforeProof = false;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const reads = await readAll();
+    const recap = await isRecap();
+    const refreshed = reads.find((entry) => entry.seat.seat === refreshedSeat.seat && entry.seat.name === refreshedSeat.name);
+    samples.push({
+      attempt,
+      ms: Date.now() - start,
+      recap,
+      seats: reads.map((entry) => ({ seat: entry.seat.seat, name: entry.seat.name, revision: revisionLabel(entry.revision), rows: countRows(entry.tables) })),
+    });
+    if (!isValidRevision(refreshed?.revision)) {
+      refreshedInvalid = true;
+      if (recap) {
+        recapBeforeProof = true;
+        break;
+      }
+      await wait();
+      continue;
+    }
+    refreshedInvalid = false;
+    const result = compareStandings(reads, refreshedSeat);
+    if (result.ok) return { classification: 'stable-match', revision: result.revision, seats: result.seats, rowsCompared: result.rowsCompared, standings: result.standings, attempts: samples };
+    if (result.reason.startsWith('standings differ')) return { classification: 'unequal', reason: result.reason, revision: null, seats: [], rowsCompared: 0, standings: null, attempts: samples };
+    if (result.reason.startsWith('empty standings') || result.reason.startsWith('blank standings') || result.reason.startsWith('conflicting names')) {
+      return { classification: 'invalid-display', reason: result.reason, revision: null, seats: [], rowsCompared: 0, standings: null, attempts: samples };
+    }
+    await wait();
+  }
+  if (recapBeforeProof) return { classification: 'recap-before-proof', reason: 'refreshed seat reached recap before a valid revision', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: samples };
+  if (refreshedInvalid) return { classification: 'invalid-display', reason: 'refreshed seat has no valid displayed revision', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: samples };
+  return { classification: 'no-common-revision', reason: 'no common standings revision', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: samples };
+}
+
 export function compareStandings(reads, refreshedSeat) {
   const groups = new Map();
   let invalid = 0;
@@ -141,6 +198,7 @@ export function createLeagueEvidenceDir(evidenceRoot, stamp = new Date().toISOSt
 
 export function refreshCoverage(reloadRequested, reload) {
   if (!reloadRequested) return { ok: true, reason: null };
+  if (reload?.classification !== 'stable-match') return { ok: false, reason: `reload classification is ${reload?.classification ?? 'missing'}` };
   if (!reload?.ran) return { ok: false, reason: 'reload did not run' };
   if (!isValidRevision(reload.revision)) return { ok: false, reason: 'reload recorded no valid displayed revision' };
   const identities = seatIdentities(reload.seats);
@@ -151,6 +209,8 @@ export function refreshCoverage(reloadRequested, reload) {
   if (!refreshedNumber) return { ok: false, reason: 'reload recorded no refreshed seat' };
   if (!identities.has(refreshedNumber)) return { ok: false, reason: 'reload did not include the refreshed seat' };
   if (!Number.isInteger(reload.rowsCompared) || reload.rowsCompared <= 0) return { ok: false, reason: 'reload compared no valid rows' };
+  if (reload?.navigation?.observed !== true) return { ok: false, reason: 'reload navigation not observed' };
+  if (!reload?.attempts) return { ok: false, reason: 'reload attempts file missing' };
   return { ok: true, reason: null };
 }
 

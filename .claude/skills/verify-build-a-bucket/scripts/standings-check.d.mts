@@ -10,6 +10,15 @@ export type CompareResult = {
   rowsCompared?: number;
 };
 export type Coverage = { ok: boolean; reason: string | null };
+export type ReloadProof = {
+  classification: 'stable-match' | 'unequal' | 'no-held-boundary' | 'invalid-display' | 'recap-before-proof' | 'no-common-revision';
+  reason?: string | null;
+  revision: Revision | null;
+  seats: string[];
+  rowsCompared: number;
+  standings: string[][] | null;
+  attempts: unknown[];
+};
 export type ReloadRecord = {
   ran?: boolean;
   revision?: unknown;
@@ -34,6 +43,16 @@ export function readLeagueStandings(): { revision: Revision; tables: string[][] 
 export function seatIdentities(seats: unknown): Map<number, Set<string>>;
 export function distinctSeatLabels(seats: unknown): Set<string>;
 export function canonicalTables(tables: unknown): string[][];
+export function allEliminated(args: { out: unknown; activity: unknown }): boolean;
+export function awaitReloadProof(args: {
+  readAll: () => Promise<Read[]>;
+  isRecap: () => Promise<boolean>;
+  refreshedSeat: Seat;
+  wait: () => Promise<void>;
+  attempts?: number;
+  gate?: boolean;
+  navigation?: { observed?: boolean; reason?: string } | null;
+}): Promise<ReloadProof>;
 export function compareStandings(reads: Read[], refreshedSeat: Seat): CompareResult;
 export function createLeagueEvidenceDir(evidenceRoot: string, stamp?: string, suffix?: string): string;
 export function refreshCoverage(reloadRequested: boolean, reload: unknown): Coverage;

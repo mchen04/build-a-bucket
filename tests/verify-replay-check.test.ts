@@ -159,6 +159,80 @@ describe('replay checker', () => {
     expect(check(dir).ok).toBe(false);
   });
 
+  it('fails a non-stable reload classification', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    value.reload.classification = 'unequal';
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails unobserved reload navigation', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    value.reload.navigation = { observed: false };
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a missing reload attempts file', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    value.reload.attempts = null;
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a malformed reload attempts file', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    writeFileSync(value.reload.attempts, '{');
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a reload attempts classification mismatch', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    const attempts = read(value.reload.attempts);
+    attempts.classification = 'unequal';
+    write(value.reload.attempts, attempts);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a reload attempts revision mismatch', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    const attempts = read(value.reload.attempts);
+    attempts.revision = { stage: 'Season', progress: '2 / 10' };
+    write(value.reload.attempts, attempts);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails an over-bound reload attempts file', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    const attempts = read(value.reload.attempts);
+    attempts.samples = Array.from({ length: 61 }, () => ({}));
+    write(value.reload.attempts, attempts);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails zero reload rows', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    value.reload.rowsCompared = 0;
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
   it('fails a missing after-reload stage', () => {
     const dir = control();
     const file = summaryPath(dir, 'run-a');
