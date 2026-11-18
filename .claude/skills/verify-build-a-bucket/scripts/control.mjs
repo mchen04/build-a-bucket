@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, reloadRecord } from './standings-check.mjs';
+import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -313,7 +313,7 @@ async function leagueRun() {
     ? { width: Number(String(o.viewport).split('x')[0]), height: Number(String(o.viewport).split('x')[1]) }
     : { width: 390, height: 844 };
   const reloadSeat = o.reload === undefined ? null : Number(o.reload);
-  const reload = { ran: false, revision: null, seats: [], rowsCompared: 0 };
+  const reload = { ran: false, revision: null, seats: [], rowsCompared: 0, refreshedSeat: null };
   const awaySeat = o.away === undefined ? null : Number(o.away);
   const hostLeave = Boolean(o['host-leave']);
   for (const [flag, value] of [['--reload', reloadSeat], ['--away', awaySeat]]) {
@@ -388,16 +388,6 @@ async function leagueRun() {
         [...table.querySelectorAll('.table-row:not(.head)')].map((row) => (row.innerText || '').replace(/YOU/g, '').replace(/\s+/g, ' ').trim()),
       ),
     );
-  const readStandingsRevision = async (seat) =>
-    seat.page.evaluate(() => {
-      const stage = document.querySelector('[data-testid="league-stage"]');
-      const lines = (stage?.innerText ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
-      const revision = { stage: lines[0] ?? '', progress: lines[1] ?? '' };
-      const tables = [...document.querySelectorAll('[data-testid="standings"] .table')].map((table) =>
-        [...table.querySelectorAll('.table-row:not(.head)')].map((row) => row.innerText || ''),
-      );
-      return { revision, tables };
-    });
   const parseRow = (text) => {
     const head = /^(\d+|—)\s+([A-Z]{2,3})\b/.exec(text);
     if (!head) return null;
@@ -825,13 +815,14 @@ async function leagueRun() {
           chaosDone = true;
           if (reloadSeat !== null) {
             const seat = seats[reloadSeat - 1];
+            reload.refreshedSeat = { seat: seat.seat, name: seat.name };
             await seat.page.reload({ waitUntil: 'load' });
             await waitStage(seat);
             await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
             let common = null;
             let refreshedInvalid = false;
             for (let attempt = 0; attempt < 40; attempt++) {
-              const reads = await Promise.all(active().map(async (entry) => ({ seat: entry, ...(await readStandingsRevision(entry)) })));
+              const reads = await Promise.all(active().map(async (entry) => ({ seat: entry, ...(await entry.page.evaluate(readLeagueStandings)) })));
               const refreshed = reads.find((entry) => entry.seat.seat === seat.seat && entry.seat.name === seat.name);
               if (!isValidRevision(refreshed?.revision)) {
                 refreshedInvalid = true;

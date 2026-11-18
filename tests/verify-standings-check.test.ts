@@ -71,7 +71,7 @@ describe('league evidence and refresh coverage', () => {
 
   it('requires a recorded refresh comparison when --reload is set', () => {
     expect(() => assertRefreshCoverage(true, { ran: false, revision: null, seats: [], rowsCompared: 0 })).toThrow();
-    expect(() => assertRefreshCoverage(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 20 })).not.toThrow();
+    expect(() => assertRefreshCoverage(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 20, refreshedSeat: { seat: 2, name: 'B' } })).not.toThrow();
   });
 
   it('records the coverage reason instead of throwing before the summary', () => {
@@ -82,9 +82,9 @@ describe('league evidence and refresh coverage', () => {
       rowsCompared: 0,
       coverage: 'reload did not run',
     });
-    expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A'], rowsCompared: 20 }).coverage).toBe('reload compared fewer than two seats');
-    expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 0 }).coverage).toBe('reload compared zero rows');
-    expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 20 }).coverage).toBe('ok');
+    expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A'], rowsCompared: 20 }).coverage).toBe('reload compared fewer than two distinct players');
+    expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 0, refreshedSeat: { seat: 2, name: 'B' } }).coverage).toBe('reload compared zero rows');
+    expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 20, refreshedSeat: { seat: 2, name: 'B' } }).coverage).toBe('ok');
     expect(reloadRecord(false, { ran: false, revision: null, seats: [], rowsCompared: 0 }).coverage).toBe('ok');
   });
 
@@ -161,6 +161,6 @@ describe('displayed revision validity (R21-A)', () => {
   });
 
   it('coverage accepts a valid structured revision', () => {
-    expect(() => assertRefreshCoverage(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 20 })).not.toThrow();
+    expect(() => assertRefreshCoverage(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 20, refreshedSeat: { seat: 2, name: 'B' } })).not.toThrow();
   });
 });

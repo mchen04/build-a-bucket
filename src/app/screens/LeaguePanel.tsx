@@ -166,8 +166,8 @@ function LeaguePanelView(props: Props) {
         <div class="card" data-testid="league-stage">
           <div class="row" style={{ alignItems: 'center' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div class="tiny muted">{league.stageName}</div>
-              <div style={{ fontWeight: 900, fontSize: 'var(--text-md)' }}>
+              <div class="tiny muted" data-testid="league-stage-name">{league.stageName}</div>
+              <div style={{ fontWeight: 900, fontSize: 'var(--text-md)' }} data-testid="league-stage-progress">
                 {gate?.active ? 'Game 1 next' : progress !== null ? `${progress} / ${league.stageTotal}` : 'Checkpoint'}
               </div>
             </div>
