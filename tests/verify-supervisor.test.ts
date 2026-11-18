@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -768,6 +768,38 @@ describe('supervisor async spawn errors', () => {
     expect(postgres.signals).toEqual(['SIGINT']);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
+    process.removeAllListeners('uncaughtException');
+    process.removeAllListeners('unhandledRejection');
+  });
+});
+
+describe('supervisor argv', () => {
+  it('passes an empty listen address through the supervisor CLI', async () => {
+    const dir = tempDir();
+    const argvFile = path.join(dir, 'argv.txt');
+    writeFileSync(path.join(dir, 'postgres'), `#!/bin/sh\nexec /bin/echo "$@" > "${argvFile}"\n`);
+    chmodSync(path.join(dir, 'postgres'), 0o755);
+    const previous = process.env.BAB_PG_BIN;
+    process.env.BAB_PG_BIN = dir;
+    const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    try {
+      await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+        clock: clock({ timeout: true }),
+        controls: controls(),
+        exit: () => {},
+        postgresTools: { initdb: () => {}, psql: () => '1', schemaLoad: () => {} },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.BAB_PG_BIN;
+      else process.env.BAB_PG_BIN = previous;
+      delete process.env.ARGV_FILE;
+    }
+    for (let attempt = 0; attempt < 50 && !existsSync(argvFile); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+    const args = readFileSync(argvFile, 'utf8').trim().split(/\s+/);
+    expect(args).toContain('listen_addresses=');
+    expect(args).not.toContain("listen_addresses=''");
     process.removeAllListeners('uncaughtException');
     process.removeAllListeners('unhandledRejection');
   });
