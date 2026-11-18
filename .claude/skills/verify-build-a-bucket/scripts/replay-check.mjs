@@ -205,6 +205,47 @@ function checkSuite(step, out) {
     else if (receipt.ok !== true) failures.push('postgres receipt is not clean');
     else if (!Array.isArray(receipt.services) || !receipt.services.some((service) => service.name === 'postgres' && service.state === 'clean')) failures.push('postgres receipt does not cover a clean postgres service');
     else if (receipt.reason) failures.push('postgres receipt has a failed-start reason');
+    failures.push(...checkReport(step, dir));
+  }
+  return failures;
+}
+
+function checkReport(step, dir) {
+  const failures = [];
+  const report = readJson(path.join(dir, 'report.json'));
+  if (!report) return ['missing or malformed report.json'];
+  const entries = new Map();
+  if (Array.isArray(report.testResults)) {
+    for (const file of report.testResults) {
+      const name = String(file.name ?? '');
+      const tests = Array.isArray(file.assertionResults) ? file.assertionResults : [];
+      entries.set(name, tests.map((test) => ({ name: test.fullName ?? test.title ?? '', status: test.status })));
+    }
+  } else if (Array.isArray(report.suites)) {
+    const walk = (suite) => {
+      for (const spec of suite.specs ?? []) {
+        const name = String(spec.file ?? suite.file ?? '');
+        const tests = (spec.tests ?? []).map((test) => ({ name: spec.title ?? '', status: test.status }));
+        if (!entries.has(name)) entries.set(name, []);
+        entries.get(name).push(...tests);
+      }
+      for (const child of suite.suites ?? []) walk(child);
+    };
+    for (const suite of report.suites) walk(suite);
+  } else {
+    return ['report.json has no testResults or suites'];
+  }
+  for (const [file, count] of Object.entries(step.required?.files ?? {})) {
+    const match = [...entries.keys()].find((name) => name.endsWith(file));
+    if (!match) {
+      failures.push(`report missing ${file}`);
+      continue;
+    }
+    const tests = entries.get(match);
+    if (tests.length !== count) failures.push(`${file} has ${tests.length} tests, expected ${count}`);
+    for (const test of tests) {
+      if (test.status !== 'passed' && test.status !== 'expected') failures.push(`${file} ${test.name} is ${test.status}`);
+    }
   }
   return failures;
 }

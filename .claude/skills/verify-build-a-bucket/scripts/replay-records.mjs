@@ -132,6 +132,11 @@ export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, p
     writeText(path.join(out, 'suite', step.id, 'exit'), '0\n');
     if (step.id === '04-test-local-db' || step.id === '05-e2e-local-db') {
       writeJson(path.join(out, 'suite', step.id, 'postgres-receipt.json'), { ok: true, services: [{ name: 'postgres', state: 'clean' }] });
+      const testResults = Object.entries(step.required?.files ?? {}).map(([name, count]) => ({
+        name,
+        assertionResults: Array.from({ length: count }, (_, index) => ({ fullName: `${name} test ${index}`, status: 'passed' })),
+      }));
+      writeJson(path.join(out, 'suite', step.id, 'report.json'), { testResults });
     }
   }
   for (const run of plan.runs) {
