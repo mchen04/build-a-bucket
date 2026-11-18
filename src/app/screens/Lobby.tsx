@@ -6,6 +6,7 @@ import type {
   LobbySettings,
   LobbyView,
   NormalBuild,
+  ParticipantView,
   SalaryBuild,
   SalaryCardPick,
   SquadBuild,
@@ -26,6 +27,7 @@ import {
   startLobbyRequest,
   submitBuildRequest,
 } from '../mp/api';
+
 import { clearLocalDraft, readLocalDraft, saveLocalDraft } from '../mp/draftStore';
 import { activityLine, phaseLabel, readyLabel } from '../mp/format';
 import { clearMpSession, type MpSession } from '../mp/session';
@@ -35,6 +37,10 @@ import { LeaguePanel } from './LeaguePanel';
 import { LobbySalary } from './LobbySalary';
 import { LobbySquad } from './LobbySquad';
 import { Roster } from './Roster';
+
+export function awayRetainedFrom(participants: ParticipantView[]): ParticipantView[] {
+  return participants.filter((entry) => entry.status !== 'left' && entry.away && !entry.isMe);
+}
 
 interface Props {
   session: MpSession;
@@ -290,7 +296,7 @@ export function Lobby(props: Props) {
   const retainedReady = retained.filter((entry) => entry.ready).length;
   const autoFilled = view.participants.filter((entry) => entry.summary?.auto).length;
   const missingBuilds = view.participants.filter((entry) => entry.status !== 'left' && !entry.summary).length;
-  const awayRetained = retained.filter((entry) => entry.away && !entry.isMe);
+  const awayRetained = awayRetainedFrom(view.participants);
   const leaguePhase =
     view.phase === 'season' ||
     view.phase === 'awards' ||
