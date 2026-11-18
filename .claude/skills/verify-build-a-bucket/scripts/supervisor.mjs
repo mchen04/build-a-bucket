@@ -232,14 +232,30 @@ export async function runSupervisorCli(argv, deps = {}) {
   const spec = readJson(specPath);
   const { descendants, groupMembers, probePid, probePort, readProcessIdentity } = await import('./process-control.mjs');
   const controls = { readIdentity: readProcessIdentity, groupMembers, descendants, probe: probePid, probePort, clock: { setTimeout: globalThis.setTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, clearTimeout: globalThis.clearTimeout } };
+  const events = deps.events ?? process;
   let failRef = null;
-  const onUncaught = (error) => {
-    if (failRef) failRef(error);
+  const remove = () => {
+    events.removeListener('uncaughtException', onUncaught);
+    events.removeListener('unhandledRejection', onUncaught);
   };
-  process.on('uncaughtException', onUncaught);
-  process.on('unhandledRejection', onUncaught);
+  const onUncaught = (error) => {
+    if (failRef) {
+      const promise = failRef(error);
+      if (promise?.finally) promise.finally(remove);
+    }
+  };
+  events.on('uncaughtException', onUncaught);
+  events.on('unhandledRejection', onUncaught);
   const postgresInit = spec.postgresInit ? { ...spec.postgresInit, ...(deps.postgresTools ?? {}) } : null;
   const supervisor = await startSupervisor({ runDir, controlPath, receiptPath, ackPath, postgresInit, services: spec.services, controls, ...deps, onFail: (fail) => { failRef = fail; } });
+  const stop = supervisor.stop;
+  supervisor.stop = async (...args) => {
+    try {
+      return await stop(...args);
+    } finally {
+      remove();
+    }
+  };
   return supervisor;
 }
 

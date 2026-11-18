@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
@@ -562,7 +563,8 @@ describe('supervisor CLI', () => {
     };
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
-    await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+    const surface = new EventEmitter();
+    const supervisor = await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
       spawn: () => {
         calls += 1;
         if (calls === 1) return postgres;
@@ -571,6 +573,7 @@ describe('supervisor CLI', () => {
       },
       clock: clock({ timeout: true }),
       controls: controls(),
+      events: surface,
       exit: () => {},
     });
     expect(appSpawns).toBe(0);
@@ -578,8 +581,9 @@ describe('supervisor CLI', () => {
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
     expect(receipt.services.some((service: { name: string }) => service.name === 'postgres')).toBe(true);
-    process.removeAllListeners('uncaughtException');
-    process.removeAllListeners('unhandledRejection');
+    await supervisor.stop();
+    expect(surface.listenerCount('uncaughtException')).toBe(0);
+    expect(surface.listenerCount('unhandledRejection')).toBe(0);
   });
 
   it('stops each child once when a service exits and errors', async () => {
@@ -588,10 +592,12 @@ describe('supervisor CLI', () => {
     const spec = specFor(dir, null, app);
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
-    await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+    const surface = new EventEmitter();
+    const supervisor = await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
       spawn: () => app,
       clock: clock(),
       controls: controls(),
+      events: surface,
       exit: () => {},
     });
     app.exit(1);
@@ -600,8 +606,9 @@ describe('supervisor CLI', () => {
     expect(app.signals).toEqual([]);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
-    process.removeAllListeners('uncaughtException');
-    process.removeAllListeners('unhandledRejection');
+    await supervisor.stop();
+    expect(surface.listenerCount('uncaughtException')).toBe(0);
+    expect(surface.listenerCount('unhandledRejection')).toBe(0);
   });
 
   it('cleans up on an uncaught exception', async () => {
@@ -610,19 +617,21 @@ describe('supervisor CLI', () => {
     const spec = specFor(dir, null, app);
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
+    const surface = new EventEmitter();
     await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
       spawn: () => app,
       clock: clock(),
       controls: controls(),
+      events: surface,
       exit: () => {},
     });
-    process.emit('uncaughtException', new Error('boom'));
+    surface.emit('uncaughtException', new Error('boom'));
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(app.signals).toEqual(['SIGTERM']);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
-    process.removeAllListeners('uncaughtException');
-    process.removeAllListeners('unhandledRejection');
+    expect(surface.listenerCount('uncaughtException')).toBe(0);
+    expect(surface.listenerCount('unhandledRejection')).toBe(0);
   });
 });
 
@@ -666,6 +675,7 @@ describe('owned database evidence', () => {
     const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
+    const surface = new EventEmitter();
     const supervisor = await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
       spawn: (_cmd: string, _args: string[], options: { env: Record<string, string> }) => {
         const child = children.shift();
@@ -675,6 +685,7 @@ describe('owned database evidence', () => {
       },
       clock: clock(),
       controls: controls(),
+      events: surface,
       exit: () => {},
       postgresTools: {
         initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
@@ -691,8 +702,8 @@ describe('owned database evidence', () => {
     expect(captured?.BAB_PG_SOCKET_DIR).toBeTruthy();
     expect(captured?.BAB_DB_RUNNER).toBe(path.resolve('.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs'));
     await supervisor.stop();
-    process.removeAllListeners('uncaughtException');
-    process.removeAllListeners('unhandledRejection');
+    expect(surface.listenerCount('uncaughtException')).toBe(0);
+    expect(surface.listenerCount('unhandledRejection')).toBe(0);
   });
 
   it('removes exactly the recorded data and socket dirs', () => {
@@ -721,6 +732,7 @@ describe('supervisor async spawn errors', () => {
     const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
+    const surface = new EventEmitter();
     const promise = runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
       spawn: () => {
         calls += 1;
@@ -730,18 +742,20 @@ describe('supervisor async spawn errors', () => {
       },
       clock: clock({ timeout: true }),
       controls: controls(),
+      events: surface,
       exit: () => {},
       postgresTools: { initdb: () => {}, psql: () => '1', schemaLoad: () => {} },
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
     postgres.emit('error', new Error('spawn ENOENT'));
-    await promise;
+    const supervisor = await promise;
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(appSpawns).toBe(0);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
-    process.removeAllListeners('uncaughtException');
-    process.removeAllListeners('unhandledRejection');
+    await supervisor.stop();
+    expect(surface.listenerCount('uncaughtException')).toBe(0);
+    expect(surface.listenerCount('unhandledRejection')).toBe(0);
   });
 
   it('fails promptly on an async app spawn error', async () => {
@@ -753,6 +767,7 @@ describe('supervisor async spawn errors', () => {
     const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
+    const surface = new EventEmitter();
     const promise = runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
       spawn: () => {
         calls += 1;
@@ -760,6 +775,7 @@ describe('supervisor async spawn errors', () => {
       },
       clock: clock(),
       controls: controls(),
+      events: surface,
       exit: () => {},
       postgresTools: {
         initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
@@ -772,13 +788,14 @@ describe('supervisor async spawn errors', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
     app.emit('error', new Error('spawn ENOENT'));
-    await promise;
+    const supervisor = await promise;
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(postgres.signals).toEqual(['SIGINT']);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
-    process.removeAllListeners('uncaughtException');
-    process.removeAllListeners('unhandledRejection');
+    await supervisor.stop();
+    expect(surface.listenerCount('uncaughtException')).toBe(0);
+    expect(surface.listenerCount('unhandledRejection')).toBe(0);
   });
 });
 
@@ -795,13 +812,16 @@ describe('supervisor argv', () => {
     const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
+    const surface = new EventEmitter();
     try {
-      await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+      const supervisor = await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
         clock: realClock,
         controls: controls(),
+        events: surface,
         exit: () => {},
         postgresTools: { initdb: () => {}, psql: () => '1', schemaLoad: () => {} },
       });
+      await supervisor.stop();
     } finally {
       if (previous === undefined) delete process.env.BAB_PG_BIN;
       else process.env.BAB_PG_BIN = previous;
@@ -814,8 +834,8 @@ describe('supervisor argv', () => {
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
     expect(receipt.services[0]?.reason).toContain('exit 3');
-    process.removeAllListeners('uncaughtException');
-    process.removeAllListeners('unhandledRejection');
+    expect(surface.listenerCount('uncaughtException')).toBe(0);
+    expect(surface.listenerCount('unhandledRejection')).toBe(0);
   });
 });
 

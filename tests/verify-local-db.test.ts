@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
@@ -111,9 +112,10 @@ describe('local-db main', () => {
     const dir = tempDir();
     const postgres = new FakeChild(200);
     const test = new FakeChild(300, { exitOn: new Set() });
+    const signals = new EventEmitter();
     let calls = 0;
     let code: number | null = null;
-    void main({
+    const promise = main({
       argv: ['--data-dir', dir, '--', 'npm', 'test'],
       spawn: () => {
         calls += 1;
@@ -123,20 +125,22 @@ describe('local-db main', () => {
       psql: () => '1',
       schemaLoad: () => {},
       clock,
+      signals,
       receiptPath: path.join(dir, 'receipt.json'),
       exit: (value: number) => {
         code = value;
       },
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
-    process.emit('SIGTERM');
+    signals.emit('SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, 10));
+    await promise;
     expect(postgres.signals).toEqual(['SIGINT']);
     expect(code).toBe(1);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.services[0]?.state).toBe('clean');
-    process.removeAllListeners('SIGTERM');
-    process.removeAllListeners('SIGINT');
+    expect(signals.listenerCount('SIGTERM')).toBe(0);
+    expect(signals.listenerCount('SIGINT')).toBe(0);
   });
 
   it('fails promptly on an async command spawn error', async () => {
@@ -412,5 +416,44 @@ describe('local-db main', () => {
     expect(after).toBe(before + 1);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(true);
+  });
+
+  it('never touches the real process signal surface', async () => {
+    const seen: string[] = [];
+    const handlers: Record<string, () => void> = {
+      SIGTERM: () => seen.push('SIGTERM'),
+      SIGINT: () => seen.push('SIGINT'),
+      uncaughtException: () => seen.push('uncaughtException'),
+      unhandledRejection: () => seen.push('unhandledRejection'),
+    };
+    for (const [event, handler] of Object.entries(handlers)) process.on(event, handler);
+    try {
+      const dir = tempDir();
+      const postgres = new FakeChild(200);
+      const test = new FakeChild(300, { exitOn: new Set() });
+      const signals = new EventEmitter();
+      let calls = 0;
+      void main({
+        argv: ['--data-dir', dir, '--', 'npm', 'test'],
+        spawn: () => {
+          calls += 1;
+          return calls === 1 ? postgres : test;
+        },
+        initdb: initFor(postgres),
+        psql: () => '1',
+        schemaLoad: () => {},
+        clock,
+        signals,
+        receiptPath: path.join(dir, 'receipt.json'),
+        exit: () => {},
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      signals.emit('SIGTERM');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(seen).toEqual([]);
+      for (const [event, handler] of Object.entries(handlers)) expect(process.listeners(event as any)).toContain(handler);
+    } finally {
+      for (const [event, handler] of Object.entries(handlers)) process.removeListener(event, handler);
+    }
   });
 });

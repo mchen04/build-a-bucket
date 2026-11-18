@@ -77,6 +77,7 @@ export async function main({
   schemaLoad,
   clock = { setTimeout: globalThis.setTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, clearTimeout: globalThis.clearTimeout },
   receiptPath = process.env.BAB_LOCAL_DB_RECEIPT,
+  signals = process,
   exit = (code) => {
     process.exitCode = code;
   },
@@ -102,11 +103,16 @@ export async function main({
     exit(1);
   };
   let shutdownPromise = null;
+  let resolveShutdown;
+  const shutdownSignal = new Promise((resolve) => {
+    resolveShutdown = resolve;
+  });
   const onSignal = () => {
     shutdownPromise = shutdown();
+    resolveShutdown();
   };
-  process.on('SIGINT', onSignal);
-  process.on('SIGTERM', onSignal);
+  signals.on('SIGINT', onSignal);
+  signals.on('SIGTERM', onSignal);
   try {
     const handle = await startLocalDb({
       pgPort: value('pg-port', process.env.BAB_LOCAL_PG_PORT ?? 55434),
@@ -129,7 +135,7 @@ export async function main({
       testError = error;
     });
     testChild.once('exit', () => {});
-    const exitResult = await waitForExit(testChild, 0, clock);
+    const exitResult = await Promise.race([waitForExit(testChild, 0, clock), shutdownSignal]);
     const result = await stopPostgres();
     const ok = result.state === 'clean' && !testError && !exitResult?.error;
     if (receiptPath) writeJson(receiptPath, { ok, reason: testError?.message ?? exitResult?.error?.message, services: [result] });
@@ -148,8 +154,8 @@ export async function main({
     if (receiptPath) writeJson(receiptPath, { ok: false, services: [result], reason: error instanceof Error ? error.message : String(error) });
     exit(1);
   } finally {
-    process.removeListener('SIGINT', onSignal);
-    process.removeListener('SIGTERM', onSignal);
+    signals.removeListener('SIGINT', onSignal);
+    signals.removeListener('SIGTERM', onSignal);
     if (shutdownPromise) await shutdownPromise;
   }
 }
