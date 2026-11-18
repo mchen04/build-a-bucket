@@ -72,10 +72,12 @@ qualifies and the gate is skipped.
 Chaos options, applied at the first sampled stage:
 
 - `--reload 2` reloads seat 2 mid-season, waits for the lobby to come back, and re-reads the standings from every
-  active seat in one atomic in-page read. It passes only when at least two seats report the same stage and progress
-  revision, the refreshed seat is one of them, and the first ten rows of each conference match on full row text.
-  A missing or failed comparison still writes `summary.json` with `reload.coverage` naming the reason, then exits
-  non-zero.
+  active seat in one atomic in-page read. The displayed revision is structured `{ stage, progress }`; it is valid
+  only when both parts are present and non-empty, so a missing, empty or partial revision never joins a comparison
+  and recap without a displayed stage is not a revision. It passes only when at least two seats report the same
+  valid revision, the refreshed seat is one of them, and the first ten rows of each conference match on full row
+  text. A missing or failed comparison still writes `summary.json` with `reload.coverage` naming the reason, then
+  exits non-zero; a refreshed seat that lands on recap with no valid revision fails with that reason.
 - `--away 2` closes seat 2's browser context; the host must still start the playoffs and the remaining seats must agree.
 - `--host-leave` taps Leave lobby on the host; another seat must receive Start playoffs and carry the league.
 

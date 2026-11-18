@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareStandings, createLeagueEvidenceDir, leagueFailureSummary, reloadRecord } from './standings-check.mjs';
+import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, reloadRecord } from './standings-check.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -392,7 +392,7 @@ async function leagueRun() {
     seat.page.evaluate(() => {
       const stage = document.querySelector('[data-testid="league-stage"]');
       const lines = (stage?.innerText ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
-      const revision = `${lines[0] ?? ''}:${lines[1] ?? ''}`;
+      const revision = { stage: lines[0] ?? '', progress: lines[1] ?? '' };
       const tables = [...document.querySelectorAll('[data-testid="standings"] .table')].map((table) =>
         [...table.querySelectorAll('.table-row:not(.head)')].map((row) => row.innerText || ''),
       );
@@ -829,15 +829,27 @@ async function leagueRun() {
             await waitStage(seat);
             await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
             let common = null;
+            let refreshedInvalid = false;
             for (let attempt = 0; attempt < 40; attempt++) {
               const reads = await Promise.all(active().map(async (entry) => ({ seat: entry, ...(await readStandingsRevision(entry)) })));
+              const refreshed = reads.find((entry) => entry.seat.seat === seat.seat && entry.seat.name === seat.name);
+              if (!isValidRevision(refreshed?.revision)) {
+                refreshedInvalid = true;
+                if (await visible(seat, 'recap')) break;
+                await host.page.waitForTimeout(250);
+                continue;
+              }
+              refreshedInvalid = false;
               const result = compareStandings(reads, seat);
               if (!result.ok && result.reason.startsWith('standings differ')) throw new Error(result.reason);
               if (result.ok) common = result;
               if (common) break;
               await host.page.waitForTimeout(250);
             }
-            if (!common) throw new Error('no common standings revision after reload');
+            if (!common) {
+              if (refreshedInvalid) throw new Error(`refreshed seat ${seat.seat} has no valid displayed revision after reload (stage and progress required)`);
+              throw new Error('no common standings revision after reload');
+            }
             reload.ran = true;
             reload.revision = common.revision;
             reload.seats = common.seats;
