@@ -54,12 +54,14 @@ export function buildTrackedRecord({ pid, port, pgPort }) {
   return { pid, port, pgPort: pgPort ?? null };
 }
 
-export function buildCleanupLines({ pid, pgPort, e2ePort, suitePgPort, probes }) {
+export function buildCleanupLines({ pid, pgPort, e2ePort, suitePgPort, appGroup = 'clean', postgres = 'clean', probes }) {
   const value = (probe) => (probe === 'absent' ? 'no' : probe === 'present' ? 'yes' : 'unknown');
   const lines = [`pid=${pid}`, `pid_alive=${value(probes.pid)}`, `port_listening=${value(probes.port)}`];
   if (pgPort) lines.push(`pg_port_listening=${value(probes.pgPort)}`);
   if (e2ePort) lines.push(`e2e_port_listening=${value(probes.e2ePort)}`);
   if (suitePgPort) lines.push(`suite_pg_port_listening=${value(probes.suitePgPort)}`);
+  lines.push(`app_group=${appGroup}`);
+  lines.push(`postgres=${postgres}`);
   return lines;
 }
 
@@ -122,7 +124,7 @@ export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, p
   writeText(path.join(out, 'cleanup.exit'), '0\n');
   writeText(
     path.join(out, 'cleanup-check.txt'),
-    `${buildCleanupLines({ pid, pgPort, e2ePort, suitePgPort, probes: { pid: 'absent', port: 'absent', pgPort: 'absent', e2ePort: 'absent', suitePgPort: 'absent' } }).join('\n')}\n`,
+    `${buildCleanupLines({ pid, pgPort, e2ePort, suitePgPort, appGroup: 'clean', postgres: 'clean', probes: { pid: 'absent', port: 'absent', pgPort: 'absent', e2ePort: 'absent', suitePgPort: 'absent' } }).join('\n')}\n`,
   );
   for (const step of plan.suite) {
     writeText(path.join(out, 'suite', step.id, 'command.txt'), `${step.command.join(' ')}\n`);
@@ -154,6 +156,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         pgPort: flags['pg-port'] ? Number(flags['pg-port']) : null,
         e2ePort: flags['e2e-port'] ? Number(flags['e2e-port']) : null,
         suitePgPort: flags['suite-pg-port'] ? Number(flags['suite-pg-port']) : null,
+        appGroup: flags['app-group'] ?? 'clean',
+        postgres: flags.postgres ?? 'clean',
         probes: {
           pid: flags['pid-probe'],
           port: flags['port-probe'],

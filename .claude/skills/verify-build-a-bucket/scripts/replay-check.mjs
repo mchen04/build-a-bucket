@@ -257,6 +257,8 @@ function checkCleanup(out) {
   if (isPositiveInt(tracked.pgPort)) expected.set('pg_port_listening', 'no');
   if (isPositiveInt(meta.e2ePort)) expected.set('e2e_port_listening', 'no');
   if (isPositiveInt(meta.suitePgPort)) expected.set('suite_pg_port_listening', 'no');
+  expected.set('app_group', 'clean');
+  expected.set('postgres', 'clean');
   for (const [key, value] of expected) {
     if (!map.has(key)) failures.push(`cleanup: missing '${key}'`);
     else if (map.get(key) !== value) failures.push(`cleanup: '${key}' is '${map.get(key)}', expected '${value}'`);

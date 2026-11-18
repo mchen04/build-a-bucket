@@ -27,15 +27,22 @@ export function probePid(pid, controls = {}) {
 }
 
 export function probePort(port, controls = {}) {
-  const lsof = controls.lsof ?? ((value) => execFileSync('lsof', ['-nP', `-iTCP:${value}`, '-sTCP:LISTEN'], { encoding: 'utf8' }));
+  const lsof = controls.lsof ?? ((value) => execFileSync('lsof', ['-nP', `-iTCP:${value}`, '-sTCP:LISTEN'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
   try {
     return lsof(port).trim() ? 'present' : 'absent';
   } catch (error) {
-    return error?.status === 1 ? 'absent' : 'unknown';
+    if (error?.status === 1 && !String(error.stdout ?? '').trim() && !String(error.stderr ?? '').trim()) return 'absent';
+    return 'unknown';
   }
 }
 
-export async function cleanupOwned({ root, descendants = [], controls }) {
+function startedAtOrAfter(identity, root) {
+  const a = Date.parse(identity.startTime);
+  const b = Date.parse(root.startTime);
+  return Number.isFinite(a) && Number.isFinite(b) && a >= b;
+}
+
+export async function cleanupOwned({ root, members = [], controls }) {
   const { readIdentity, signal, sleep, probe } = controls;
   const stopped = [];
   const uncertain = [];
@@ -49,19 +56,23 @@ export async function cleanupOwned({ root, descendants = [], controls }) {
     uncertain.push({ pid: root.pid, reason: 'root identity changed before cleanup' });
     return { stopped, uncertain, failures };
   }
-  for (const expected of [...descendants].reverse().concat(root)) {
+  for (const member of [...members].reverse()) {
+    const expected = member.identity;
+    if (!member.owned) {
+      uncertain.push({ pid: expected.pid, reason: 'member started before the root' });
+      continue;
+    }
     const current = readIdentity(expected.pid);
     if (!current) {
-      if (probe(expected.pid) === 'absent') continue;
-      uncertain.push({ pid: expected.pid, reason: 'identity unavailable' });
+      uncertain.push({ pid: expected.pid, reason: 'member identity unavailable' });
       continue;
     }
     if (!sameIdentity(expected, current)) {
-      uncertain.push({ pid: expected.pid, reason: 'identity changed before SIGTERM' });
+      uncertain.push({ pid: expected.pid, reason: 'member identity changed before SIGTERM' });
       continue;
     }
-    if (expected.pid !== root.pid && current.pgid !== root.pgid) {
-      uncertain.push({ pid: expected.pid, reason: 'descendant left the run process group' });
+    if (current.pgid !== root.pgid) {
+      uncertain.push({ pid: expected.pid, reason: 'member left the run process group' });
       continue;
     }
     try {
@@ -71,9 +82,22 @@ export async function cleanupOwned({ root, descendants = [], controls }) {
       uncertain.push({ pid: expected.pid, reason: `SIGTERM failed: ${error?.code ?? error?.message}` });
     }
   }
+  const rootAgain = readIdentity(root.pid);
+  if (!rootAgain) {
+    if (probe(root.pid) !== 'absent') uncertain.push({ pid: root.pid, reason: 'root identity unavailable before SIGTERM' });
+  } else if (!sameIdentity(root, rootAgain)) {
+    uncertain.push({ pid: root.pid, reason: 'root identity changed before SIGTERM' });
+  } else {
+    try {
+      signal(root.pid, 'SIGTERM');
+      stopped.push(root.pid);
+    } catch (error) {
+      uncertain.push({ pid: root.pid, reason: `SIGTERM failed: ${error?.code ?? error?.message}` });
+    }
+  }
   await sleep(1500);
   for (const pid of stopped) {
-    const expected = pid === root.pid ? root : descendants.find((entry) => entry.pid === pid);
+    const expected = pid === root.pid ? root : members.find((entry) => entry.identity.pid === pid)?.identity;
     const current = readIdentity(pid);
     if (!current) {
       if (probe(pid) === 'absent') continue;
@@ -85,7 +109,7 @@ export async function cleanupOwned({ root, descendants = [], controls }) {
       continue;
     }
     if (pid !== root.pid && current.pgid !== root.pgid) {
-      uncertain.push({ pid, reason: 'descendant left the run process group before SIGKILL' });
+      uncertain.push({ pid, reason: 'member left the run process group before SIGKILL' });
       continue;
     }
     try {
@@ -94,7 +118,7 @@ export async function cleanupOwned({ root, descendants = [], controls }) {
       uncertain.push({ pid, reason: `SIGKILL failed: ${error?.code ?? error?.message}` });
     }
   }
-  for (const expected of [...descendants, root]) {
+  for (const expected of [root, ...members.map((entry) => entry.identity)]) {
     const state = probe(expected.pid);
     if (state === 'present') failures.push({ pid: expected.pid, reason: 'still live' });
     else if (state === 'unknown') failures.push({ pid: expected.pid, reason: 'process state unknown' });
@@ -107,9 +131,67 @@ export async function cleanupRun({ state, controls }) {
   if (!root) {
     return { stopped: [], uncertain: [{ pid: state.pid, reason: 'no launch identity recorded' }], failures: [], portState: controls.probePort(state.port) };
   }
-  const descendantIdentities = controls.descendants(root.pid).map((pid) => controls.readIdentity(pid)).filter(Boolean);
-  const result = await cleanupOwned({ root, descendants: descendantIdentities, controls });
+  const rootCurrent = controls.readIdentity(root.pid);
+  if (!rootCurrent) {
+    return { stopped: [], uncertain: [{ pid: root.pid, reason: 'root identity unavailable' }], failures: [], portState: controls.probePort(state.port) };
+  }
+  if (!sameIdentity(root, rootCurrent)) {
+    return { stopped: [], uncertain: [{ pid: root.pid, reason: 'root identity changed before cleanup' }], failures: [], portState: controls.probePort(state.port) };
+  }
+  const group = controls.groupMembers(root.pgid);
+  if (!group.ok) {
+    return { stopped: [], uncertain: [{ pid: root.pid, reason: `group enumeration failed: ${group.reason}` }], failures: [], portState: controls.probePort(state.port) };
+  }
+  const members = group.members.filter((identity) => identity.pid !== root.pid).map((identity) => ({ identity, owned: startedAtOrAfter(identity, root) }));
+  const result = await cleanupOwned({ root, members, controls });
   return { ...result, portState: controls.probePort(state.port) };
+}
+
+export async function stopOwnedPostgres({ handle, controls }) {
+  const { readIdentity, signal, sleep, probe, probePort } = controls;
+  const identity = handle.postmasterIdentity ?? null;
+  const dataDir = handle.dataDir;
+  if (!identity) return { state: 'uncertain', reason: 'no postmaster identity recorded', dataDir, removed: false };
+  const current = readIdentity(identity.pid);
+  if (!current) {
+    const pidState = probe(identity.pid);
+    const portState = probePort(handle.pgPort);
+    if (pidState === 'absent' && portState === 'absent') return { state: 'clean', reason: null, dataDir, removed: false };
+    return { state: 'uncertain', reason: `postmaster ${pidState}, port ${portState}`, dataDir, removed: false };
+  }
+  if (!sameIdentity(identity, current) || !current.command.includes(dataDir)) {
+    return { state: 'uncertain', reason: 'postmaster identity changed', dataDir, removed: false };
+  }
+  try {
+    signal(identity.pid, 'SIGTERM');
+  } catch (error) {
+    return { state: 'uncertain', reason: `SIGTERM failed: ${error?.code ?? error?.message}`, dataDir, removed: false };
+  }
+  await sleep(1500);
+  const after = readIdentity(identity.pid);
+  if (after) {
+    if (!sameIdentity(identity, after)) return { state: 'uncertain', reason: 'postmaster identity changed before SIGKILL', dataDir, removed: false };
+    try {
+      signal(identity.pid, 'SIGKILL');
+    } catch (error) {
+      return { state: 'uncertain', reason: `SIGKILL failed: ${error?.code ?? error?.message}`, dataDir, removed: false };
+    }
+    await sleep(500);
+  }
+  const pidState = probe(identity.pid);
+  const portState = probePort(handle.pgPort);
+  if (pidState !== 'absent' || portState !== 'absent') return { state: 'uncertain', reason: `postmaster ${pidState}, port ${portState}`, dataDir, removed: false };
+  return { state: 'clean', reason: null, dataDir, removed: false };
+}
+
+export async function cleanupAll({ state, controls }) {
+  const app = await cleanupRun({ state, controls });
+  const postgres = state.localDb ? await stopOwnedPostgres({ handle: state.localDb, controls }) : { state: 'clean', reason: null, dataDir: null, removed: false };
+  if (postgres.state === 'clean' && state.localDb?.remove && postgres.dataDir) {
+    controls.removeDir(postgres.dataDir);
+    postgres.removed = true;
+  }
+  return { ...app, postgres };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -5,6 +5,16 @@ export type CleanupResult = {
   uncertain: { pid: number; reason: string }[];
   failures: { pid: number; reason: string }[];
 };
+export type PostgresResult = { state: 'clean' | 'uncertain'; reason: string | null; dataDir: string | null; removed: boolean };
+export type CleanupControls = {
+  readIdentity: (pid: number) => ProcessIdentity | null;
+  signal: (pid: number, signal: string) => void;
+  sleep: (ms: number) => void | Promise<void>;
+  probe: (pid: number) => ProbeState;
+  groupMembers: (pgid: number) => { ok: true; members: ProcessIdentity[] } | { ok: false; reason: string };
+  probePort: (port: number) => ProbeState;
+  removeDir: (dir: string) => void;
+};
 
 export function sameIdentity(a: ProcessIdentity | null, b: ProcessIdentity | null): boolean;
 export function readProcessIdentity(pid: number): ProcessIdentity | null;
@@ -12,22 +22,23 @@ export function probePid(pid: number, controls?: { kill?: (pid: number, signal: 
 export function probePort(port: number, controls?: { lsof?: (port: number) => string }): ProbeState;
 export function cleanupOwned(options: {
   root: ProcessIdentity;
-  descendants?: ProcessIdentity[];
-  controls: {
-    readIdentity: (pid: number) => ProcessIdentity | null;
-    signal: (pid: number, signal: string) => void;
-    sleep: (ms: number) => void | Promise<void>;
-    probe: (pid: number) => ProbeState;
-  };
+  members?: { identity: ProcessIdentity; owned: boolean }[];
+  controls: Pick<CleanupControls, 'readIdentity' | 'signal' | 'sleep' | 'probe'>;
 }): Promise<CleanupResult>;
 export function cleanupRun(options: {
   state: { pid: number; port: number; identity?: ProcessIdentity | null };
-  controls: {
-    readIdentity: (pid: number) => ProcessIdentity | null;
-    signal: (pid: number, signal: string) => void;
-    sleep: (ms: number) => void | Promise<void>;
-    probe: (pid: number) => ProbeState;
-    descendants: (pid: number) => number[];
-    probePort: (port: number) => ProbeState;
-  };
+  controls: CleanupControls;
 }): Promise<CleanupResult & { portState: ProbeState }>;
+export function stopOwnedPostgres(options: {
+  handle: { dataDir: string; pgPort: number; postmasterIdentity?: ProcessIdentity | null };
+  controls: Pick<CleanupControls, 'readIdentity' | 'signal' | 'sleep' | 'probe' | 'probePort'>;
+}): Promise<PostgresResult>;
+export function cleanupAll(options: {
+  state: {
+    pid: number;
+    port: number;
+    identity?: ProcessIdentity | null;
+    localDb?: { dataDir: string; pgPort: number; postmasterIdentity?: ProcessIdentity | null; remove?: boolean } | null;
+  };
+  controls: CleanupControls;
+}): Promise<CleanupResult & { portState: ProbeState; postgres: PostgresResult }>;

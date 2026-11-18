@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
-import { cleanupRun, probePid, probePort, readProcessIdentity } from './process-control.mjs';
+import { cleanupAll, probePid, probePort, readProcessIdentity } from './process-control.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -45,6 +45,28 @@ const median = (arr) => pct(arr, 50);
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
 function portOwner(port) { try { return execFileSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).map(Number); } catch { return []; } }
 function descendants(pid) { try { const kids = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).map(Number); return kids.flatMap((k) => [k, ...descendants(k)]); } catch { return []; } }
+function readPostmasterPid(dataDir) {
+  try {
+    const text = fs.readFileSync(path.join(dataDir, 'postmaster.pid'), 'utf8');
+    const pid = Number(text.split('\n')[0].trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+function groupMembers(pgid) {
+  try {
+    const out = execFileSync('ps', ['-A', '-o', 'pid=,pgid=,lstart=,command='], { encoding: 'utf8' });
+    const members = out.split('\n').map((line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.{24})\s+(.*)$/.exec(line);
+      if (!match) return null;
+      return { pid: Number(match[1]), pgid: Number(match[2]), startTime: match[3].trim(), command: match[4].trim() };
+    }).filter((entry) => entry && entry.pgid === pgid);
+    return { ok: true, members };
+  } catch (error) {
+    return { ok: false, reason: error?.message ?? 'ps failed' };
+  }
+}
 
 async function probe(base) {
   const out = { base };
@@ -81,6 +103,8 @@ async function launch() {
   child.unref();
   const base = `http://localhost:${port}`;
   const head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const postmasterPid = localHandle ? readPostmasterPid(localHandle.dataDir) : null;
+  const postmasterIdentity = postmasterPid ? readProcessIdentity(postmasterPid) : null;
   const state = {
     id,
     dir,
@@ -98,6 +122,8 @@ async function launch() {
           database: localHandle.database,
           url: localHandle.url,
           runnerPath: localHandle.runnerPath,
+          postmasterPid,
+          postmasterIdentity,
         }
       : null,
     startedAt: new Date().toISOString(),
@@ -1302,15 +1328,16 @@ async function coldLoad() {
 
 async function cleanup() {
   const { dir, state } = currentRun();
-  const result = await cleanupRun({
+  const result = await cleanupAll({
     state,
     controls: {
       readIdentity: readProcessIdentity,
       signal: process.kill,
       sleep,
       probe: probePid,
-      descendants,
+      groupMembers,
       probePort,
+      removeDir: (target) => fs.rmSync(target, { recursive: true, force: true }),
     },
   });
   let removed = [];
@@ -1318,12 +1345,12 @@ async function cleanup() {
     const outText = execFileSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'drop-lobbies.ts'), ...state.lobbies], { cwd: repo, encoding: 'utf8' });
     removed = JSON.parse(outText);
   }
-  if (state.localDb) await localDb.stopLocalDb({ ...state.localDb, remove: true });
   fs.rmSync(path.join(home, 'current'), { force: true });
   for (const f of fs.readdirSync(dir)) if (f.startsWith('session-')) fs.rmSync(path.join(dir, f));
   const evidence = path.join(dir, 'evidence');
-  console.log(JSON.stringify({ stopped: result.stopped, uncertain: result.uncertain, failures: result.failures, portState: result.portState, portFree: result.portState === 'absent', lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
-  if (result.uncertain.length || result.failures.length || result.portState !== 'absent') process.exitCode = 1;
+  const appGroup = result.uncertain.length || result.failures.length ? 'uncertain' : 'clean';
+  console.log(JSON.stringify({ stopped: result.stopped, uncertain: result.uncertain, failures: result.failures, portState: result.portState, portFree: result.portState === 'absent', appGroup, postgres: result.postgres, lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
+  if (appGroup !== 'clean' || result.portState !== 'absent' || result.postgres.state !== 'clean') process.exitCode = 1;
 }
 
 async function perf() {
