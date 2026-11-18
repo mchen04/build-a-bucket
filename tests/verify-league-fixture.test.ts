@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { applyLeagueFixture, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
+import { applyLeagueFixture, defaultConnect, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
+import type { FixtureRunner, FixtureTarget } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
+import { createRunner } from '../.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs';
 import { hashSecret } from '../src/shared/mp/codes.js';
 
 const catalog = JSON.parse(readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/fixtures/league-fixtures.json'), 'utf8'));
@@ -24,16 +26,24 @@ const validRun = {
 
 function connectStub(options: { failOn?: string } = {}) {
   const calls: { sql: string; params: unknown[] }[] = [];
-  const targets: unknown[] = [];
+  const targets: FixtureTarget[] = [];
   let closed = false;
-  const connect = async (target: unknown) => {
+  const connect = async (target: FixtureTarget): Promise<FixtureRunner> => {
     targets.push(target);
     return {
-      query: async (sql: string, params: unknown[] = []) => {
-        calls.push({ sql, params });
-        if (options.failOn && sql.startsWith(options.failOn)) throw new Error('insert failed');
-        if (sql.startsWith('insert into lobbies')) return [{ id: 'lobby-uuid' }];
-        return [];
+      transaction: async (queries: { text: string; params?: unknown[] }[]) => {
+        calls.push({ sql: 'BEGIN', params: [] });
+        try {
+          for (const query of queries) {
+            calls.push({ sql: query.text, params: query.params ?? [] });
+            if (options.failOn && query.text.startsWith(options.failOn)) throw new Error('insert failed');
+          }
+          calls.push({ sql: 'COMMIT', params: [] });
+          return [];
+        } catch (error) {
+          calls.push({ sql: 'ROLLBACK', params: [] });
+          throw error;
+        }
       },
       close: async () => {
         closed = true;
@@ -105,7 +115,7 @@ describe('league fixture writer', () => {
     const { calls, targets, connect, isClosed } = connectStub();
     const result = await applyLeagueFixture({ entry, run: validRun, connect, secrets });
     expect(targets).toEqual([{ socketDir: '/owned/socket', port: 55434, database: 'bab' }]);
-    expect(result.lobbyId).toBe('lobby-uuid');
+    expect(result.lobbyId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(result.code).toBe(entry.code);
     expect(result.participantIds).toEqual(entry.participants.map((participant: { id: string }) => participant.id));
     expect(result.target).toEqual({ socketDir: '/owned/socket', port: 55434, database: 'bab' });
@@ -116,12 +126,14 @@ describe('league fixture writer', () => {
     expect(calls.filter((call) => call.sql.startsWith('insert into lobby_teams'))).toHaveLength(entry.players);
     expect(isClosed()).toBe(true);
     const lobbyCall = calls.find((call) => call.sql.startsWith('insert into lobbies'));
-    expect(lobbyCall?.params[0]).toBe(entry.code);
-    expect(lobbyCall?.params[1]).toBe('preview');
-    expect(lobbyCall?.params[6]).toBe(entry.secret);
-    expect(lobbyCall?.params[7]).toBe(entry.participants[0].id);
+    expect(lobbyCall?.params[0]).toBe(result.lobbyId);
+    expect(lobbyCall?.params[1]).toBe(entry.code);
+    expect(lobbyCall?.params[2]).toBe('preview');
+    expect(lobbyCall?.params[7]).toBe(entry.secret);
+    expect(lobbyCall?.params[8]).toBe(entry.participants[0].id);
     const participantCalls = calls.filter((call) => call.sql.startsWith('insert into participants'));
     for (const [index, call] of participantCalls.entries()) {
+      expect(call.params[1]).toBe(result.lobbyId);
       expect(call.params[2]).toBe(await hashSecret(secrets[index]));
       expect(call.params[6]).toBe(JSON.stringify(entry.participants[index].build));
       expect(call.params[7]).toBe(entry.participants[index].build.kind);
@@ -147,5 +159,21 @@ describe('league fixture writer', () => {
     spy.mockRestore();
     const text = JSON.stringify(result) + logs.join('\n');
     for (const secret of secrets) expect(text).not.toContain(secret);
+  });
+});
+
+describe('owned runner target', () => {
+  it('uses an explicit target after a no-arg runner', async () => {
+    const noArg = await createRunner();
+    const explicit = await createRunner({ socketDir: '/owned/socket', port: 55434, database: 'bab' });
+    expect(explicit.target).toEqual({ socketDir: '/owned/socket', port: 55434, database: 'bab' });
+    expect(noArg.target).toEqual({ socketDir: process.env.BAB_PG_SOCKET_DIR ?? '', port: Number(process.env.BAB_PG_PORT ?? 55432), database: process.env.BAB_PG_DATABASE ?? 'bab_perf' });
+  });
+
+  it('defaultConnect leaves process.env unchanged', async () => {
+    const before = { ...process.env };
+    const runner = await defaultConnect({ socketDir: '/owned/socket', port: 55434, database: 'bab' });
+    expect(process.env).toEqual(before);
+    expect(runner.target).toEqual({ socketDir: '/owned/socket', port: 55434, database: 'bab' });
   });
 });

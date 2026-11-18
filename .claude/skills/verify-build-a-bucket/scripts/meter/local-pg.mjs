@@ -88,7 +88,8 @@ function parseError(payload) {
 }
 
 class Connection {
-  constructor() {
+  constructor(target) {
+    this.target = target;
     this.sock = null;
     this.buffer = Buffer.alloc(0);
     this.fields = [];
@@ -100,7 +101,10 @@ class Connection {
   }
 
   async open() {
-    const sock = SOCKET_DIR ? net.connect({ path: path.join(SOCKET_DIR, `.s.PGSQL.${PORT}`) }) : net.connect({ host: HOST, port: PORT });
+    const socketDir = this.target?.socketDir ?? SOCKET_DIR;
+    const port = this.target?.port ?? PORT;
+    const database = this.target?.database ?? DATABASE;
+    const sock = socketDir ? net.connect({ path: path.join(socketDir, `.s.PGSQL.${port}`) }) : net.connect({ host: HOST, port });
     this.sock = sock;
     await new Promise((resolve, reject) => {
       sock.once('connect', resolve);
@@ -119,7 +123,7 @@ class Connection {
       this.ready = null;
       waiter?.(this.broken);
     });
-    const payload = Buffer.from(`user\0${USER}\0database\0${DATABASE}\0\0`, 'utf8');
+    const payload = Buffer.from(`user\0${USER}\0database\0${database}\0\0`, 'utf8');
     const message = Buffer.alloc(8 + payload.length);
     message.writeInt32BE(8 + payload.length, 0);
     message.writeInt32BE(196608, 4);
@@ -243,8 +247,9 @@ class Connection {
 }
 
 class Pool {
-  constructor(max) {
+  constructor(max, target) {
     this.max = max;
+    this.target = target;
     this.idle = [];
     this.count = 0;
     this.waiting = [];
@@ -255,7 +260,7 @@ class Pool {
     if (free && !free.broken) return free;
     if (this.count < this.max) {
       this.count += 1;
-      const connection = new Connection();
+      const connection = new Connection(this.target);
       try {
         await connection.open();
         return connection;
@@ -284,9 +289,11 @@ class Pool {
   }
 }
 
-export async function createRunner() {
-  const pool = new Pool(MAX_CONNECTIONS);
+export async function createRunner(target) {
+  const resolved = target ? { socketDir: target.socketDir, port: target.port, database: target.database } : { socketDir: SOCKET_DIR, port: PORT, database: DATABASE };
+  const pool = new Pool(MAX_CONNECTIONS, resolved);
   return {
+    target: resolved,
     async query(text, params = []) {
       const sql = params.length ? interpolate(text, params) : text;
       const connection = await pool.acquire();
