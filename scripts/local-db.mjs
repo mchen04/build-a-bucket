@@ -5,7 +5,7 @@ import { spawn as realSpawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createOwnedPostgres, ownedPostgresEnv } from '../.claude/skills/verify-build-a-bucket/scripts/owned-postgres.mjs';
 import { descendants, groupMembers, probePid, probePort, readProcessIdentity } from '../.claude/skills/verify-build-a-bucket/scripts/process-control.mjs';
-import { stopService, waitForExit } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
+import { stopService } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const RUNNER = path.join(REPO, '.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs');
@@ -108,23 +108,77 @@ export async function main({
     exitCalled = true;
     exit(code);
   };
+  const watchExit = (child) => {
+    let settled = false;
+    let error = null;
+    let timer = null;
+    let resolveFn;
+    const promise = new Promise((resolve) => {
+      resolveFn = resolve;
+    });
+    const cleanup = () => {
+      if (timer) clock.clearTimeout(timer);
+      child.removeListener('exit', onExit);
+      child.removeListener('error', onError);
+    };
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolveFn(value);
+    };
+    const onExit = (code, signal) => settle({ code, signal });
+    const onError = (err) => {
+      error = err;
+    };
+    child.on('exit', onExit);
+    child.on('error', onError);
+    if (child.exitCode !== null || child.signalCode !== null) settle({ code: child.exitCode, signal: child.signalCode });
+    return {
+      promise,
+      start: (timeoutMs) => {
+        if (settled) return;
+        if (timeoutMs > 0) timer = clock.setTimeout(() => settle(null), timeoutMs);
+      },
+      dispose: () => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+        }
+      },
+      error: () => error,
+    };
+  };
   const stopCommand = async () => {
     const child = active?.testChild;
     if (!child) return { state: 'exited', code: null, signal: null };
     if (child.exitCode !== null || child.signalCode !== null) return { state: 'exited', code: child.exitCode, signal: child.signalCode };
-    child.kill('SIGTERM');
-    const term = await waitForExit(child, 10000, clock);
-    if (term) return { state: 'exited', code: term.code, signal: term.signal };
-    child.kill('SIGKILL');
-    const kill = await waitForExit(child, 5000, clock);
-    if (kill) return { state: 'exited', code: kill.code, signal: kill.signal };
-    return { state: 'uncertain', reason: 'command did not exit' };
+    let killError = null;
+    const term = watchExit(child);
+    try {
+      child.kill('SIGTERM');
+    } catch (err) {
+      killError = err;
+    }
+    term.start(10000);
+    const termResult = await term.promise;
+    if (termResult) return { state: 'exited', code: termResult.code, signal: termResult.signal, error: term.error()?.message };
+    const kill = watchExit(child);
+    try {
+      child.kill('SIGKILL');
+    } catch (err) {
+      killError = err;
+    }
+    kill.start(5000);
+    const killResult = await kill.promise;
+    if (killResult) return { state: 'exited', code: killResult.code, signal: killResult.signal, error: kill.error()?.message };
+    return { state: 'uncertain', reason: 'command did not exit', error: (killError ?? term.error() ?? kill.error())?.message };
   };
   const shutdown = async () => {
     const command = await stopCommand();
     const result = await stopPostgres();
-    const ok = result.state === 'clean' && command.state === 'exited';
-    writeReceipt(ok, command.reason ?? result.reason, [result], { state: command.state, reason: command.reason ?? null });
+    const ok = result.state === 'clean' && command.state === 'exited' && !command.error;
+    writeReceipt(ok, command.reason ?? command.error ?? result.reason, [result], { state: command.state, reason: command.reason ?? null, error: command.error ?? null });
     if (ok && active?.handle?.remove) {
       fs.rmSync(active.handle.dataDir, { recursive: true, force: true });
       fs.rmSync(active.handle.sockDir, { recursive: true, force: true });
@@ -149,6 +203,8 @@ export async function main({
   };
   signals.on('SIGINT', onSignal);
   signals.on('SIGTERM', onSignal);
+  let testChild = null;
+  let onTestError = null;
   try {
     const handle = await startLocalDb({
       pgPort: value('pg-port', process.env.BAB_LOCAL_PG_PORT ?? 55434),
@@ -168,25 +224,41 @@ export async function main({
       await shutdownPromise;
       return;
     }
-    const testChild = spawn(command[0], command.slice(1), { cwd: handle.root, env: { ...process.env, ...localDbEnv(handle) }, stdio: 'inherit' });
+    testChild = spawn(command[0], command.slice(1), { cwd: handle.root, env: { ...process.env, ...localDbEnv(handle) }, stdio: 'inherit' });
     active.testChild = testChild;
     let testError = null;
-    testChild.once('error', (error) => {
-      testError = error;
+    let resolveSpawnError;
+    const spawnErrorSignal = new Promise((resolve) => {
+      resolveSpawnError = resolve;
     });
-    testChild.once('exit', () => {});
-    const exitResult = await Promise.race([waitForExit(testChild, 0, clock), shutdownSignal]);
+    onTestError = (error) => {
+      testError = error;
+      if (testChild.pid === undefined || testChild.pid === null) resolveSpawnError();
+    };
+    testChild.once('error', onTestError);
+    const watch = watchExit(testChild);
+    const exitResult = await Promise.race([watch.promise, shutdownSignal, spawnErrorSignal]);
     if (shutdownPromise) {
+      watch.dispose();
       await shutdownPromise;
       return;
     }
+    if (testError && (testChild.pid === undefined || testChild.pid === null)) {
+      watch.dispose();
+      const result = await stopPostgres();
+      writeReceipt(false, testError.message, [result], { state: 'spawn-error', reason: testError.message });
+      callExit(1);
+      return;
+    }
+    watch.dispose();
+    const commandError = watch.error();
     const result = await stopPostgres();
     if (shutdownPromise) {
       await shutdownPromise;
       return;
     }
-    const ok = result.state === 'clean' && !testError && !exitResult?.error;
-    writeReceipt(ok, testError?.message ?? exitResult?.error?.message, [result], { state: 'exited', code: exitResult?.code ?? null, signal: exitResult?.signal ?? null });
+    const ok = result.state === 'clean' && !commandError && !exitResult?.error && exitResult?.code === 0;
+    writeReceipt(ok, commandError?.message ?? exitResult?.error?.message, [result], { state: 'exited', code: exitResult?.code ?? null, signal: exitResult?.signal ?? null, error: commandError?.message ?? null });
     if (ok && handle.remove) {
       fs.rmSync(handle.dataDir, { recursive: true, force: true });
       fs.rmSync(handle.sockDir, { recursive: true, force: true });
@@ -208,6 +280,7 @@ export async function main({
   } finally {
     signals.removeListener('SIGINT', onSignal);
     signals.removeListener('SIGTERM', onSignal);
+    if (testChild && onTestError) testChild.removeListener('error', onTestError);
     if (shutdownPromise) await shutdownPromise;
   }
 }
