@@ -60,7 +60,8 @@ Only the playoff gate takes input: qualified seats tap Ready and the host taps S
 every playoff round run on their own.
 
 It ends at the recap, compares the champion text across seats, then does Play Again: every retained seat readies, the
-host opens the builds, and the second game's `open-builder` must appear. `evidence/league/summary.json` holds the code,
+host opens the builds, and the second game's `open-builder` must appear. Each run writes its own
+`evidence/league-<ISO>-<suffix>/summary.json` (never a shared `evidence/league/` file) holding the code,
 mode, era, each stage's visible standings and each seat's record/seed, the champion, Play Again and any page or
 console errors. It also records the wall-clock `phaseDurations` (build complete, season start, season end, each
 playoff round, recap), each seat's `actions` after the builds by control name, its `gateWaits` at the playoff gate
@@ -70,13 +71,19 @@ qualifies and the gate is skipped.
 
 Chaos options, applied at the first sampled stage:
 
-- `--reload 2` reloads seat 2 mid-season, waits for the lobby to come back, and re-compares the standings.
+- `--reload 2` reloads seat 2 mid-season, waits for the lobby to come back, and re-reads the standings from every
+  active seat in one atomic in-page read. It passes only when at least two seats report the same stage and progress
+  revision, the refreshed seat is one of them, and the first ten rows of each conference match on full row text.
+  A missing or failed comparison still writes `summary.json` with `reload.coverage` naming the reason, then exits
+  non-zero.
 - `--away 2` closes seat 2's browser context; the host must still start the playoffs and the remaining seats must agree.
 - `--host-leave` taps Leave lobby on the host; another seat must receive Start playoffs and carry the league.
 
-The season reveal is real time. The regular season takes about 5 seconds: rounds with a human game reveal at 0.4 s,
-the rest 50 times faster. A playoff series with a human team reveals one game every 0.12 s; a series between computer
-teams runs 50 times faster. The command has no internal setters or database jumps.
+The season reveal is real time. CPU-only games take about 2.4 ms each, so a CPU-only round is effectively instant.
+Regular-season games with a human take 60 ms each, and each playoff game in a series with a human is its own 700 ms
+step. A finished playoff round that included a human series is held for two steps so every seat sees the deciding
+game and the result before the next round. An 8-player league takes about 10 s of season and 15-35 s of playoffs.
+The command has no internal setters or database jumps.
 
 ## Gotchas
 
