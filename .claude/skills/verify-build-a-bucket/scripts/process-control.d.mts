@@ -31,7 +31,7 @@ export function cleanupRun(options: {
 }): Promise<CleanupResult & { portState: ProbeState }>;
 export function stopOwnedPostgres(options: {
   handle: { dataDir: string; pgPort: number; postmasterIdentity?: ProcessIdentity | null };
-  controls: Pick<CleanupControls, 'readIdentity' | 'signal' | 'sleep' | 'probe' | 'probePort'>;
+  controls: Pick<CleanupControls, 'readIdentity' | 'signal' | 'sleep' | 'probe' | 'probePort' | 'groupMembers'>;
 }): Promise<PostgresResult>;
 export function cleanupAll(options: {
   state: {

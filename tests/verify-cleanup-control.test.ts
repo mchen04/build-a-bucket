@@ -184,6 +184,23 @@ describe('cleanup wiring', () => {
     expect(signals).toEqual([]);
     expect(result.uncertain).toEqual([{ pid: 100, reason: 'no launch identity recorded' }]);
   });
+
+  it('passes an exited server with an empty group and a free port', async () => {
+    const { signals, controls } = harness({ probes: new Map([[100, 'absent']]), group: { ok: true, members: [] } });
+    const result = await cleanupRun({ state: { pid: 100, port: 4391, identity: root }, controls });
+    expect(signals).toEqual([]);
+    expect(result.uncertain).toEqual([]);
+    expect(result.failures).toEqual([]);
+    expect(result.portState).toBe('absent');
+  });
+
+  it('reports a leftover member after the root exited without signaling it', async () => {
+    const { signals, controls } = harness({ probes: new Map([[100, 'absent'], [101, 'present']]), group: { ok: true, members: [child] } });
+    const result = await cleanupRun({ state: { pid: 100, port: 4391, identity: root }, controls });
+    expect(signals).toEqual([]);
+    expect(result.uncertain).toEqual([{ pid: 101, reason: 'member still live after the root exited' }]);
+    expect(result.failures).toEqual([{ pid: 101, reason: 'still live' }]);
+  });
 });
 
 describe('owned Postgres cleanup', () => {
@@ -197,9 +214,39 @@ describe('owned Postgres cleanup', () => {
       return calls === 1 ? postmaster : null;
     };
     const result = await stopOwnedPostgres({ handle, controls });
-    expect(signals).toEqual([[200, 'SIGTERM']]);
+    expect(signals).toEqual([[200, 'SIGINT']]);
     expect(result.state).toBe('clean');
     expect(result.removed).toBe(false);
+  });
+
+  it('waits for a slow postmaster and never sends SIGKILL', async () => {
+    let polls = 0;
+    const { signals, controls } = harness({ group: { ok: true, members: [] } });
+    controls.readIdentity = (_pid: number) => (polls === 0 ? postmaster : null);
+    controls.probe = (_pid: number) => {
+      polls += 1;
+      return polls <= 3 ? 'present' : 'absent';
+    };
+    const result = await stopOwnedPostgres({ handle, controls });
+    expect(signals).toEqual([[200, 'SIGINT']]);
+    expect(result.state).toBe('clean');
+  });
+
+  it('fails a postmaster still alive at the deadline without SIGKILL', async () => {
+    const { signals, controls } = harness({ identities: new Map([[200, postmaster]]), probes: new Map([[200, 'present']]), group: { ok: true, members: [] } });
+    const result = await stopOwnedPostgres({ handle, controls });
+    expect(signals).toEqual([[200, 'SIGINT']]);
+    expect(result.state).toBe('uncertain');
+    expect(result.reason).toContain('deadline');
+  });
+
+  it('fails a leftover postmaster group member', async () => {
+    const backend = { pid: 201, startTime: 'Wed Nov 19 10:00:03 2026', command: 'postgres: checkpointer', pgid: 200 };
+    const { signals, controls } = harness({ identities: new Map([[200, postmaster]]), probes: new Map([[200, 'absent'], [201, 'present']]), group: { ok: true, members: [postmaster, backend] } });
+    const result = await stopOwnedPostgres({ handle, controls });
+    expect(signals).toEqual([[200, 'SIGINT']]);
+    expect(result.state).toBe('uncertain');
+    expect(result.reason).toContain('live member');
   });
 
   it('sends no signal to a reused postmaster pid', async () => {
