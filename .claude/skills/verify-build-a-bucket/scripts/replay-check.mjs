@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+
 function readText(file) {
   try {
     return fs.readFileSync(file, 'utf8');
@@ -212,19 +214,22 @@ function checkSuite(step, out) {
 
 function checkReport(step, dir) {
   const failures = [];
+  const required = step.required?.files ?? {};
+  if (!Object.keys(required).length) return ['plan has no required files'];
   const report = readJson(path.join(dir, 'report.json'));
   if (!report) return ['missing or malformed report.json'];
   const entries = new Map();
   if (Array.isArray(report.testResults)) {
     for (const file of report.testResults) {
-      const name = String(file.name ?? '');
+      const raw = String(file.name ?? '');
+      const name = path.isAbsolute(raw) ? path.relative(REPO, raw) : raw;
       const tests = Array.isArray(file.assertionResults) ? file.assertionResults : [];
       entries.set(name, tests.map((test) => ({ name: test.fullName ?? test.title ?? '', status: test.status })));
     }
   } else if (Array.isArray(report.suites)) {
     const walk = (suite) => {
       for (const spec of suite.specs ?? []) {
-        const name = String(spec.file ?? suite.file ?? '');
+        const name = path.join(step.rootDir ?? 'e2e', String(spec.file ?? suite.file ?? ''));
         const tests = (spec.tests ?? []).map((test) => ({ name: spec.title ?? '', status: test.status }));
         if (!entries.has(name)) entries.set(name, []);
         entries.get(name).push(...tests);
@@ -235,16 +240,16 @@ function checkReport(step, dir) {
   } else {
     return ['report.json has no testResults or suites'];
   }
-  for (const [file, count] of Object.entries(step.required?.files ?? {})) {
-    const match = [...entries.keys()].find((name) => name.endsWith(file));
-    if (!match) {
+  const expectedStatus = step.id === '05-e2e-local-db' ? 'expected' : 'passed';
+  for (const [file, count] of Object.entries(required)) {
+    if (!entries.has(file)) {
       failures.push(`report missing ${file}`);
       continue;
     }
-    const tests = entries.get(match);
+    const tests = entries.get(file);
     if (tests.length !== count) failures.push(`${file} has ${tests.length} tests, expected ${count}`);
     for (const test of tests) {
-      if (test.status !== 'passed' && test.status !== 'expected') failures.push(`${file} ${test.name} is ${test.status}`);
+      if (test.status !== expectedStatus) failures.push(`${file} ${test.name} is ${test.status}`);
     }
   }
   return failures;

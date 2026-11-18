@@ -42,4 +42,9 @@ describe('local db gate', () => {
     apply({ ...ownedPostgresEnv({ sockDir: '/tmp/sock', port: 55434, database: 'bab_local' }), DATABASE_URL: 'postgresql://postgres@/bab_local?host=%2Ftmp%2Fsock&port=1' });
     expect(() => dbSuiteMode()).toThrow('port');
   });
+
+  it('throws for a relative socket dir', () => {
+    apply({ ...ownedPostgresEnv({ sockDir: '/tmp/sock', port: 55434, database: 'bab_local' }), BAB_PG_SOCKET_DIR: 'relative', DATABASE_URL: 'postgresql://postgres@/bab_local?host=relative&port=55434' });
+    expect(() => dbSuiteMode()).toThrow('absolute');
+  });
 });

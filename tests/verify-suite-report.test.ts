@@ -7,8 +7,8 @@ import { buildControlFixture } from '../.claude/skills/verify-build-a-bucket/scr
 
 const plan = {
   suite: [
-    { id: '04-test-local-db', command: ['npm', 'run', 'test:local-db'], required: { files: { 'tests/league-api.test.ts': 2, 'tests/league-stage-defects.test.ts': 1, 'tests/migration.test.ts': 1 } } },
-    { id: '05-e2e-local-db', command: ['npm', 'run', 'e2e:local-db'], required: { files: { 'e2e/lobby.spec.ts': 1 } } },
+    { id: '04-test-local-db', command: ['npm', 'run', 'test:local-db'], required: { files: { 'tests/league-api.test.ts': 41, 'tests/league-stage-defects.test.ts': 22, 'tests/migration.test.ts': 1 } } },
+    { id: '05-e2e-local-db', command: ['npm', 'run', 'e2e:local-db'], rootDir: 'e2e', required: { files: { 'e2e/lobby.spec.ts': 4, 'e2e/mobile.spec.ts': 8, 'e2e/modes.spec.ts': 14 } } },
   ],
   runs: [{ name: 'run-a', players: 2, mode: 'normal', device: 'iphone', reloadSeat: null, awaySeat: null, hostLeave: false, args: [] }],
 };
@@ -19,10 +19,10 @@ afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function control() {
+function control(source = plan) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'r30-'));
   temps.push(dir);
-  buildControlFixture({ out: dir, plan, head });
+  buildControlFixture({ out: dir, plan: source, head });
   return dir;
 }
 
@@ -34,32 +34,58 @@ const reportPath = (dir: string, step: string) => path.join(dir, 'suite', step, 
 const read = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
 const write = (file: string, value: unknown) => writeFileSync(file, JSON.stringify(value));
 
+function edit04(dir: string, edit: (report: any) => void) {
+  const file = reportPath(dir, '04-test-local-db');
+  const report = read(file);
+  edit(report);
+  write(file, report);
+}
+
+function edit05(dir: string, edit: (report: any) => void) {
+  const file = reportPath(dir, '05-e2e-local-db');
+  const report = read(file);
+  edit(report);
+  write(file, report);
+}
+
 describe('suite report gate', () => {
   it('passes a positive report', () => {
     expect(check(control()).ok).toBe(true);
   });
 
-  it('fails a skipped league-api test', () => {
-    const dir = control();
-    const report = read(reportPath(dir, '04-test-local-db'));
-    report.testResults[0].assertionResults[0].status = 'skipped';
-    write(reportPath(dir, '04-test-local-db'), report);
-    expect(check(dir).ok).toBe(false);
-  });
+  for (const file of ['tests/league-api.test.ts', 'tests/league-stage-defects.test.ts', 'tests/migration.test.ts']) {
+    it(`fails a skipped ${file}`, () => {
+      const dir = control();
+      edit04(dir, (report) => {
+        const entry = report.testResults.find((item: { name: string }) => item.name === file);
+        entry.assertionResults[0].status = 'skipped';
+      });
+      expect(check(dir).ok).toBe(false);
+    });
 
-  it('fails an absent league-api file', () => {
-    const dir = control();
-    const report = read(reportPath(dir, '04-test-local-db'));
-    report.testResults = report.testResults.filter((file: { name: string }) => !file.name.endsWith('league-api.test.ts'));
-    write(reportPath(dir, '04-test-local-db'), report);
-    expect(check(dir).ok).toBe(false);
-  });
+    it(`fails an absent ${file}`, () => {
+      const dir = control();
+      edit04(dir, (report) => {
+        report.testResults = report.testResults.filter((item: { name: string }) => item.name !== file);
+      });
+      expect(check(dir).ok).toBe(false);
+    });
 
-  it('fails a short count', () => {
+    it(`fails a short ${file}`, () => {
+      const dir = control();
+      edit04(dir, (report) => {
+        const entry = report.testResults.find((item: { name: string }) => item.name === file);
+        entry.assertionResults.pop();
+      });
+      expect(check(dir).ok).toBe(false);
+    });
+  }
+
+  it('fails a lobby spec skipped in one project', () => {
     const dir = control();
-    const report = read(reportPath(dir, '04-test-local-db'));
-    report.testResults[0].assertionResults.pop();
-    write(reportPath(dir, '04-test-local-db'), report);
+    edit05(dir, (report) => {
+      report.suites[0].specs[0].tests[0].status = 'skipped';
+    });
     expect(check(dir).ok).toBe(false);
   });
 
@@ -69,11 +95,9 @@ describe('suite report gate', () => {
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails a skipped e2e lobby spec', () => {
-    const dir = control();
-    const report = read(reportPath(dir, '05-e2e-local-db'));
-    report.testResults[0].assertionResults[0].status = 'skipped';
-    write(reportPath(dir, '05-e2e-local-db'), report);
+  it('fails a plan without required', () => {
+    const without: any = { ...plan, suite: plan.suite.map((step) => (step.id === '04-test-local-db' ? { ...step, required: undefined } : step)) };
+    const dir = control(without);
     expect(check(dir).ok).toBe(false);
   });
 });

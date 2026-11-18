@@ -1,4 +1,5 @@
 import { describe } from 'vitest';
+import path from 'node:path';
 
 export function dbSuiteMode() {
   const runner = process.env.BAB_DB_RUNNER;
@@ -8,6 +9,7 @@ export function dbSuiteMode() {
   const database = process.env.BAB_PG_DATABASE;
   if (!runner) return 'skip';
   if (!sock || !port || !database) throw new Error('BAB_DB_RUNNER is set but the owned socket env is partial');
+  if (!path.isAbsolute(sock)) throw new Error('BAB_DB_RUNNER is set but BAB_PG_SOCKET_DIR is not absolute');
   if (/^postgres(ql)?:\/\/[^@]*@[^/]/.test(url)) throw new Error('BAB_DB_RUNNER is set but DATABASE_URL is hosted');
   const match = /^postgres(ql)?:\/\/([^@]*)@\/([^?]*)\?(.*)$/.exec(url);
   if (!match) throw new Error('BAB_DB_RUNNER is set but DATABASE_URL is not a socket URL');
