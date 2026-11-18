@@ -4,13 +4,13 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { assertRefreshCoverage, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, reloadRecord } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
 
-function read(seat, revision, tables) {
+function read(seat: number, revision: unknown, tables: string[][]) {
   return { seat: { seat, name: `S${seat}` }, revision, tables };
 }
 
-const rev = (stage, progress) => ({ stage, progress });
+const rev = (stage: string, progress: string) => ({ stage, progress });
 
-const temps = [];
+const temps: string[] = [];
 afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
