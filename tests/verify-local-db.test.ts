@@ -63,6 +63,49 @@ class FakeChild {
   }
 }
 
+class VirtualClock {
+  now = 0;
+  private timers: { id: number; at: number; fn: () => void; interval?: number }[] = [];
+  private nextId = 1;
+
+  setTimeout(fn: () => void, ms: number) {
+    const id = this.nextId++;
+    this.timers.push({ id, at: this.now + ms, fn });
+    return id;
+  }
+
+  clearTimeout(id: number) {
+    this.timers = this.timers.filter((timer) => timer.id !== id);
+  }
+
+  setInterval(fn: () => void, ms: number) {
+    const id = this.nextId++;
+    this.timers.push({ id, at: this.now + ms, fn, interval: ms });
+    return id;
+  }
+
+  clearInterval(id: number) {
+    this.clearTimeout(id);
+  }
+
+  pending() {
+    return this.timers.map((timer) => timer.at);
+  }
+
+  advance(ms: number) {
+    const target = this.now + ms;
+    while (true) {
+      const due = this.timers.filter((timer) => timer.at <= target).sort((a, b) => a.at - b.at || a.id - b.id)[0];
+      if (!due) break;
+      this.now = due.at;
+      this.timers = this.timers.filter((timer) => timer.id !== due.id);
+      due.fn();
+      if (due.interval) this.timers.push({ ...due, at: this.now + due.interval });
+    }
+    this.now = target;
+  }
+}
+
 const temps: string[] = [];
 const previousTmp = process.env.TMPDIR;
 const ownedTmp = mkdtempSync(path.join(os.tmpdir(), 'bab-test-'));
@@ -574,13 +617,14 @@ describe('local-db main', () => {
     const dir = tempDir();
     const postgres = new FakeChild(200);
     const test = new FakeChild(300, { exitOn: new Set() });
+    const clock = new VirtualClock();
     test.kill = (signal: string) => {
       test.signals.push(signal);
       if (signal === 'SIGTERM') {
-        test.emit('error', new Error('kill EPERM'));
+        clock.setTimeout(() => test.emit('error', new Error('kill EPERM')), 1);
         return true;
       }
-      test.exit(null, 'SIGKILL');
+      clock.setTimeout(() => test.exit(null, 'SIGKILL'), 1);
       return true;
     };
     const signals = new EventEmitter();
@@ -604,6 +648,13 @@ describe('local-db main', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
     signals.emit('SIGTERM');
+    clock.advance(9999);
+    expect(test.signals).toEqual(['SIGTERM']);
+    expect(existsSync(path.join(dir, 'receipt.json'))).toBe(false);
+    clock.advance(1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(test.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    clock.advance(1);
     await promise;
     expect(test.signals).toEqual(['SIGTERM', 'SIGKILL']);
     expect(postgres.signals).toEqual(['SIGINT']);
@@ -622,10 +673,13 @@ describe('local-db main', () => {
     const dir = tempDir();
     const postgres = new FakeChild(200);
     const test = new FakeChild(300, { exitOn: new Set() });
+    const clock = new VirtualClock();
     test.kill = (signal: string) => {
       test.signals.push(signal);
-      if (signal === 'SIGTERM') throw new Error('kill failed');
-      test.exit(0);
+      if (signal === 'SIGTERM') {
+        clock.setTimeout(() => test.exit(0), 500);
+        throw new Error('kill failed');
+      }
       return true;
     };
     const signals = new EventEmitter();
@@ -649,8 +703,9 @@ describe('local-db main', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 10));
     signals.emit('SIGTERM');
+    clock.advance(500);
     await promise;
-    expect(test.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(test.signals).toEqual(['SIGTERM']);
     expect(postgres.signals).toEqual(['SIGINT']);
     expect(code).toBe(1);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
@@ -658,6 +713,57 @@ describe('local-db main', () => {
     expect(receipt.command.state).toBe('exited');
     expect(receipt.command.errors).toEqual(['kill failed']);
     expect(existsSync(dir)).toBe(true);
+    expect(test.listenerCount('exit')).toBe(0);
+    expect(test.listenerCount('error')).toBe(0);
+  });
+
+  it('removes the dirs on a clean interruption', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300, { exitOn: new Set() });
+    const clock = new VirtualClock();
+    test.kill = (signal: string) => {
+      test.signals.push(signal);
+      if (signal === 'SIGTERM') {
+        clock.setTimeout(() => test.exit(null, 'SIGTERM'), 500);
+        return true;
+      }
+      return true;
+    };
+    const signals = new EventEmitter();
+    let calls = 0;
+    let code: number | null = null;
+    const before = readdirSync(ownedTmp).filter((name) => name.startsWith('bab-pgsock-')).length;
+    const promise = main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      signals,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    signals.emit('SIGTERM');
+    clock.advance(500);
+    await promise;
+    expect(test.signals).toEqual(['SIGTERM']);
+    expect(postgres.signals).toEqual(['SIGINT']);
+    expect(code).toBe(1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(true);
+    expect(existsSync(dir)).toBe(true);
+    expect(readdirSync(dir).some((name) => name.startsWith('pgdata-'))).toBe(false);
+    expect(readdirSync(ownedTmp).filter((name) => name.startsWith('bab-pgsock-')).length).toBe(before);
+    expect(test.listenerCount('exit')).toBe(0);
+    expect(test.listenerCount('error')).toBe(0);
   });
 
   it('keeps the error when a signal arrives during the DB stop', async () => {
