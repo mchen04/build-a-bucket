@@ -14,3 +14,4 @@ export function createStopOnce<T>(stop: () => Promise<T>): () => Promise<T>;
 export function prepareLocalDb(options?: Record<string, unknown>): Omit<LocalDbHandle, 'child'>;
 export function startLocalDb(options?: Record<string, unknown>): Promise<LocalDbHandle>;
 export function stopLocalDb(handle: LocalDbHandle): Promise<{ state: string; reason: string | null }>;
+export function main(options?: Record<string, unknown>): Promise<void>;

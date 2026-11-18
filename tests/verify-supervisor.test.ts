@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import { descendants } from '../.claude/skills/verify-build-a-bucket/scripts/pro
 import { createStopOnce, startLocalDb } from '../scripts/local-db.mjs';
 import { buildSupervisorSpec } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor-spec.mjs';
 import { createOwnedPostgres } from '../.claude/skills/verify-build-a-bucket/scripts/owned-postgres.mjs';
+import { removeOwnedDirs } from '../.claude/skills/verify-build-a-bucket/scripts/owned-dirs.mjs';
 
 class FakeChild {
   pid: number;
@@ -611,5 +612,89 @@ describe('supervisor CLI', () => {
     expect(receipt.ok).toBe(false);
     process.removeAllListeners('uncaughtException');
     process.removeAllListeners('unhandledRejection');
+  });
+});
+
+describe('owned database evidence', () => {
+  it('keeps inherited env out of the spec and passes it to the app', async () => {
+    const dir = tempDir();
+    process.env.BAB_SENTINEL = 'sentinel-value';
+    const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: null });
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    const text = readFileSync(specPath, 'utf8');
+    expect(text).not.toContain('BAB_SENTINEL');
+    expect(text).not.toContain('sentinel-value');
+    const app = new FakeChild(100);
+    let captured: any = null;
+    await startSupervisor({
+      runDir: dir,
+      services: spec.services,
+      controlPath: path.join(dir, 'control.json'),
+      receiptPath: path.join(dir, 'receipt.json'),
+      ackPath: path.join(dir, 'ack.json'),
+      spawn: (_cmd: string, _args: string[], options: { env: Record<string, string> }) => {
+        captured = options.env;
+        return app;
+      },
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+    });
+    expect(captured?.BAB_SENTINEL).toBe('sentinel-value');
+    delete process.env.BAB_SENTINEL;
+  });
+
+  it('runs the CLI positive path with injected Postgres tools', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const app = new FakeChild(100);
+    const order: string[] = [];
+    const children = [postgres, app];
+    let captured: any = null;
+    const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
+    const specPath = path.join(dir, 'spec.json');
+    writeFileSync(specPath, JSON.stringify(spec));
+    const supervisor = await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
+      spawn: (_cmd: string, _args: string[], options: { env: Record<string, string> }) => {
+        const child = children.shift();
+        order.push(child === postgres ? 'postgres' : 'app');
+        if (child === app) captured = options.env;
+        return child;
+      },
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+      postgresTools: {
+        initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+          writeFileSync(path.join(dataDir, 'postmaster.pid'), `${postgres.pid}\n`);
+          writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+        },
+        psql: () => '1',
+        schemaLoad: () => {
+          order.push('schema');
+        },
+      },
+    });
+    expect(order).toEqual(['postgres', 'schema', 'app']);
+    expect(captured?.BAB_PG_SOCKET_DIR).toBeTruthy();
+    await supervisor.stop();
+    process.removeAllListeners('uncaughtException');
+    process.removeAllListeners('unhandledRejection');
+  });
+
+  it('removes exactly the recorded data and socket dirs', () => {
+    const dir = tempDir();
+    const dataDir = path.join(dir, 'pgdata-x');
+    const sockDir = path.join(os.tmpdir(), 'bab-pgsock-x');
+    const other = path.join(dir, 'bab-pgsock-other');
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(sockDir, { recursive: true });
+    mkdirSync(other, { recursive: true });
+    writeFileSync(path.join(dir, 'supervisor-init.json'), JSON.stringify({ dataDir, sockDir }));
+    removeOwnedDirs(dir, true);
+    expect(existsSync(dataDir)).toBe(false);
+    expect(existsSync(sockDir)).toBe(false);
+    expect(existsSync(other)).toBe(true);
   });
 });

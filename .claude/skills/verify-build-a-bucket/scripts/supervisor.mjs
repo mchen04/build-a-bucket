@@ -88,6 +88,7 @@ export async function startSupervisor({
   controls,
   handoffMs = 180000,
   exit = process.exit,
+  onFail,
 }) {
   const children = [];
   let postgres = null;
@@ -138,6 +139,7 @@ export async function startSupervisor({
     }
     return stopPromise;
   };
+  if (onFail) onFail(fail);
   try {
     if (postgresInit) {
       postgres = await createOwnedPostgres({
@@ -157,7 +159,7 @@ export async function startSupervisor({
     }
     for (const service of services) {
       const stdio = service.logPath ? ['ignore', fs.openSync(service.logPath, 'a'), fs.openSync(service.logPath, 'a')] : (service.stdio ?? 'ignore');
-      const env = service.envFromPostgres && postgres ? { ...service.env, ...postgres.env } : service.env;
+      const env = { ...process.env, ...(service.env ?? {}), ...(service.envFromPostgres && postgres ? postgres.env : {}) };
       const child = spawn(service.command, service.args, { cwd: service.cwd, env, stdio, detached: service.detached ?? false });
       child.on('error', (error) => fail(error));
       child.on('exit', (code, signal) => {
@@ -214,9 +216,14 @@ export async function runSupervisorCli(argv, deps = {}) {
   const spec = readJson(specPath);
   const { descendants, groupMembers, probePid, probePort, readProcessIdentity } = await import('./process-control.mjs');
   const controls = { readIdentity: readProcessIdentity, groupMembers, descendants, probe: probePid, probePort, clock: { setTimeout: globalThis.setTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, clearTimeout: globalThis.clearTimeout } };
-  const supervisor = await startSupervisor({ runDir, controlPath, receiptPath, ackPath, postgresInit: spec.postgresInit, services: spec.services, controls, ...deps });
-  process.on('uncaughtException', (error) => supervisor.fail(error));
-  process.on('unhandledRejection', (error) => supervisor.fail(error));
+  let failRef = null;
+  const onUncaught = (error) => {
+    if (failRef) failRef(error);
+  };
+  process.on('uncaughtException', onUncaught);
+  process.on('unhandledRejection', onUncaught);
+  const postgresInit = spec.postgresInit ? { ...spec.postgresInit, ...(deps.postgresTools ?? {}) } : null;
+  const supervisor = await startSupervisor({ runDir, controlPath, receiptPath, ackPath, postgresInit, services: spec.services, controls, ...deps, onFail: (fail) => { failRef = fail; } });
   return supervisor;
 }
 

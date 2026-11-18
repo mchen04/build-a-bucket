@@ -10,6 +10,7 @@ import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailu
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
 import { buildSupervisorSpec } from './supervisor-spec.mjs';
+import { removeOwnedDirs } from './owned-dirs.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -1310,11 +1311,7 @@ async function cleanup() {
     const outText = execFileSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'drop-lobbies.ts'), ...state.lobbies], { cwd: repo, encoding: 'utf8' });
     removed = JSON.parse(outText);
   }
-  if (receipt.ok && state.localDb?.remove) {
-    for (const entry of fs.readdirSync(dir)) {
-      if (entry.startsWith('pgdata-') || entry.startsWith('pgsock-')) fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
-    }
-  }
+  removeOwnedDirs(dir, receipt.ok);
   fs.rmSync(path.join(home, 'current'), { force: true });
   for (const f of fs.readdirSync(dir)) if (f.startsWith('session-')) fs.rmSync(path.join(dir, f));
   const evidence = path.join(dir, 'evidence');
