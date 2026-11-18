@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareStandings, createLeagueEvidenceDir, isValidRevision, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
+import { buildLeagueSummary } from './replay-records.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -1016,7 +1017,7 @@ async function leagueRun() {
         status: sample.status,
       }))
       .sort((a, b) => a.endpoint.localeCompare(b.endpoint));
-    const summary = {
+    const summary = buildLeagueSummary({
       code,
       players,
       mode,
@@ -1043,7 +1044,7 @@ async function leagueRun() {
       errors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, errors: seat.errors })),
       httpErrors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, responses: seat.http })),
       evidence: ev,
-    };
+    });
     summary.reload = reloadRecord(reloadSeat !== null, reload);
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
     summaryWritten = true;

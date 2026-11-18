@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 function readText(file) {
   try {
@@ -79,12 +80,33 @@ function validatePlan(plan) {
     if (typeof run.mode !== 'string' || run.mode.length === 0) failures.push(`plan run '${run.name}' has invalid mode`);
     if (typeof run.device !== 'string' || run.device.length === 0) failures.push(`plan run '${run.name}' has invalid device`);
     if (run.reloadSeat !== null && !isPositiveInt(run.reloadSeat)) failures.push(`plan run '${run.name}' has invalid reloadSeat`);
+    if (run.awaySeat !== null && !isPositiveInt(run.awaySeat)) failures.push(`plan run '${run.name}' has invalid awaySeat`);
+    if (typeof run.hostLeave !== 'boolean') failures.push(`plan run '${run.name}' has invalid hostLeave`);
     if (!Array.isArray(run.args)) failures.push(`plan run '${run.name}' has invalid args`);
   }
   for (const step of Array.isArray(plan.suite) ? plan.suite : []) {
     if (!step || typeof step.id !== 'string' || step.id.length === 0) failures.push('plan suite step has no id');
     if (!Array.isArray(step.command) || step.command.length === 0) failures.push(`plan suite step '${step?.id}' has no command`);
   }
+  return failures;
+}
+
+function checkErrorEntries(entries, players, key) {
+  const failures = [];
+  if (!Array.isArray(entries)) return [`${key} is not an array`];
+  if (entries.length !== players) failures.push(`${key} has ${entries.length} entries, expected ${players}`);
+  const seats = new Set();
+  for (const entry of entries) {
+    if (!entry || !isPositiveInt(entry.seat) || entry.seat < 1 || entry.seat > players) {
+      failures.push(`${key} has an invalid seat`);
+      continue;
+    }
+    if (seats.has(entry.seat)) failures.push(`${key} has duplicate seat ${entry.seat}`);
+    seats.add(entry.seat);
+    if (typeof entry.name !== 'string' || entry.name.trim().length === 0) failures.push(`${key} seat ${entry.seat} has no name`);
+    if (!Array.isArray(entry[key])) failures.push(`${key} seat ${entry.seat} has no ${key} array`);
+  }
+  for (let seat = 1; seat <= players; seat++) if (!seats.has(seat)) failures.push(`${key} is missing seat ${seat}`);
   return failures;
 }
 
@@ -97,6 +119,8 @@ function checkRun(run, dir) {
   if (meta.mode !== run.mode) failures.push(`run.json mode '${meta.mode}' != '${run.mode}'`);
   if (meta.device !== run.device) failures.push(`run.json device '${meta.device}' != '${run.device}'`);
   if ((meta.reloadSeat ?? null) !== (run.reloadSeat ?? null)) failures.push(`run.json reloadSeat ${meta.reloadSeat} != ${run.reloadSeat}`);
+  if ((meta.awaySeat ?? null) !== (run.awaySeat ?? null)) failures.push(`run.json awaySeat ${meta.awaySeat} != ${run.awaySeat}`);
+  if ((meta.hostLeave === true) !== (run.hostLeave === true)) failures.push(`run.json hostLeave ${meta.hostLeave} != ${run.hostLeave}`);
   if (!exactZero(path.join(dir, 'exit'))) failures.push('exit is not exactly 0');
   const evidenceRoot = path.join(dir, 'evidence');
   const leagueDirs = fs.existsSync(evidenceRoot)
@@ -109,8 +133,17 @@ function checkRun(run, dir) {
   }
   const summary = readJson(summaries[0]);
   if (!summary) return [...failures, 'malformed summary.json'];
-  if (!Array.isArray(summary.httpErrors)) failures.push('summary.httpErrors is not an array');
-  if (!Array.isArray(summary.errors)) failures.push('summary.errors is not an array');
+  if (summary.players !== run.players) failures.push(`summary players ${summary.players} != ${run.players}`);
+  if (summary.mode !== run.mode) failures.push(`summary mode '${summary.mode}' != '${run.mode}'`);
+  if (summary.device !== run.device) failures.push(`summary device '${summary.device}' != '${run.device}'`);
+  if ((summary.chaos?.reload ?? null) !== (run.reloadSeat ?? null)) failures.push(`summary chaos.reload ${summary.chaos?.reload} != ${run.reloadSeat}`);
+  if ((summary.chaos?.away ?? null) !== (run.awaySeat ?? null)) failures.push(`summary chaos.away ${summary.chaos?.away} != ${run.awaySeat}`);
+  if ((summary.chaos?.hostLeave === true) !== (run.hostLeave === true)) failures.push(`summary chaos.hostLeave ${summary.chaos?.hostLeave} != ${run.hostLeave}`);
+  const stages = Array.isArray(summary.stages) ? summary.stages : [];
+  if (run.awaySeat !== null && !stages.some((stage) => stage?.label === 'away' && stage.seat === run.awaySeat)) failures.push(`summary has no away stage for seat ${run.awaySeat}`);
+  if (run.hostLeave === true && !stages.some((stage) => stage?.label === 'host-left')) failures.push('summary has no host-left stage');
+  failures.push(...checkErrorEntries(summary.errors, run.players, 'errors'));
+  failures.push(...checkErrorEntries(summary.httpErrors, run.players, 'responses'));
   if (Array.isArray(summary.httpErrors)) {
     const bad = summary.httpErrors.flatMap((entry) => (Array.isArray(entry.responses) ? entry.responses : [])).filter((response) => Number(response.status) >= 400 && Number(response.status) <= 499);
     if (bad.length) failures.push(`${bad.length} 4xx responses`);
@@ -127,22 +160,66 @@ function checkRun(run, dir) {
     if (!reload || !isPositiveInt(reload.rowsCompared)) failures.push('reload.rowsCompared is not a positive integer');
     if (!reload || !validRevision(reload.revision)) failures.push('reload.revision is not valid');
     if (!reload || reload.coverage !== 'ok') failures.push(`reload.coverage is '${reload?.coverage}'`);
+    if (reload?.refreshedSeat?.seat !== run.reloadSeat) failures.push(`reload.refreshedSeat ${reload?.refreshedSeat?.seat} != ${run.reloadSeat}`);
     const identities = seatNumbers(reload?.seats);
-    const conflict = [...identities].find(([, names]) => names.size > 1);
-    if (conflict) failures.push(`reload.seats conflict for seat ${conflict[0]}`);
     if (identities.size < 2) failures.push(`reload.seats has ${identities.size} distinct seats`);
     if (!identities.has(run.reloadSeat)) failures.push(`reload.seats does not include seat ${run.reloadSeat}`);
+    for (const number of identities.keys()) if (number < 1 || number > run.players) failures.push(`reload.seats has out-of-range seat ${number}`);
+    const after = stages.find((stage) => stage?.label === 'after-reload');
+    if (!after) failures.push('summary has no after-reload stage');
+    else {
+      if (JSON.stringify(after.revision) !== JSON.stringify(reload?.revision)) failures.push('after-reload revision differs from reload.revision');
+      if (JSON.stringify(after.seats) !== JSON.stringify(reload?.seats)) failures.push('after-reload seats differ from reload.seats');
+      const tables = after.standings;
+      if (!Array.isArray(tables) || tables.length === 0) failures.push('after-reload standings are missing');
+      else {
+        const rows = tables.reduce((sum, table) => sum + (Array.isArray(table) ? table.length : 0), 0);
+        if (rows !== reload?.rowsCompared) failures.push(`after-reload rows ${rows} != rowsCompared ${reload?.rowsCompared}`);
+        if (tables.some((table) => !Array.isArray(table) || table.some((row) => String(row).trim().length === 0))) failures.push('after-reload standings have a blank row');
+      }
+    }
   }
+  return failures;
+}
+
+function checkSuite(step, out) {
+  const dir = path.join(out, 'suite', step.id);
+  const failures = [];
+  const command = readText(path.join(dir, 'command.txt'));
+  if (command === null) failures.push('missing command.txt');
+  else if (command.trim() !== step.command.join(' ')) failures.push(`command.txt '${command.trim()}' != '${step.command.join(' ')}'`);
+  const output = readText(path.join(dir, 'output.log'));
+  if (output === null || output.trim().length === 0) failures.push('missing or empty output.log');
+  if (!exactZero(path.join(dir, 'exit'))) failures.push('exit is not exactly 0');
+  return failures;
+}
+
+function checkLaunch(out, expectedHead) {
+  const failures = [];
+  const meta = readJson(path.join(out, 'meta.json'));
+  const tracked = readJson(path.join(out, 'tracked.json'));
+  const launch = readJson(path.join(out, 'launch.json'));
+  if (!meta) failures.push('meta.json is missing or malformed');
+  if (!tracked) failures.push('tracked.json is missing or malformed');
+  if (!launch) failures.push('launch.json is missing or malformed');
+  if (!exactZero(path.join(out, 'launch.exit'))) failures.push('launch.exit is not exactly 0');
+  if (meta && expectedHead && meta.head !== expectedHead) failures.push(`meta.head '${meta.head}' != '${expectedHead}'`);
+  if (launch && expectedHead && !expectedHead.startsWith(launch.head)) failures.push(`launch.head '${launch.head}' is not a prefix of '${expectedHead}'`);
+  if (meta && launch && !meta.head.startsWith(launch.head)) failures.push(`meta.head '${meta.head}' does not start with launch.head '${launch.head}'`);
+  if (meta && tracked && meta.port !== tracked.port) failures.push('meta.port != tracked.port');
+  if (launch && tracked && launch.pid !== tracked.pid) failures.push('launch.pid != tracked.pid');
+  if (launch && tracked && launch.port !== tracked.port) failures.push('launch.port != tracked.port');
+  if (launch && tracked && (launch.localDb?.pgPort ?? null) !== (tracked.pgPort ?? null)) failures.push('launch.localDb.pgPort != tracked.pgPort');
+  if (meta && !isPositiveInt(meta.e2ePort)) failures.push('meta.e2ePort is not a positive integer');
+  if (meta && !isPositiveInt(meta.suitePgPort)) failures.push('meta.suitePgPort is not a positive integer');
   return failures;
 }
 
 function checkCleanup(out) {
   const failures = [];
+  const meta = readJson(path.join(out, 'meta.json'));
   const tracked = readJson(path.join(out, 'tracked.json'));
-  if (!tracked) return ['cleanup: missing tracked.json'];
-  if (!isPositiveInt(tracked.pid)) failures.push('cleanup: tracked pid is not a positive integer');
-  if (!isPositiveInt(tracked.port)) failures.push('cleanup: tracked port is not a positive integer');
-  if (tracked.pgPort !== undefined && tracked.pgPort !== null && !isPositiveInt(tracked.pgPort)) failures.push('cleanup: tracked pgPort is not a positive integer');
+  if (!meta || !tracked) return ['cleanup: missing meta or tracked record'];
   if (!exactZero(path.join(out, 'cleanup.exit'))) failures.push('cleanup.exit is not exactly 0');
   const text = readText(path.join(out, 'cleanup-check.txt'));
   if (text === null) return [...failures, 'cleanup: missing cleanup-check.txt'];
@@ -167,6 +244,8 @@ function checkCleanup(out) {
     ['port_listening', 'no'],
   ]);
   if (isPositiveInt(tracked.pgPort)) expected.set('pg_port_listening', 'no');
+  if (isPositiveInt(meta.e2ePort)) expected.set('e2e_port_listening', 'no');
+  if (isPositiveInt(meta.suitePgPort)) expected.set('suite_pg_port_listening', 'no');
   for (const [key, value] of expected) {
     if (!map.has(key)) failures.push(`cleanup: missing '${key}'`);
     else if (map.get(key) !== value) failures.push(`cleanup: '${key}' is '${map.get(key)}', expected '${value}'`);
@@ -193,18 +272,18 @@ export function checkReplay({ out, planPath, expectedHead = null, cleanup = fals
     failures.push(...runFailures.map((failure) => `${run.name}: ${failure}`));
   }
   for (const step of plan.suite) {
-    if (!exactZero(path.join(out, 'suite', step.id, 'exit'))) failures.push(`suite ${step.id}: exit is not exactly 0`);
+    const stepFailures = checkSuite(step, out);
+    failures.push(...stepFailures.map((failure) => `suite ${step.id}: ${failure}`));
   }
-  if (expectedHead) {
-    const meta = readJson(path.join(out, 'meta.json'));
-    if (!meta) failures.push('meta.json is missing or malformed');
-    else if (meta.head !== expectedHead) failures.push(`meta.json head '${meta.head}' != '${expectedHead}'`);
-  }
+  failures.push(...checkLaunch(out, expectedHead));
   if (cleanup) failures.push(...checkCleanup(out));
   return { ok: failures.length === 0, rows, failures };
 }
 
 export function runReplayCheck(argv) {
+  const self = fileURLToPath(import.meta.url);
+  const hash = createHash('sha256').update(fs.readFileSync(self)).digest('hex');
+  console.log(`core: ${self} sha256=${hash}`);
   const args = argv.slice();
   const out = args.shift();
   let planPath = null;
