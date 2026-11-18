@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { loadCatalog } from '../../../../src/shared/data/loader.js';
 import { autoBuild, buildSeedFor, powerFromBuild, validateBuild } from '../../../../src/server/league.js';
@@ -26,6 +27,11 @@ function codeFor(id) {
     hash = Math.floor(hash / ALPHABET.length);
   }
   return code;
+}
+
+function participantId(fixtureId, seat) {
+  const hex = createHash('sha256').update(`${fixtureId}:${seat}`).digest('hex').slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 function humansFor(entry) {
@@ -55,7 +61,7 @@ async function findFixture(spec, catalog) {
     let valid = true;
     for (let index = 0; index < spec.players; index++) {
       const seat = index + 1;
-      const id = `p${seat}-${attempt}`;
+      const id = participantId(spec.id, seat);
       const team = LEAGUE_TEAMS[(seat - 1) % LEAGUE_TEAMS.length];
       const buildSeed = buildSeedFor(secret, id);
       const check = autoBuild({ mode: spec.mode, era: spec.era }, catalog, team, buildSeed, secret);
@@ -78,12 +84,16 @@ function check(catalogJson, catalog) {
   if (catalogJson.dataSha !== DATA_SHA) throw new Error(`catalog pin ${catalogJson.dataSha} != ${DATA_SHA}`);
   const ids = new Set();
   const codes = new Set();
+  const participantIds = new Set();
   for (const entry of catalogJson.entries) {
     if (ids.has(entry.id)) throw new Error(`duplicate id ${entry.id}`);
     if (codes.has(entry.code)) throw new Error(`duplicate code ${entry.code}`);
     ids.add(entry.id);
     codes.add(entry.code);
     for (const participant of entry.participants) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(participant.id)) throw new Error(`${entry.id} participant id ${participant.id} is not a uuid`);
+      if (participantIds.has(participant.id)) throw new Error(`duplicate participant id ${participant.id}`);
+      participantIds.add(participant.id);
       const settings = { mode: entry.mode, era: entry.era };
       const buildSeed = buildSeedFor(entry.secret, participant.id);
       const valid = validateBuild(participant.build, settings, catalog, participant.team, entry.secret, { buildSeed });
@@ -104,8 +114,8 @@ if (process.argv.includes('--check')) {
 } else {
   const entries = [];
   for (const spec of specs) entries.push(await findFixture(spec, catalog));
-  const catalogJson = { dataSha: DATA_SHA, entries };
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
-  fs.writeFileSync(OUT, `${JSON.stringify(catalogJson, null, 2)}\n`);
+  const lines = entries.map((entry) => `    ${JSON.stringify(entry)}`);
+  fs.writeFileSync(OUT, `{\n  "dataSha": ${JSON.stringify(DATA_SHA)},\n  "entries": [\n${lines.join(',\n')}\n  ]\n}\n`);
   console.log(`wrote ${OUT}: ${entries.length} entries at ${DATA_SHA}`);
 }

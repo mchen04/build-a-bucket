@@ -31,6 +31,12 @@ describe('fixture catalog', () => {
     expect(new Set(catalog.entries.map((entry: { code: string }) => entry.code)).size).toBe(catalog.entries.length);
   });
 
+  it('has unique uuid participant ids', () => {
+    const ids = catalog.entries.flatMap((entry: { participants: { id: string }[] }) => entry.participants.map((participant) => participant.id));
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
   it('recomputes every class and qualifying seats', () => {
     for (const entry of catalog.entries) {
       const result = simulateLeague({ seed: entry.secret, era: entry.era, mode: entry.mode, humans: humansFor(entry) as any });
