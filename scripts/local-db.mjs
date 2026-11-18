@@ -98,6 +98,11 @@ export async function main({
   });
   let receiptWritten = false;
   let exitCalled = false;
+  let finalized = false;
+  let outcome = null;
+  let recorder = null;
+  let spawnError = null;
+  let failure = null;
   const writeReceipt = (ok, reason, services, command) => {
     if (receiptWritten) return;
     receiptWritten = true;
@@ -108,77 +113,98 @@ export async function main({
     exitCalled = true;
     exit(code);
   };
-  const watchExit = (child) => {
-    let settled = false;
-    let error = null;
+  const message = (error) => (error instanceof Error ? error.message : String(error));
+  const recordOutcome = (child) => {
+    const record = { exited: false, code: null, signal: null, errors: [], exitedBeforeShutdown: false, killedByUs: false };
+    const onExit = (code, signal) => {
+      if (record.exited) return;
+      record.exited = true;
+      record.code = code;
+      record.signal = signal;
+    };
+    const onError = (error) => {
+      record.errors.push(message(error));
+    };
+    child.on('exit', onExit);
+    child.on('error', onError);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      record.exited = true;
+      record.code = child.exitCode;
+      record.signal = child.signalCode;
+    }
+    return {
+      record,
+      dispose: () => {
+        child.removeListener('exit', onExit);
+        child.removeListener('error', onError);
+      },
+    };
+  };
+  const waitOutcome = (timeoutMs) => {
+    const child = active?.testChild;
+    let done = false;
     let timer = null;
     let resolveFn;
     const promise = new Promise((resolve) => {
       resolveFn = resolve;
     });
-    const cleanup = () => {
+    const finish = (value) => {
+      if (done) return;
+      done = true;
       if (timer) clock.clearTimeout(timer);
-      child.removeListener('exit', onExit);
-      child.removeListener('error', onError);
-    };
-    const settle = (value) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
+      if (child) child.removeListener('exit', onExit);
       resolveFn(value);
     };
-    const onExit = (code, signal) => settle({ code, signal });
-    const onError = (err) => {
-      error = err;
-    };
-    child.on('exit', onExit);
-    child.on('error', onError);
-    if (child.exitCode !== null || child.signalCode !== null) settle({ code: child.exitCode, signal: child.signalCode });
+    const onExit = () => finish(true);
+    if (child) child.on('exit', onExit);
+    if (outcome?.exited) finish(true);
+    else if (timeoutMs > 0) timer = clock.setTimeout(() => finish(false), timeoutMs);
     return {
       promise,
-      start: (timeoutMs) => {
-        if (settled) return;
-        if (timeoutMs > 0) timer = clock.setTimeout(() => settle(null), timeoutMs);
-      },
       dispose: () => {
-        if (!settled) {
-          settled = true;
-          cleanup();
+        if (!done) {
+          done = true;
+          if (timer) clock.clearTimeout(timer);
+          if (child) child.removeListener('exit', onExit);
         }
       },
-      error: () => error,
     };
   };
   const stopCommand = async () => {
     const child = active?.testChild;
-    if (!child) return { state: 'exited', code: null, signal: null };
-    if (child.exitCode !== null || child.signalCode !== null) return { state: 'exited', code: child.exitCode, signal: child.signalCode };
-    let killError = null;
-    const term = watchExit(child);
+    if (!child || !outcome) return;
+    if (outcome.exited) return;
     try {
       child.kill('SIGTERM');
-    } catch (err) {
-      killError = err;
+      outcome.killedByUs = true;
+    } catch (error) {
+      outcome.errors.push(message(error));
     }
-    term.start(10000);
-    const termResult = await term.promise;
-    if (termResult) return { state: 'exited', code: termResult.code, signal: termResult.signal, error: term.error()?.message };
-    const kill = watchExit(child);
+    const term = waitOutcome(10000);
+    if (await term.promise) return;
     try {
       child.kill('SIGKILL');
-    } catch (err) {
-      killError = err;
+      outcome.killedByUs = true;
+    } catch (error) {
+      outcome.errors.push(message(error));
     }
-    kill.start(5000);
-    const killResult = await kill.promise;
-    if (killResult) return { state: 'exited', code: killResult.code, signal: killResult.signal, error: kill.error()?.message };
-    return { state: 'uncertain', reason: 'command did not exit', error: (killError ?? term.error() ?? kill.error())?.message };
+    const kill = waitOutcome(5000);
+    await kill.promise;
   };
-  const shutdown = async () => {
-    const command = await stopCommand();
-    const result = await stopPostgres();
-    const ok = result.state === 'clean' && command.state === 'exited' && !command.error;
-    writeReceipt(ok, command.reason ?? command.error ?? result.reason, [result], { state: command.state, reason: command.reason ?? null, error: command.error ?? null });
+  const finalize = (dbResult) => {
+    if (finalized) return;
+    finalized = true;
+    if (recorder) recorder.dispose();
+    const command = spawnError
+      ? { state: 'spawn-error', code: null, signal: null, reason: spawnError, errors: [spawnError], error: spawnError }
+      : failure
+        ? { state: outcome ? (outcome.exited ? 'exited' : 'uncertain') : 'not-started', code: outcome?.code ?? null, signal: outcome?.signal ?? null, reason: failure, errors: outcome ? [...outcome.errors] : [], error: failure }
+        : outcome
+          ? { state: outcome.exited ? 'exited' : 'uncertain', code: outcome.code, signal: outcome.signal, reason: outcome.exited ? null : 'command did not exit', errors: [...outcome.errors], error: outcome.errors[0] ?? null }
+          : { state: 'not-started', code: null, signal: null, reason: null, errors: [], error: null };
+    const cleanExit = !failure && (command.state === 'not-started' || (command.state === 'exited' && command.errors.length === 0 && (command.code === 0 || (outcome.killedByUs && !outcome.exitedBeforeShutdown))));
+    const ok = dbResult.state === 'clean' && cleanExit;
+    writeReceipt(ok, command.reason ?? command.error ?? dbResult.reason, [dbResult], command);
     if (ok && active?.handle?.remove) {
       fs.rmSync(active.handle.dataDir, { recursive: true, force: true });
       fs.rmSync(active.handle.sockDir, { recursive: true, force: true });
@@ -188,7 +214,13 @@ export async function main({
         } catch {}
       }
     }
-    callExit(1);
+    const exitCode = ok && !shutdownPromise ? 0 : (!failure && command.state === 'exited' && !outcome.killedByUs && typeof command.code === 'number' && command.code !== 0 ? command.code : 1);
+    callExit(exitCode);
+  };
+  const shutdown = async () => {
+    await stopCommand();
+    const result = await stopPostgres();
+    finalize(result);
   };
   let shutdownPromise = null;
   let resolveShutdown;
@@ -197,6 +229,7 @@ export async function main({
   });
   const onSignal = () => {
     if (!shutdownPromise) {
+      if (outcome) outcome.exitedBeforeShutdown = outcome.exited;
       shutdownPromise = shutdown();
       resolveShutdown();
     }
@@ -226,58 +259,47 @@ export async function main({
     }
     testChild = spawn(command[0], command.slice(1), { cwd: handle.root, env: { ...process.env, ...localDbEnv(handle) }, stdio: 'inherit' });
     active.testChild = testChild;
-    let testError = null;
+    recorder = recordOutcome(testChild);
+    outcome = recorder.record;
     let resolveSpawnError;
     const spawnErrorSignal = new Promise((resolve) => {
       resolveSpawnError = resolve;
     });
     onTestError = (error) => {
-      testError = error;
-      if (testChild.pid === undefined || testChild.pid === null) resolveSpawnError();
+      if (testChild.pid === undefined || testChild.pid === null) {
+        spawnError = message(error);
+        resolveSpawnError();
+      }
     };
     testChild.once('error', onTestError);
-    const watch = watchExit(testChild);
-    const exitResult = await Promise.race([watch.promise, shutdownSignal, spawnErrorSignal]);
+    const watch = waitOutcome(0);
+    await Promise.race([watch.promise, shutdownSignal, spawnErrorSignal]);
     if (shutdownPromise) {
       watch.dispose();
       await shutdownPromise;
       return;
     }
-    if (testError && (testChild.pid === undefined || testChild.pid === null)) {
+    if (spawnError) {
       watch.dispose();
       const result = await stopPostgres();
-      writeReceipt(false, testError.message, [result], { state: 'spawn-error', reason: testError.message });
-      callExit(1);
+      finalize(result);
       return;
     }
     watch.dispose();
-    const commandError = watch.error();
     const result = await stopPostgres();
     if (shutdownPromise) {
       await shutdownPromise;
       return;
     }
-    const ok = result.state === 'clean' && !commandError && !exitResult?.error && exitResult?.code === 0;
-    writeReceipt(ok, commandError?.message ?? exitResult?.error?.message, [result], { state: 'exited', code: exitResult?.code ?? null, signal: exitResult?.signal ?? null, error: commandError?.message ?? null });
-    if (ok && handle.remove) {
-      fs.rmSync(handle.dataDir, { recursive: true, force: true });
-      fs.rmSync(handle.sockDir, { recursive: true, force: true });
-      if (handle.createdRoot) {
-        try {
-          fs.rmdirSync(handle.dataRoot);
-        } catch {}
-      }
-    }
-    const exitCode = ok ? 0 : (typeof exitResult?.code === 'number' && exitResult.code !== 0 && !commandError && result.state === 'clean' ? exitResult.code : 1);
-    callExit(exitCode);
+    finalize(result);
   } catch (error) {
     if (shutdownPromise) {
       await shutdownPromise;
       return;
     }
+    failure = message(error);
     const result = await stopPostgres();
-    writeReceipt(false, error instanceof Error ? error.message : String(error), [result], { state: 'exited', code: null, signal: null });
-    callExit(1);
+    finalize(result);
   } finally {
     signals.removeListener('SIGINT', onSignal);
     signals.removeListener('SIGTERM', onSignal);

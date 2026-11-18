@@ -570,6 +570,177 @@ describe('local-db main', () => {
     expect(existsSync(dir)).toBe(true);
   });
 
+  it('keeps the TERM error when the command exits after KILL', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300, { exitOn: new Set() });
+    test.kill = (signal: string) => {
+      test.signals.push(signal);
+      if (signal === 'SIGTERM') {
+        test.emit('error', new Error('kill EPERM'));
+        return true;
+      }
+      test.exit(null, 'SIGKILL');
+      return true;
+    };
+    const signals = new EventEmitter();
+    let calls = 0;
+    let code: number | null = null;
+    const promise = main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      signals,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    signals.emit('SIGTERM');
+    await promise;
+    expect(test.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(postgres.signals).toEqual(['SIGINT']);
+    expect(code).toBe(1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.command.state).toBe('exited');
+    expect(receipt.command.errors).toEqual(['kill EPERM']);
+    expect(receipt.command.error).toBe('kill EPERM');
+    expect(existsSync(dir)).toBe(true);
+    expect(test.listenerCount('exit')).toBe(0);
+    expect(test.listenerCount('error')).toBe(0);
+  });
+
+  it('keeps the TERM throw when the command exits within the grace', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300, { exitOn: new Set() });
+    test.kill = (signal: string) => {
+      test.signals.push(signal);
+      if (signal === 'SIGTERM') throw new Error('kill failed');
+      test.exit(0);
+      return true;
+    };
+    const signals = new EventEmitter();
+    let calls = 0;
+    let code: number | null = null;
+    const promise = main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      signals,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    signals.emit('SIGTERM');
+    await promise;
+    expect(test.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(postgres.signals).toEqual(['SIGINT']);
+    expect(code).toBe(1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.command.state).toBe('exited');
+    expect(receipt.command.errors).toEqual(['kill failed']);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it('keeps the error when a signal arrives during the DB stop', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200, { exitOn: new Set() });
+    const test = new FakeChild(300);
+    const signals = new EventEmitter();
+    let calls = 0;
+    let code: number | null = null;
+    const promise = main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock: { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 20)) },
+      signals,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    test.emit('error', new Error('early error'));
+    test.exit(0);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    signals.emit('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    postgres.exit(0);
+    await promise;
+    expect(postgres.signals).toEqual(['SIGINT']);
+    expect(code).toBe(1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.command.state).toBe('exited');
+    expect(receipt.command.errors).toEqual(['early error']);
+    expect(existsSync(dir)).toBe(true);
+    expect(test.listenerCount('exit')).toBe(0);
+    expect(test.listenerCount('error')).toBe(0);
+  });
+
+  it('keeps the nonzero code when a signal arrives during the DB stop', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200, { exitOn: new Set() });
+    const test = new FakeChild(300);
+    const signals = new EventEmitter();
+    let calls = 0;
+    let code: number | null = null;
+    const promise = main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock: { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 20)) },
+      signals,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    test.exit(7);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    signals.emit('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    postgres.exit(0);
+    await promise;
+    expect(postgres.signals).toEqual(['SIGINT']);
+    expect(code).toBe(7);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.command.state).toBe('exited');
+    expect(receipt.command.code).toBe(7);
+    expect(existsSync(dir)).toBe(true);
+  });
+
   it('fails promptly on an async Postgres spawn error', async () => {
     const dir = tempDir();
     const postgres = new FakeChild(200, { exitOn: new Set() });
