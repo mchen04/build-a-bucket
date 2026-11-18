@@ -104,7 +104,7 @@ Run these after a deploy, in addition to the local journey:
 
 ## Cleanup
 
-`control.mjs cleanup` stops only the process tree this run launched, deletes the lobbies this run created for a `--neon` run (by recorded code), discards the local cluster, removes saved sessions, and keeps `<run>/evidence/`. It prints the evidence path and file count, which must be non-zero. Lobbies made on a deployed stack are left for `npm run prune:lobbies` on that database.
+`control.mjs cleanup` stops only the process tree this run launched: it records the launch identity (pid, OS start time, command line, process group) and re-confirms that identity immediately before every SIGTERM and SIGKILL, including for each descendant, which must still belong to the run's process group. A stale, reused, unrelated or unverifiable identity receives no signal and is reported as uncertainty with a non-zero exit. Probes report present, absent or unknown; only a positive absence (ESRCH or no listener) counts as gone, and permission-denied or failed inspection is unknown and fails. It deletes the lobbies this run created for a `--neon` run (by recorded code), discards the local cluster scoped to the run's data dir and port, removes saved sessions, and keeps `<run>/evidence/`. It prints the evidence path and file count, which must be non-zero. Lobbies made on a deployed stack are left for `npm run prune:lobbies` on that database.
 
 DB-backed vitest and Playwright use `npm run test:local-db` and `npm run e2e:local-db`, which start a throwaway local Postgres, apply `db/schema.sql`, run and stop it. `control.mjs launch` defaults to the same local setup. The Neon dev branch is opt-in only (`control.mjs launch --neon`); never run the checks against the production project.
 
