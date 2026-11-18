@@ -7,16 +7,20 @@ export type Service = {
   cwd?: string;
   env?: Record<string, string>;
   stdio?: unknown;
+  logPath?: string;
+  detached?: boolean;
 };
 export type ServiceResult = { name: string; pid: number; state: 'clean' | 'uncertain'; reason: string | null };
 export type Clock = {
   setTimeout: (fn: () => void, ms: number) => unknown;
   setInterval: (fn: () => void, ms: number) => unknown;
   clearInterval: (handle: unknown) => void;
+  clearTimeout: (handle: unknown) => void;
 };
 export type Controls = {
   readIdentity: (pid: number) => unknown;
   groupMembers: (pgid: number) => { ok: true; members: { pid: number }[] } | { ok: false; reason: string };
+  descendants: (pid: number) => { ok: true; pids: number[] } | { ok: false; reason: string };
   probe: (pid: number) => 'present' | 'absent' | 'unknown';
   probePort: (port: number) => 'present' | 'absent' | 'unknown';
   clock: Clock;
@@ -29,10 +33,12 @@ export function startSupervisor(options: {
   services: Service[];
   controlPath: string;
   receiptPath: string;
+  ackPath: string;
   spawn?: unknown;
   clock?: Clock;
   controls: Controls;
   handoffMs?: number;
+  exit?: (code: number) => void;
 }): Promise<{ children: unknown[]; stop: () => Promise<ServiceResult[]> }>;
 export function requestStop(options: { controlPath: string; receiptPath: string; timeoutMs?: number; clock?: Clock }): Promise<{ ok: boolean; services: ServiceResult[]; reason?: string }>;
 export function runSupervised(options: {

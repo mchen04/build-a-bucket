@@ -78,19 +78,21 @@ async function launch() {
       port: prepared.pgPort,
       command: path.join(process.env.BAB_PG_BIN ?? '/opt/homebrew/bin', 'postgres'),
       args: ['-D', prepared.dataDir, '-p', String(prepared.pgPort), '-k', '/tmp', '-c', 'listen_addresses=127.0.0.1', '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off', '-c', 'max_connections=100'],
+      logPath: path.join(dir, 'pg.log'),
     });
   }
   if (mode === 'prod') {
     execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: ['ignore', log, log] });
-    services.push({ name: 'app', kind: 'app', command: path.join(repo, 'node_modules/.bin/vite'), args: ['preview', '--port', String(port), '--strictPort'], cwd: repo, env });
+    services.push({ name: 'app', kind: 'app', command: path.join(repo, 'node_modules/.bin/vite'), args: ['preview', '--port', String(port), '--strictPort'], cwd: repo, env, detached: true, logPath: path.join(dir, 'server.log') });
   } else {
-    services.push({ name: 'app', kind: 'app', command: process.execPath, args: ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], cwd: repo, env });
+    services.push({ name: 'app', kind: 'app', command: process.execPath, args: ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], cwd: repo, env, detached: true, logPath: path.join(dir, 'server.log') });
   }
   const specPath = path.join(dir, 'supervisor-spec.json');
   const controlPath = path.join(dir, 'supervisor-control.json');
   const receiptPath = path.join(dir, 'supervisor-receipt.json');
+  const ackPath = path.join(dir, 'supervisor-ack.json');
   fs.writeFileSync(specPath, JSON.stringify({ services }, null, 2));
-  const supervisor = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'supervisor.mjs'), dir, controlPath, receiptPath, specPath], { detached: true, stdio: 'ignore' });
+  const supervisor = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'supervisor.mjs'), dir, controlPath, receiptPath, ackPath, specPath], { detached: true, stdio: 'ignore' });
   supervisor.unref();
   const base = `http://localhost:${port}`;
   const head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
@@ -108,6 +110,7 @@ async function launch() {
     startedAt: new Date().toISOString(),
   };
   saveState(dir, state);
+  fs.writeFileSync(ackPath, 'ack\n');
   fs.mkdirSync(home, { recursive: true });
   fs.writeFileSync(path.join(home, 'current'), dir);
   const deadline = Date.now() + 90000;
@@ -1308,7 +1311,18 @@ async function coldLoad() {
 }
 
 async function cleanup() {
-  const { dir, state } = currentRun();
+  const dir = o.run ? path.resolve(o.run) : currentRun().dir;
+  let state = null;
+  try {
+    state = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
+  } catch {
+    state = null;
+  }
+  if (!state) {
+    console.log(JSON.stringify({ supervisor: { ok: false, services: [], reason: 'no launch state' }, appGroup: 'not-launched', postgres: { state: 'not-launched' }, evidence: path.join(dir, 'evidence') }, null, 2));
+    process.exitCode = 1;
+    return;
+  }
   const receipt = state.supervisor
     ? await requestStop({ controlPath: state.supervisor.controlPath, receiptPath: state.supervisor.receiptPath, timeoutMs: 60000 })
     : { ok: false, services: [], reason: 'no supervisor recorded' };

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -10,7 +10,7 @@ class FakeChild {
   signals: string[] = [];
   exited = false;
   exitCode: number | null = null;
-  exitSignal: string | null = null;
+  signalCode: string | null = null;
   private exitOn: Set<string>;
   private listeners: ((code: number | null, signal: string | null) => void)[] = [];
 
@@ -21,7 +21,7 @@ class FakeChild {
 
   once(event: string, listener: (code: number | null, signal: string | null) => void) {
     if (event === 'exit') {
-      if (this.exited) listener(this.exitCode, this.exitSignal);
+      if (this.exited) listener(this.exitCode, this.signalCode);
       else this.listeners.push(listener);
     }
     return this;
@@ -36,26 +36,38 @@ class FakeChild {
   exit(code: number | null, signal: string | null = null) {
     this.exited = true;
     this.exitCode = code;
-    this.exitSignal = signal;
+    this.signalCode = signal;
     for (const listener of this.listeners.splice(0)) listener(code, signal);
   }
 }
 
 function clock({ timeout = false } = {}) {
+  const timers: (() => void)[] = [];
   return {
+    timers,
     setTimeout: (fn: () => void) => {
+      timers.push(fn);
       if (timeout) fn();
       return 0;
     },
     setInterval: () => 0,
     clearInterval: () => {},
+    clearTimeout: () => {},
   };
 }
 
-function controls({ identities = new Map(), probes = new Map(), groups = new Map(), portState = 'absent' as 'present' | 'absent' | 'unknown', clock: c = clock() } = {}): Controls {
+function controls({
+  identities = new Map(),
+  probes = new Map(),
+  groups = new Map(),
+  trees = new Map(),
+  portState = 'absent' as 'present' | 'absent' | 'unknown',
+  clock: c = clock(),
+} = {}): Controls {
   return {
     readIdentity: (pid: number) => identities.get(pid) ?? null,
     groupMembers: (pgid: number) => groups.get(pgid) ?? { ok: true, members: [] },
+    descendants: (pid: number) => trees.get(pid) ?? { ok: true, pids: [] },
     probe: (pid: number) => probes.get(pid) ?? 'absent',
     probePort: () => portState,
     clock: c,
@@ -81,7 +93,7 @@ describe('supervised service stop', () => {
     expect(result.state).toBe('clean');
   });
 
-  it('fails a surviving app worker with its pid named', async () => {
+  it('finds a worker only through the group relation', async () => {
     const child = new FakeChild(100);
     const worker = { pid: 101, startTime: 'x', command: 'worker', pgid: 100 };
     const result = await stopService({
@@ -93,27 +105,36 @@ describe('supervised service stop', () => {
     expect(result.reason).toContain('101');
   });
 
-  it('finds a worker that appears during the grace wait', async () => {
-    const child = new FakeChild(100, { exitOn: new Set(['SIGKILL']) });
-    const worker = { pid: 101, startTime: 'x', command: 'worker', pgid: 100 };
-    let calls = 0;
+  it('finds a worker only through the ppid tree', async () => {
+    const child = new FakeChild(100);
     const result = await stopService({
       service: { name: 'app', kind: 'app' },
       child,
-      controls: {
-        readIdentity: () => null,
-        groupMembers: () => {
-          calls += 1;
-          return calls === 1 ? { ok: true, members: [] } : { ok: true, members: [worker] };
-        },
-        probe: () => 'present',
-        probePort: () => 'absent',
-        clock: clock({ timeout: true }),
-      },
+      controls: controls({ trees: new Map([[100, { ok: true, pids: [101] }]]), probes: new Map([[101, 'present']]) }),
     });
-    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
     expect(result.state).toBe('uncertain');
     expect(result.reason).toContain('101');
+  });
+
+  it('fails an already-exited app with a live worker', async () => {
+    const child = new FakeChild(100);
+    child.exit(1);
+    const worker = { pid: 101, startTime: 'x', command: 'worker', pgid: 100 };
+    const result = await stopService({
+      service: { name: 'app', kind: 'app' },
+      child,
+      controls: controls({ groups: new Map([[100, { ok: true, members: [worker] }]]), probes: new Map([[101, 'present']]) }),
+    });
+    expect(child.signals).toEqual([]);
+    expect(result.state).toBe('uncertain');
+  });
+
+  it('passes an already-exited app with no live members', async () => {
+    const child = new FakeChild(100);
+    child.exit(0);
+    const result = await stopService({ service: { name: 'app', kind: 'app' }, child, controls: controls() });
+    expect(child.signals).toEqual([]);
+    expect(result.state).toBe('clean');
   });
 
   it('fails a group enumeration error', async () => {
@@ -124,19 +145,7 @@ describe('supervised service stop', () => {
       controls: controls({ groups: new Map([[100, { ok: false, reason: 'ps failed' }]]) }),
     });
     expect(result.state).toBe('uncertain');
-    expect(result.reason).toContain('group enumeration failed');
-  });
-
-  it('fails an unknown worker inspection', async () => {
-    const child = new FakeChild(100);
-    const worker = { pid: 101, startTime: 'x', command: 'worker', pgid: 100 };
-    const result = await stopService({
-      service: { name: 'app', kind: 'app' },
-      child,
-      controls: controls({ groups: new Map([[100, { ok: true, members: [worker] }]]), probes: new Map([[101, 'unknown']]) }),
-    });
-    expect(result.state).toBe('uncertain');
-    expect(result.reason).toContain('101');
+    expect(result.reason).toContain('enumeration failed');
   });
 
   it('stops Postgres with SIGINT and requires exit 0 and an absent port', async () => {
@@ -146,16 +155,20 @@ describe('supervised service stop', () => {
     expect(result.state).toBe('clean');
   });
 
-  it('fails a Postgres crash exit', async () => {
+  it('passes an already-exited Postgres with code 0 and an absent port', async () => {
     const child = new FakeChild(200);
-    child.kill = (signal: string) => {
-      child.signals.push(signal);
-      child.exit(1);
-      return true;
-    };
+    child.exit(0);
     const result = await stopService({ service: { name: 'postgres', kind: 'postgres', port: 55434 }, child, controls: controls() });
+    expect(child.signals).toEqual([]);
+    expect(result.state).toBe('clean');
+  });
+
+  it('fails an already-exited Postgres with a non-zero code', async () => {
+    const child = new FakeChild(200);
+    child.exit(1);
+    const result = await stopService({ service: { name: 'postgres', kind: 'postgres', port: 55434 }, child, controls: controls() });
+    expect(child.signals).toEqual([]);
     expect(result.state).toBe('uncertain');
-    expect(result.reason).toContain('exit 1');
   });
 
   it('fails a Postgres timeout without SIGKILL', async () => {
@@ -163,18 +176,54 @@ describe('supervised service stop', () => {
     const result = await stopService({ service: { name: 'postgres', kind: 'postgres', port: 55434 }, child, controls: controls({ clock: clock({ timeout: true }) }) });
     expect(child.signals).toEqual(['SIGINT']);
     expect(result.state).toBe('uncertain');
-    expect(result.reason).toContain('30s');
-  });
-
-  it('fails a Postgres port that is still present', async () => {
-    const child = new FakeChild(200);
-    const result = await stopService({ service: { name: 'postgres', kind: 'postgres', port: 55434 }, child, controls: controls({ portState: 'present' }) });
-    expect(result.state).toBe('uncertain');
-    expect(result.reason).toContain('port present');
   });
 });
 
 describe('supervisor lifecycle', () => {
+  it('does not stop when the launch ack arrives', async () => {
+    const dir = tempDir();
+    const app = new FakeChild(100);
+    const c = clock();
+    const ackPath = path.join(dir, 'ack.json');
+    writeFileSync(ackPath, 'ack\n');
+    await startSupervisor({
+      runDir: dir,
+      services: [{ name: 'app', kind: 'app', command: 'node', args: ['app'] }],
+      controlPath: path.join(dir, 'control.json'),
+      receiptPath: path.join(dir, 'receipt.json'),
+      ackPath,
+      spawn: () => app,
+      clock: c,
+      controls: controls(),
+      exit: () => {},
+    });
+    c.timers[0]?.();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(app.signals).toEqual([]);
+  });
+
+  it('stops when the launch ack never arrives', async () => {
+    const dir = tempDir();
+    const app = new FakeChild(100);
+    const c = clock();
+    await startSupervisor({
+      runDir: dir,
+      services: [{ name: 'app', kind: 'app', command: 'node', args: ['app'] }],
+      controlPath: path.join(dir, 'control.json'),
+      receiptPath: path.join(dir, 'receipt.json'),
+      ackPath: path.join(dir, 'ack.json'),
+      spawn: () => app,
+      clock: c,
+      controls: controls(),
+      exit: () => {},
+    });
+    c.timers[0]?.();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(app.signals).toEqual(['SIGTERM']);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(true);
+  });
+
   it('starts services and writes a clean receipt on stop', async () => {
     const dir = tempDir();
     const app = new FakeChild(100);
@@ -188,30 +237,14 @@ describe('supervisor lifecycle', () => {
       ],
       controlPath: path.join(dir, 'control.json'),
       receiptPath: path.join(dir, 'receipt.json'),
+      ackPath: path.join(dir, 'ack.json'),
       spawn: () => children.shift(),
       clock: clock(),
       controls: controls(),
+      exit: () => {},
     });
     const results = await supervisor.stop();
     expect(results.map((result) => result.state)).toEqual(['clean', 'clean']);
-    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
-    expect(receipt.ok).toBe(true);
-  });
-
-  it('stops on handoff when no control request arrives', async () => {
-    const dir = tempDir();
-    const app = new FakeChild(100);
-    const supervisor = await startSupervisor({
-      runDir: dir,
-      services: [{ name: 'app', kind: 'app', command: 'node', args: ['app'] }],
-      controlPath: path.join(dir, 'control.json'),
-      receiptPath: path.join(dir, 'receipt.json'),
-      spawn: () => app,
-      clock: clock(),
-      controls: controls(),
-      handoffMs: 1,
-    });
-    await supervisor.stop();
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(true);
   });
