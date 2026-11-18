@@ -78,13 +78,14 @@ function controls({
   groups = new Map(),
   trees = new Map(),
   portState = 'absent' as 'present' | 'absent' | 'unknown',
-  clock: c = clock(),
+  probe: probeFn = (pid: number) => probes.get(pid) ?? 'absent',
+  clock: c = clock({ timeout: true }),
 } = {}): Controls {
   return {
     readIdentity: (pid: number) => identities.get(pid) ?? null,
     groupMembers: (pgid: number) => groups.get(pgid) ?? { ok: true, members: [] },
     descendants: (pid: number) => trees.get(pid) ?? { ok: true, pids: [] },
-    probe: (pid: number) => probes.get(pid) ?? 'absent',
+    probe: probeFn,
     probePort: () => portState,
     clock: c,
   };
@@ -807,5 +808,85 @@ describe('supervisor argv', () => {
     expect(receipt.services[0]?.reason).toContain('exit 3');
     process.removeAllListeners('uncaughtException');
     process.removeAllListeners('unhandledRejection');
+  });
+});
+
+describe('app drain', () => {
+  it('drains a descendant that disappears', async () => {
+    const child = new FakeChild(100);
+    let calls = 0;
+    const result = await stopService({
+      service: { name: 'app', kind: 'app' },
+      child,
+      controls: controls({ trees: new Map([[100, { ok: true, pids: [101] }]]), probe: () => (++calls <= 2 ? 'present' : 'absent') }),
+    });
+    expect(result.state).toBe('clean');
+  });
+
+  it('fails a persistent descendant at the deadline', async () => {
+    const child = new FakeChild(100);
+    const result = await stopService({
+      service: { name: 'app', kind: 'app' },
+      child,
+      controls: controls({ trees: new Map([[100, { ok: true, pids: [101] }]]), probe: () => 'present' }),
+    });
+    expect(result.state).toBe('uncertain');
+    expect(result.reason).toContain('101');
+  });
+
+  it('fails an unknown probe at once', async () => {
+    const child = new FakeChild(100);
+    const result = await stopService({
+      service: { name: 'app', kind: 'app' },
+      child,
+      controls: controls({ trees: new Map([[100, { ok: true, pids: [101] }]]), probe: () => 'unknown' }),
+    });
+    expect(result.state).toBe('uncertain');
+    expect(result.reason).toContain('unknown');
+  });
+
+  it('drains a group member that lingers then exits', async () => {
+    const child = new FakeChild(100);
+    let calls = 0;
+    const result = await stopService({
+      service: { name: 'app', kind: 'app' },
+      child,
+      controls: controls({ groups: new Map([[100, { ok: true, members: [{ pid: 101, startTime: 'x', command: 'worker', pgid: 100 }] }]]), probe: () => (++calls <= 2 ? 'present' : 'absent') }),
+    });
+    expect(result.state).toBe('clean');
+  });
+
+  it('drains an already-exited root with a disappearing descendant', async () => {
+    const child = new FakeChild(100);
+    child.exit(0);
+    let calls = 0;
+    const result = await stopService({
+      service: { name: 'app', kind: 'app' },
+      child,
+      controls: controls({ trees: new Map([[100, { ok: true, pids: [101] }]]), probe: () => (++calls <= 2 ? 'present' : 'absent') }),
+    });
+    expect(result.state).toBe('clean');
+  });
+
+  it('fails an already-exited root with a persistent descendant', async () => {
+    const child = new FakeChild(100);
+    child.exit(0);
+    const result = await stopService({
+      service: { name: 'app', kind: 'app' },
+      child,
+      controls: controls({ trees: new Map([[100, { ok: true, pids: [101] }]]), probe: () => 'present' }),
+    });
+    expect(result.state).toBe('uncertain');
+  });
+
+  it('fails an already-exited root with an unknown probe', async () => {
+    const child = new FakeChild(100);
+    child.exit(0);
+    const result = await stopService({
+      service: { name: 'app', kind: 'app' },
+      child,
+      controls: controls({ trees: new Map([[100, { ok: true, pids: [101] }]]), probe: () => 'unknown' }),
+    });
+    expect(result.state).toBe('uncertain');
   });
 });

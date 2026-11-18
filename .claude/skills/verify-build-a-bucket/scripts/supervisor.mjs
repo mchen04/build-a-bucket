@@ -71,13 +71,25 @@ export async function stopService({ service, child, controls }) {
     }
     if (!exit) return { name: service.name, pid: child.pid, state: 'uncertain', reason: 'app did not exit' };
   }
-  const live = pids.filter((pid) => probe(pid) !== 'absent');
-  if (live.length) return { name: service.name, pid: child.pid, state: 'uncertain', reason: `descendants live: ${live.join(',')}` };
-  const groupAfter = groupMembers(child.pid);
-  if (!groupAfter.ok) return { name: service.name, pid: child.pid, state: 'uncertain', reason: 'group enumeration failed' };
-  const groupLive = groupAfter.members.filter((member) => member.pid !== child.pid && probe(member.pid) !== 'absent');
-  if (groupLive.length) return { name: service.name, pid: child.pid, state: 'uncertain', reason: `group members live: ${groupLive.map((member) => member.pid).join(',')}` };
-  return { name: service.name, pid: child.pid, state: 'clean', reason: null };
+  const deadline = 5000;
+  const interval = 200;
+  let elapsed = 0;
+  while (true) {
+    const states = pids.map((pid) => ({ pid, state: probe(pid) }));
+    const unknown = states.find((entry) => entry.state !== 'present' && entry.state !== 'absent');
+    if (unknown) return { name: service.name, pid: child.pid, state: 'uncertain', reason: `descendant ${unknown.pid} probe ${unknown.state}` };
+    const live = states.filter((entry) => entry.state === 'present').map((entry) => entry.pid);
+    const groupAfter = groupMembers(child.pid);
+    if (!groupAfter.ok) return { name: service.name, pid: child.pid, state: 'uncertain', reason: 'group enumeration failed' };
+    const groupStates = groupAfter.members.filter((member) => member.pid !== child.pid).map((member) => ({ pid: member.pid, state: probe(member.pid) }));
+    const groupUnknown = groupStates.find((entry) => entry.state !== 'present' && entry.state !== 'absent');
+    if (groupUnknown) return { name: service.name, pid: child.pid, state: 'uncertain', reason: `group member ${groupUnknown.pid} probe ${groupUnknown.state}` };
+    const groupLive = groupStates.filter((entry) => entry.state === 'present').map((entry) => entry.pid);
+    if (!live.length && !groupLive.length) return { name: service.name, pid: child.pid, state: 'clean', reason: null };
+    if (elapsed >= deadline) return { name: service.name, pid: child.pid, state: 'uncertain', reason: `descendants live: ${[...live, ...groupLive].join(',')}` };
+    await new Promise((resolve) => clock.setTimeout(resolve, interval));
+    elapsed += interval;
+  }
 }
 
 export async function startSupervisor({

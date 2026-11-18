@@ -46,14 +46,15 @@ export async function createOwnedPostgres({
   const dataDir = fs.mkdtempSync(path.join(root, 'pgdata-'));
   const sockDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bab-pgsock-'));
   const pgBin = process.env.BAB_PG_BIN ?? '/opt/homebrew/bin';
+  const env = { ...process.env, LC_ALL: 'C', LANG: 'C' };
   fs.chmodSync(dataDir, 0o700);
   fs.chmodSync(sockDir, 0o700);
   const sock = checkSocketPath(sockDir, port);
   if (!reuse && fs.existsSync(path.join(dataDir, 'PG_VERSION'))) throw new Error('data dir already initialized');
-  const init = initdb ?? (() => execFileSync(path.join(pgBin, 'initdb'), ['-D', dataDir, '-A', 'trust', '-U', USER, '--no-sync'], { stdio: 'ignore' }));
+  const init = initdb ?? (() => execFileSync(path.join(pgBin, 'initdb'), ['-D', dataDir, '-A', 'trust', '-U', USER, '--no-sync'], { stdio: 'ignore', env }));
   init({ dataDir, sockDir, port });
   const log = logPath ? fs.openSync(logPath, 'a') : 'ignore';
-  const child = spawn(path.join(pgBin, 'postgres'), ['-D', dataDir, '-k', sockDir, '-c', 'listen_addresses=', '-p', String(port), '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off', '-c', 'max_connections=100'], { stdio: ['ignore', log, log] });
+  const child = spawn(path.join(pgBin, 'postgres'), ['-D', dataDir, '-k', sockDir, '-c', 'listen_addresses=', '-p', String(port), '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off', '-c', 'max_connections=100'], { stdio: ['ignore', log, log], env });
   let spawnError = null;
   child.once('error', (error) => {
     spawnError = error;
@@ -66,7 +67,7 @@ export async function createOwnedPostgres({
     if (Number(pidFile) !== child.pid) throw new Error('postmaster.pid does not match the owned child');
     if (!fs.existsSync(sock)) throw new Error('socket file missing');
   };
-  const psqlFn = psql ?? ((sql, db = 'postgres') => execFileSync(path.join(pgBin, 'psql'), ['-h', sockDir, '-p', String(port), '-U', USER, '-d', db, '-v', 'ON_ERROR_STOP=1', '-tAc', sql], { encoding: 'utf8' }));
+  const psqlFn = psql ?? ((sql, db = 'postgres') => execFileSync(path.join(pgBin, 'psql'), ['-h', sockDir, '-p', String(port), '-U', USER, '-d', db, '-v', 'ON_ERROR_STOP=1', '-tAc', sql], { encoding: 'utf8', env }));
   let ready = false;
   for (let attempt = 0; attempt < 120; attempt++) {
     if (spawnError) throw spawnError;
@@ -84,7 +85,7 @@ export async function createOwnedPostgres({
   prove();
   psqlFn(`create database ${database}`);
   prove();
-  const load = schemaLoad ?? (() => execFileSync(path.join(pgBin, 'psql'), ['-h', sockDir, '-p', String(port), '-U', USER, '-d', database, '-v', 'ON_ERROR_STOP=1', '-q', '-f', schema], { stdio: 'ignore' }));
+  const load = schemaLoad ?? (() => execFileSync(path.join(pgBin, 'psql'), ['-h', sockDir, '-p', String(port), '-U', USER, '-d', database, '-v', 'ON_ERROR_STOP=1', '-q', '-f', schema], { stdio: 'ignore', env }));
   load();
   return {
     dataDir,
