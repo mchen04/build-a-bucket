@@ -777,16 +777,18 @@ describe('supervisor argv', () => {
   it('passes an empty listen address through the supervisor CLI', async () => {
     const dir = tempDir();
     const argvFile = path.join(dir, 'argv.txt');
-    writeFileSync(path.join(dir, 'postgres'), `#!/bin/sh\nexec /bin/echo "$@" > "${argvFile}"\n`);
+    writeFileSync(path.join(dir, 'postgres'), `#!/bin/sh\nprintf '%s\\n' "$@" > "$ARGV_FILE"\nexit 3\n`);
     chmodSync(path.join(dir, 'postgres'), 0o755);
     const previous = process.env.BAB_PG_BIN;
     process.env.BAB_PG_BIN = dir;
+    process.env.ARGV_FILE = argvFile;
+    const realClock = { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 20)), setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, clearTimeout: globalThis.clearTimeout };
     const spec = buildSupervisorSpec({ mode: 'dev', port: 4391, dir, repo: '/repo', prepared: { pgPort: 55434, database: 'bab_local' } });
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
     try {
       await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
-        clock: clock({ timeout: true }),
+        clock: realClock,
         controls: controls(),
         exit: () => {},
         postgresTools: { initdb: () => {}, psql: () => '1', schemaLoad: () => {} },
@@ -797,9 +799,12 @@ describe('supervisor argv', () => {
       delete process.env.ARGV_FILE;
     }
     for (let attempt = 0; attempt < 50 && !existsSync(argvFile); attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
-    const args = readFileSync(argvFile, 'utf8').trim().split(/\s+/);
+    const args = readFileSync(argvFile, 'utf8').trim().split('\n');
     expect(args).toContain('listen_addresses=');
     expect(args).not.toContain("listen_addresses=''");
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.services[0]?.reason).toContain('exit 3');
     process.removeAllListeners('uncaughtException');
     process.removeAllListeners('unhandledRejection');
   });
