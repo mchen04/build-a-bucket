@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -52,8 +52,12 @@ class FakeChild {
 }
 
 const temps: string[] = [];
+const socketDirsBefore = new Set(readdirSync(os.tmpdir()).filter((name) => name.startsWith('bab-pgsock-')));
 afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const name of readdirSync(os.tmpdir())) {
+    if (name.startsWith('bab-pgsock-') && !socketDirsBefore.has(name)) rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
+  }
 });
 
 function tempDir() {
