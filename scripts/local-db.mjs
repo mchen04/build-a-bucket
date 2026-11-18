@@ -96,18 +96,56 @@ export async function main({
     if (active?.child) return stopService({ service: { name: 'postgres', kind: 'postgres', port: active.port }, child: active.child, controls: controls(clock) });
     return Promise.resolve({ state: 'clean', reason: null });
   });
+  let receiptWritten = false;
+  let exitCalled = false;
+  const writeReceipt = (ok, reason, services, command) => {
+    if (receiptWritten) return;
+    receiptWritten = true;
+    if (receiptPath) writeJson(receiptPath, { ok, reason, services, command });
+  };
+  const callExit = (code) => {
+    if (exitCalled) return;
+    exitCalled = true;
+    exit(code);
+  };
+  const stopCommand = async () => {
+    const child = active?.testChild;
+    if (!child) return { state: 'exited', code: null, signal: null };
+    if (child.exitCode !== null || child.signalCode !== null) return { state: 'exited', code: child.exitCode, signal: child.signalCode };
+    child.kill('SIGTERM');
+    const term = await waitForExit(child, 10000, clock);
+    if (term) return { state: 'exited', code: term.code, signal: term.signal };
+    child.kill('SIGKILL');
+    const kill = await waitForExit(child, 5000, clock);
+    if (kill) return { state: 'exited', code: kill.code, signal: kill.signal };
+    return { state: 'uncertain', reason: 'command did not exit' };
+  };
   const shutdown = async () => {
-    if (active?.testChild && active.testChild.exitCode === null && active.testChild.signalCode === null) {
-      active.testChild.kill('SIGTERM');
-      await waitForExit(active.testChild, 0, clock);
-    }
+    const command = await stopCommand();
     const result = await stopPostgres();
-    if (receiptPath) writeJson(receiptPath, { ok: result.state === 'clean', services: [result] });
-    exit(1);
+    const ok = result.state === 'clean' && command.state === 'exited';
+    writeReceipt(ok, command.reason ?? result.reason, [result], { state: command.state, reason: command.reason ?? null });
+    if (ok && active?.handle?.remove) {
+      fs.rmSync(active.handle.dataDir, { recursive: true, force: true });
+      fs.rmSync(active.handle.sockDir, { recursive: true, force: true });
+      if (active.handle.createdRoot) {
+        try {
+          fs.rmdirSync(active.handle.dataRoot);
+        } catch {}
+      }
+    }
+    callExit(1);
   };
   let shutdownPromise = null;
+  let resolveShutdown;
+  const shutdownSignal = new Promise((resolve) => {
+    resolveShutdown = resolve;
+  });
   const onSignal = () => {
-    shutdownPromise = shutdown();
+    if (!shutdownPromise) {
+      shutdownPromise = shutdown();
+      resolveShutdown();
+    }
   };
   signals.on('SIGINT', onSignal);
   signals.on('SIGTERM', onSignal);
@@ -126,6 +164,10 @@ export async function main({
       },
     });
     active = { ...(active ?? {}), handle };
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     const testChild = spawn(command[0], command.slice(1), { cwd: handle.root, env: { ...process.env, ...localDbEnv(handle) }, stdio: 'inherit' });
     active.testChild = testChild;
     let testError = null;
@@ -133,10 +175,18 @@ export async function main({
       testError = error;
     });
     testChild.once('exit', () => {});
-    const exitResult = await waitForExit(testChild, 0, clock);
+    const exitResult = await Promise.race([waitForExit(testChild, 0, clock), shutdownSignal]);
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     const result = await stopPostgres();
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     const ok = result.state === 'clean' && !testError && !exitResult?.error;
-    if (receiptPath) writeJson(receiptPath, { ok, reason: testError?.message ?? exitResult?.error?.message, services: [result] });
+    writeReceipt(ok, testError?.message ?? exitResult?.error?.message, [result], { state: 'exited', code: exitResult?.code ?? null, signal: exitResult?.signal ?? null });
     if (ok && handle.remove) {
       fs.rmSync(handle.dataDir, { recursive: true, force: true });
       fs.rmSync(handle.sockDir, { recursive: true, force: true });
@@ -146,11 +196,15 @@ export async function main({
         } catch {}
       }
     }
-    exit(ok ? (exitResult?.code ?? 1) : 1);
+    callExit(ok ? (exitResult?.code ?? 1) : 1);
   } catch (error) {
+    if (shutdownPromise) {
+      await shutdownPromise;
+      return;
+    }
     const result = await stopPostgres();
-    if (receiptPath) writeJson(receiptPath, { ok: false, services: [result], reason: error instanceof Error ? error.message : String(error) });
-    exit(1);
+    writeReceipt(false, error instanceof Error ? error.message : String(error), [result], { state: 'exited', code: null, signal: null });
+    callExit(1);
   } finally {
     signals.removeListener('SIGINT', onSignal);
     signals.removeListener('SIGTERM', onSignal);
