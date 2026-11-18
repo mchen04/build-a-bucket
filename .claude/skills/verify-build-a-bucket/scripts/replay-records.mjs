@@ -160,7 +160,7 @@ export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, p
     const summary = buildControlSummary(run);
     if (run.reloadSeat !== null) {
       const attemptsPath = path.join(evidenceDir, 'reload-attempts.json');
-      summary.reload.attempts = attemptsPath;
+      summary.reload.attempts = 'reload-attempts.json';
       writeJson(attemptsPath, { classification: 'stable-match', reason: null, revision: summary.reload.revision, seats: summary.reload.seats, rowsCompared: summary.reload.rowsCompared, samples: [{ attempt: 0, ms: 0, recap: false, seats: [] }] });
     }
     writeJson(path.join(evidenceDir, 'summary.json'), summary);

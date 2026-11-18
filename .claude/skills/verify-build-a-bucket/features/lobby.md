@@ -83,8 +83,9 @@ Chaos options, applied at the first sampled stage:
   passes only when at least two distinct seat numbers report the same valid revision, the refreshed seat is one of
   them, the first ten rows of each conference match on full row text, and no canonical row is blank. Every outcome
   is classified (`stable-match`, `unequal`, `no-held-boundary`, `invalid-display`, `recap-before-proof`,
-  `no-common-revision`) and keeps `reload-before-*`/`reload-after-*` captures for the refreshed seat and another
-  seat plus a bounded, sanitized `reload-attempts.json`; a league that reaches recap with every active seat out and
+  `no-common-revision`) and keeps `reload-before-*` and `reload-after-*` (or `reload-none-*` when no reload ran)
+  captures for the refreshed seat and another seat plus a bounded, sanitized `reload-attempts.json`; a league that
+  reaches recap with every active seat out and
   no gate records `no-held-boundary`, never reloads, and still finishes to recap and Play Again. A missing or failed
   comparison still writes `summary.json` with `reload.coverage` naming the reason, then exits non-zero.
 - `--away 2` closes seat 2's browser context; the host must still start the playoffs and the remaining seats must agree.

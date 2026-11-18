@@ -177,9 +177,9 @@ function checkRun(run, dir) {
     if (!identities.has(run.reloadSeat)) failures.push(`reload.seats does not include seat ${run.reloadSeat}`);
     for (const number of identities.keys()) if (number < 1 || number > run.players) failures.push(`reload.seats has out-of-range seat ${number}`);
     if (reload?.navigation?.observed !== true) failures.push('reload navigation not observed');
-    if (!reload?.attempts) failures.push('reload attempts file missing');
+    if (typeof reload?.attempts !== 'string' || reload.attempts !== 'reload-attempts.json') failures.push(`reload attempts path is '${reload?.attempts}'`);
     else {
-      const attempts = readJson(path.resolve(reload.attempts));
+      const attempts = readJson(path.join(path.dirname(summaries[0]), reload.attempts));
       if (!attempts) failures.push('reload attempts file malformed');
       else {
         if (attempts.classification !== reload.classification) failures.push('reload attempts classification mismatch');

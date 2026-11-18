@@ -306,7 +306,7 @@ async function leagueRun() {
     ? { width: Number(String(o.viewport).split('x')[0]), height: Number(String(o.viewport).split('x')[1]) }
     : { width: 390, height: 844 };
   const reloadSeat = o.reload === undefined ? null : Number(o.reload);
-  const reload = { ran: false, revision: null, seats: [], rowsCompared: 0, refreshedSeat: null };
+  const reload = { ran: false, revision: null, seats: [], rowsCompared: 0, refreshedSeat: null, allEliminated: false, allEliminatedObserved: false };
   const awaySeat = o.away === undefined ? null : Number(o.away);
   const hostLeave = Boolean(o['host-leave']);
   for (const [flag, value] of [['--reload', reloadSeat], ['--away', awaySeat]]) {
@@ -753,21 +753,17 @@ async function leagueRun() {
         if (reloadSeat !== null && !reload.ran) {
           const seat = seats[reloadSeat - 1];
           const other = active().find((entry) => entry.seat !== seat.seat);
-          const out = await Promise.all(active().map((entry) => entry.page.getByText('You are out').first().isVisible().catch(() => false)));
-          const activity = await Promise.all(active().map(logText));
-          if (allEliminated({ out, activity })) {
-            await snapReload(seat, 'before');
-            if (other) await snapReload(other, 'before');
-            await snapReload(seat, 'after');
-            if (other) await snapReload(other, 'after');
-            const proof = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: seat, wait: async () => {}, attempts: 1 });
-            reload.classification = proof.classification;
-            reload.reason = proof.reason;
-            reload.samples = proof.attempts;
-            reload.ran = false;
-            fs.writeFileSync(path.join(ev, 'reload-attempts.json'), JSON.stringify({ classification: proof.classification, reason: proof.reason, revision: null, seats: [], rowsCompared: 0, samples: proof.attempts }, null, 2));
-            reload.attempts = path.join(ev, 'reload-attempts.json');
-          }
+          await snapReload(seat, 'before');
+          if (other) await snapReload(other, 'before');
+          await snapReload(seat, 'none');
+          if (other) await snapReload(other, 'none');
+          const proof = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: seat, wait: async () => {}, attempts: 1 });
+          reload.classification = proof.classification;
+          reload.reason = proof.reason;
+          reload.samples = proof.attempts;
+          reload.ran = false;
+          fs.writeFileSync(path.join(ev, 'reload-attempts.json'), JSON.stringify({ classification: proof.classification, reason: proof.reason, revision: null, seats: [], rowsCompared: 0, samples: proof.attempts }, null, 2));
+          reload.attempts = 'reload-attempts.json';
         }
         break;
       }
@@ -823,7 +819,7 @@ async function leagueRun() {
           await snapReload(seat, 'after');
           if (other) await snapReload(other, 'after');
           fs.writeFileSync(path.join(ev, 'reload-attempts.json'), JSON.stringify({ classification: proof.classification, reason: proof.reason ?? null, revision: proof.revision, seats: proof.seats, rowsCompared: proof.rowsCompared, samples: proof.attempts }, null, 2));
-          reload.attempts = path.join(ev, 'reload-attempts.json');
+          reload.attempts = 'reload-attempts.json';
           if (proof.classification === 'stable-match') {
             stages.push({ label: 'after-reload', phase: await phaseOf(seat), revision: proof.revision, seats: proof.seats, standings: proof.standings });
             await snap(seat, 'after-reload');
@@ -857,6 +853,12 @@ async function leagueRun() {
       if (label !== lastLabel) {
         const record = await verifyStage(`stage-${checkpoint}`, null);
         stages.push(record);
+        if (record.phase === 'Playoffs' && reloadSeat !== null && !reload.allEliminatedObserved) {
+          reload.allEliminatedObserved = true;
+          const out = await Promise.all(active().map((entry) => entry.page.getByText('You are out').first().isVisible().catch(() => false)));
+          const activity = await Promise.all(active().map(logText));
+          reload.allEliminated = allEliminated({ out, activity });
+        }
         const roundLabel = clean(record.roundName ?? record.stageName ?? '').toUpperCase();
         if ((record.phase === 'Awards' || record.phase === 'Play-In' || record.phase === 'Playoffs') && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
         if (record.phase === 'Playoffs' && roundLabel === 'FIRST ROUND' && !marks.some((entry) => entry.label === 'playoff-gate')) mark('playoff-gate');

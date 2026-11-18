@@ -190,7 +190,34 @@ describe('replay checker', () => {
     const dir = control();
     const file = summaryPath(dir, 'run-a');
     const value = read(file);
-    writeFileSync(value.reload.attempts, '{');
+    writeFileSync(path.join(path.dirname(file), value.reload.attempts), '{');
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails an absolute reload attempts path', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    value.reload.attempts = '/tmp/reload-attempts.json';
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a relative-escape reload attempts path', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    value.reload.attempts = '../reload-attempts.json';
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a differently named reload attempts path', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    value.reload.attempts = 'other.json';
+    write(file, value);
     expect(check(dir).ok).toBe(false);
   });
 
@@ -198,9 +225,9 @@ describe('replay checker', () => {
     const dir = control();
     const file = summaryPath(dir, 'run-a');
     const value = read(file);
-    const attempts = read(value.reload.attempts);
+    const attempts = read(path.join(path.dirname(file), value.reload.attempts));
     attempts.classification = 'unequal';
-    write(value.reload.attempts, attempts);
+    write(path.join(path.dirname(file), value.reload.attempts), attempts);
     expect(check(dir).ok).toBe(false);
   });
 
@@ -208,9 +235,9 @@ describe('replay checker', () => {
     const dir = control();
     const file = summaryPath(dir, 'run-a');
     const value = read(file);
-    const attempts = read(value.reload.attempts);
+    const attempts = read(path.join(path.dirname(file), value.reload.attempts));
     attempts.revision = { stage: 'Season', progress: '2 / 10' };
-    write(value.reload.attempts, attempts);
+    write(path.join(path.dirname(file), value.reload.attempts), attempts);
     expect(check(dir).ok).toBe(false);
   });
 
@@ -218,9 +245,9 @@ describe('replay checker', () => {
     const dir = control();
     const file = summaryPath(dir, 'run-a');
     const value = read(file);
-    const attempts = read(value.reload.attempts);
+    const attempts = read(path.join(path.dirname(file), value.reload.attempts));
     attempts.samples = Array.from({ length: 61 }, () => ({}));
-    write(value.reload.attempts, attempts);
+    write(path.join(path.dirname(file), value.reload.attempts), attempts);
     expect(check(dir).ok).toBe(false);
   });
 
