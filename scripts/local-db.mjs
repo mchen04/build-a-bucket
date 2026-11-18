@@ -268,7 +268,8 @@ export async function main({
         } catch {}
       }
     }
-    callExit(ok ? (exitResult?.code ?? 1) : 1);
+    const exitCode = ok ? 0 : (typeof exitResult?.code === 'number' && exitResult.code !== 0 && !commandError && result.state === 'clean' ? exitResult.code : 1);
+    callExit(exitCode);
   } catch (error) {
     if (shutdownPromise) {
       await shutdownPromise;

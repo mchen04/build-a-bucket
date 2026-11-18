@@ -541,7 +541,7 @@ describe('local-db main', () => {
     const dir = tempDir();
     const postgres = new FakeChild(200);
     const test = new FakeChild(300);
-    test.exit(1);
+    test.exit(3);
     const signals = new EventEmitter();
     let calls = 0;
     let code: number | null = null;
@@ -562,11 +562,11 @@ describe('local-db main', () => {
       },
     });
     expect(postgres.signals).toEqual(['SIGINT']);
-    expect(code).toBe(1);
+    expect(code).toBe(3);
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
     expect(receipt.command.state).toBe('exited');
-    expect(receipt.command.code).toBe(1);
+    expect(receipt.command.code).toBe(3);
     expect(existsSync(dir)).toBe(true);
   });
 
