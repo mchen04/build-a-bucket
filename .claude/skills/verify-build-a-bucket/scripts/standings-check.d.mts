@@ -31,6 +31,7 @@ export function isValidRevision(revision: unknown): boolean;
 export function revisionKey(revision: unknown): string | null;
 export function revisionLabel(revision: unknown): string;
 export function readLeagueStandings(): { revision: Revision; tables: string[][] };
+export function seatIdentities(seats: unknown): Map<number, Set<string>>;
 export function distinctSeatLabels(seats: unknown): Set<string>;
 export function canonicalTables(tables: unknown): string[][];
 export function compareStandings(reads: Read[], refreshedSeat: Seat): CompareResult;

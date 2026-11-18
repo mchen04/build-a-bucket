@@ -76,10 +76,12 @@ Chaos options, applied at the first sampled stage:
   dedicated `league-stage-name` and `league-stage-progress` elements; each field is that element's trimmed visible
   text, and a missing, hidden or blank element gives an empty field, never another element's text. It is valid only
   when both parts are present and non-empty, so a missing, empty or partial revision never joins a comparison and
-  recap without a displayed stage is not a revision. It passes only when at least two distinct players report the
-  same valid revision, the refreshed seat is one of them, and the first ten rows of each conference match on full
-  row text. A missing or failed comparison still writes `summary.json` with `reload.coverage` naming the reason,
-  then exits non-zero; a refreshed seat that lands on recap with no valid revision fails with that reason.
+  recap without a displayed stage is not a revision. Seat identity is the positive integer seat number: the same
+  number under two names is a conflict and fails, and the refreshed seat's number must be among the compared seats.
+  It passes only when at least two distinct seat numbers report the same valid revision, the refreshed seat is one
+  of them, the first ten rows of each conference match on full row text, and no canonical row is blank. A missing
+  or failed comparison still writes `summary.json` with `reload.coverage` naming the reason, then exits non-zero;
+  a refreshed seat that lands on recap with no valid revision fails with that reason.
 - `--away 2` closes seat 2's browser context; the host must still start the playoffs and the remaining seats must agree.
 - `--host-leave` taps Leave lobby on the host; another seat must receive Start playoffs and carry the league.
 

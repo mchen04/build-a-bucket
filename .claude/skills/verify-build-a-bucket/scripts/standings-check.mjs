@@ -44,26 +44,40 @@ export function readLeagueStandings() {
   return { revision, tables };
 }
 
-function seatLabel(seat) {
+function seatNumber(seat) {
   if (!seat || typeof seat !== 'object') return null;
   const number = Number(seat.seat);
-  if (!Number.isInteger(number) || number < 1) return null;
-  if (typeof seat.name !== 'string' || seat.name.trim().length === 0) return null;
-  return `${number}:${seat.name.trim()}`;
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+function seatName(seat) {
+  return seat && typeof seat.name === 'string' && seat.name.trim().length > 0 ? seat.name.trim() : null;
+}
+
+export function seatIdentities(seats) {
+  const names = new Map();
+  for (const entry of Array.isArray(seats) ? seats : []) {
+    let number = null;
+    let name = null;
+    if (typeof entry === 'string') {
+      const match = /^(\d+):(.+)$/.exec(entry.trim());
+      if (match) {
+        number = Number(match[1]);
+        name = match[2].trim();
+      }
+    } else {
+      number = seatNumber(entry);
+      name = seatName(entry);
+    }
+    if (!Number.isInteger(number) || number < 1 || !name) continue;
+    if (!names.has(number)) names.set(number, new Set());
+    names.get(number).add(name);
+  }
+  return names;
 }
 
 export function distinctSeatLabels(seats) {
-  const out = new Set();
-  for (const entry of Array.isArray(seats) ? seats : []) {
-    if (typeof entry === 'string') {
-      const match = /^(\d+):(.+)$/.exec(entry.trim());
-      if (match && match[2].trim()) out.add(`${Number(match[1])}:${match[2].trim()}`);
-    } else {
-      const label = seatLabel(entry);
-      if (label) out.add(label);
-    }
-  }
-  return out;
+  return new Set([...seatIdentities(seats)].map(([number, names]) => `${number}:${[...names][0]}`));
 }
 
 export function canonicalTables(tables) {
@@ -86,23 +100,32 @@ export function compareStandings(reads, refreshedSeat) {
     groups.get(key).reads.push(read);
   }
   for (const { revision, reads: group } of groups.values()) {
-    const distinct = distinctSeatLabels(group.map((entry) => entry.seat));
-    if (distinct.size < 2) continue;
-    const refreshedLabel = seatLabel(refreshedSeat);
-    if (!refreshedLabel || !distinct.has(refreshedLabel)) continue;
+    const identities = seatIdentities(group.map((entry) => entry.seat));
+    const conflict = [...identities].find(([, names]) => names.size > 1);
+    if (conflict) return { ok: false, reason: `conflicting names for seat ${conflict[0]}` };
+    if (identities.size < 2) continue;
+    const refreshedNumber = seatNumber(refreshedSeat);
+    if (!refreshedNumber || !identities.has(refreshedNumber)) continue;
     const tables = group.map((entry) => canonicalTables(entry.tables));
     if (tables.some((value) => value.length === 0 || value.some((rows) => rows.length === 0))) {
       return { ok: false, reason: `empty standings at revision ${revisionLabel(revision)}` };
     }
+    if (tables.some((value) => value.some((rows) => rows.some((row) => row === '')))) {
+      return { ok: false, reason: `blank standings row at revision ${revisionLabel(revision)}` };
+    }
     if (!tables.every((value) => JSON.stringify(value) === JSON.stringify(tables[0]))) {
       return { ok: false, reason: `standings differ at revision ${revisionLabel(revision)}` };
+    }
+    const rowsCompared = tables[0].reduce((sum, rows) => sum + rows.length, 0);
+    if (!Number.isInteger(rowsCompared) || rowsCompared <= 0) {
+      return { ok: false, reason: `no rows compared at revision ${revisionLabel(revision)}` };
     }
     return {
       ok: true,
       revision,
-      seats: [...distinct],
+      seats: [...identities].map(([number, names]) => `${number}:${[...names][0]}`),
       standings: tables[0],
-      rowsCompared: tables[0].reduce((sum, rows) => sum + rows.length, 0),
+      rowsCompared,
     };
   }
   if (groups.size === 0 && invalid > 0) return { ok: false, reason: 'no valid displayed revision' };
@@ -120,12 +143,14 @@ export function refreshCoverage(reloadRequested, reload) {
   if (!reloadRequested) return { ok: true, reason: null };
   if (!reload?.ran) return { ok: false, reason: 'reload did not run' };
   if (!isValidRevision(reload.revision)) return { ok: false, reason: 'reload recorded no valid displayed revision' };
-  const distinct = distinctSeatLabels(reload.seats);
-  if (distinct.size < 2) return { ok: false, reason: 'reload compared fewer than two distinct players' };
-  const refreshedLabel = seatLabel(reload.refreshedSeat);
-  if (!refreshedLabel) return { ok: false, reason: 'reload recorded no refreshed seat' };
-  if (!distinct.has(refreshedLabel)) return { ok: false, reason: 'reload did not include the refreshed seat' };
-  if (!reload.rowsCompared) return { ok: false, reason: 'reload compared zero rows' };
+  const identities = seatIdentities(reload.seats);
+  const conflict = [...identities].find(([, names]) => names.size > 1);
+  if (conflict) return { ok: false, reason: `reload recorded conflicting names for seat ${conflict[0]}` };
+  if (identities.size < 2) return { ok: false, reason: 'reload compared fewer than two distinct players' };
+  const refreshedNumber = seatNumber(reload.refreshedSeat);
+  if (!refreshedNumber) return { ok: false, reason: 'reload recorded no refreshed seat' };
+  if (!identities.has(refreshedNumber)) return { ok: false, reason: 'reload did not include the refreshed seat' };
+  if (!Number.isInteger(reload.rowsCompared) || reload.rowsCompared <= 0) return { ok: false, reason: 'reload compared no valid rows' };
   return { ok: true, reason: null };
 }
 

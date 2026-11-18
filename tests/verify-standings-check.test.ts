@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertRefreshCoverage, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, reloadRecord } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
+import { assertRefreshCoverage, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, refreshCoverage, reloadRecord } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
 
 function read(seat: number, revision: unknown, tables: string[][]) {
   return { seat: { seat, name: `S${seat}` }, revision, tables };
@@ -83,7 +83,7 @@ describe('league evidence and refresh coverage', () => {
       coverage: 'reload did not run',
     });
     expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A'], rowsCompared: 20 }).coverage).toBe('reload compared fewer than two distinct players');
-    expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 0, refreshedSeat: { seat: 2, name: 'B' } }).coverage).toBe('reload compared zero rows');
+    expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 0, refreshedSeat: { seat: 2, name: 'B' } }).coverage).toBe('reload compared no valid rows');
     expect(reloadRecord(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 20, refreshedSeat: { seat: 2, name: 'B' } }).coverage).toBe('ok');
     expect(reloadRecord(false, { ran: false, revision: null, seats: [], rowsCompared: 0 }).coverage).toBe('ok');
   });
@@ -162,5 +162,53 @@ describe('displayed revision validity (R21-A)', () => {
 
   it('coverage accepts a valid structured revision', () => {
     expect(() => assertRefreshCoverage(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:A', '2:B'], rowsCompared: 20, refreshedSeat: { seat: 2, name: 'B' } })).not.toThrow();
+  });
+});
+
+describe('numeric seat identity and real rows (R22)', () => {
+  const rows = [['1 BOS Host 60-22 —', '2 NYK Away 55-27 5']];
+  const seat = (number: number, name: string) => ({ seat: number, name });
+
+  it('rejects the same seat number under two names', () => {
+    const result = compareStandings(
+      [
+        { seat: seat(2, 'Ben'), revision: rev('Season', '1 / 10'), tables: rows },
+        { seat: seat(2, 'Alias'), revision: rev('Season', '1 / 10'), tables: rows },
+      ],
+      seat(2, 'Ben'),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects coverage for the same seat number under two names', () => {
+    expect(refreshCoverage(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['2:Ben', '2:Alias'], rowsCompared: 20, refreshedSeat: seat(2, 'Ben') }).ok).toBe(false);
+  });
+
+  it('rejects blank canonical rows', () => {
+    const result = compareStandings(
+      [
+        { seat: seat(1, 'Ava'), revision: rev('Season', '1 / 10'), tables: [[' '], ['']] },
+        { seat: seat(2, 'Ben'), revision: rev('Season', '1 / 10'), tables: [[' '], ['']] },
+      ],
+      seat(2, 'Ben'),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects a non-positive row count in coverage', () => {
+    expect(refreshCoverage(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:Ava', '2:Ben'], rowsCompared: -1, refreshedSeat: seat(2, 'Ben') }).ok).toBe(false);
+    expect(refreshCoverage(true, { ran: true, revision: rev('Season', '1 / 10'), seats: ['1:Ava', '2:Ben'], rowsCompared: 0, refreshedSeat: seat(2, 'Ben') }).ok).toBe(false);
+  });
+
+  it('accepts two distinct numeric seats with real rows', () => {
+    const result = compareStandings(
+      [
+        { seat: seat(1, 'Ava'), revision: rev('Season', '1 / 10'), tables: rows },
+        { seat: seat(2, 'Ben'), revision: rev('Season', '1 / 10'), tables: rows },
+      ],
+      seat(2, 'Ben'),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.rowsCompared).toBe(2);
   });
 });
