@@ -44,9 +44,38 @@ export function createLeagueEvidenceDir(evidenceRoot, stamp = new Date().toISOSt
   return dir;
 }
 
+export function refreshCoverage(reloadRequested, reload) {
+  if (!reloadRequested) return { ok: true, reason: null };
+  if (!reload?.ran) return { ok: false, reason: 'reload did not run' };
+  if (!reload.revision) return { ok: false, reason: 'reload recorded no shared revision' };
+  if (!Array.isArray(reload.seats) || reload.seats.length < 2) return { ok: false, reason: 'reload compared fewer than two seats' };
+  if (!reload.rowsCompared) return { ok: false, reason: 'reload compared zero rows' };
+  return { ok: true, reason: null };
+}
+
+export function reloadRecord(reloadRequested, reload) {
+  const coverage = refreshCoverage(reloadRequested, reload);
+  return { ...reload, coverage: coverage.ok ? 'ok' : coverage.reason };
+}
+
+export function leagueFailureSummary({ error, code = null, players, mode, era, device, viewport, chaos, reloadRequested, reload, evidence, at }) {
+  return {
+    ok: false,
+    error: String(error?.message ?? error),
+    code,
+    players,
+    mode,
+    era,
+    device,
+    viewport,
+    chaos,
+    reload: reloadRecord(reloadRequested, reload),
+    evidence,
+    failedAt: at,
+  };
+}
+
 export function assertRefreshCoverage(reloadRequested, reload) {
-  if (!reloadRequested) return;
-  if (!reload?.ran || !reload.revision || !Array.isArray(reload.seats) || reload.seats.length < 2 || !reload.rowsCompared) {
-    throw new Error('refresh coverage missing: --reload did not compare a non-empty shared revision including the refreshed seat');
-  }
+  const coverage = refreshCoverage(reloadRequested, reload);
+  if (!coverage.ok) throw new Error(`refresh coverage missing: ${coverage.reason}`);
 }

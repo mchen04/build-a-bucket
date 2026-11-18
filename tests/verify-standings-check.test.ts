@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { assertRefreshCoverage, compareStandings, createLeagueEvidenceDir } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
+import { assertRefreshCoverage, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, reloadRecord } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
 
 function read(seat, revision, tables) {
   return { seat: { seat, name: `S${seat}` }, revision, tables };
@@ -70,5 +70,41 @@ describe('league evidence and refresh coverage', () => {
   it('requires a recorded refresh comparison when --reload is set', () => {
     expect(() => assertRefreshCoverage(true, { ran: false, revision: null, seats: [], rowsCompared: 0 })).toThrow();
     expect(() => assertRefreshCoverage(true, { ran: true, revision: 'Season:1 / 10', seats: ['1:A', '2:B'], rowsCompared: 20 })).not.toThrow();
+  });
+
+  it('records the coverage reason instead of throwing before the summary', () => {
+    expect(reloadRecord(true, { ran: false, revision: null, seats: [], rowsCompared: 0 })).toEqual({
+      ran: false,
+      revision: null,
+      seats: [],
+      rowsCompared: 0,
+      coverage: 'reload did not run',
+    });
+    expect(reloadRecord(true, { ran: true, revision: 'Season:1 / 10', seats: ['1:A'], rowsCompared: 20 }).coverage).toBe('reload compared fewer than two seats');
+    expect(reloadRecord(true, { ran: true, revision: 'Season:1 / 10', seats: ['1:A', '2:B'], rowsCompared: 0 }).coverage).toBe('reload compared zero rows');
+    expect(reloadRecord(true, { ran: true, revision: 'Season:1 / 10', seats: ['1:A', '2:B'], rowsCompared: 20 }).coverage).toBe('ok');
+    expect(reloadRecord(false, { ran: false, revision: null, seats: [], rowsCompared: 0 }).coverage).toBe('ok');
+  });
+
+  it('builds a failure summary that keeps the reload state', () => {
+    const summary = leagueFailureSummary({
+      error: new Error('no common standings revision after reload'),
+      code: 'ABC123',
+      players: 2,
+      mode: 'normal',
+      era: 'current',
+      device: 'iphone',
+      viewport: { width: 390, height: 844 },
+      chaos: { reload: 2, away: null, hostLeave: false },
+      reloadRequested: true,
+      reload: { ran: false, revision: null, seats: [], rowsCompared: 0 },
+      evidence: '/tmp/evidence/league-x',
+      at: '2026-01-01T00:00:00.000Z',
+    });
+    expect(summary.ok).toBe(false);
+    expect(summary.error).toContain('no common standings revision');
+    expect(summary.reload.ran).toBe(false);
+    expect(summary.reload.coverage).toBe('reload did not run');
+    expect(summary.failedAt).toBe('2026-01-01T00:00:00.000Z');
   });
 });

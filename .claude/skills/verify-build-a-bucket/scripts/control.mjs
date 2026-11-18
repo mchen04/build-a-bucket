@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertRefreshCoverage, compareStandings, createLeagueEvidenceDir } from './standings-check.mjs';
+import { compareStandings, createLeagueEvidenceDir, leagueFailureSummary, reloadRecord } from './standings-check.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -721,6 +721,8 @@ async function leagueRun() {
     if (recordMarks) mark('season-start');
   };
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
+  let code = null;
+  let summaryWritten = false;
   try {
     let host = seats[0];
     await host.page.goto(base);
@@ -728,7 +730,7 @@ async function leagueRun() {
     await host.page.getByTestId('mp-name').fill(host.name);
     await host.page.getByTestId('create-lobby').click();
     await host.page.getByTestId('lobby-code').waitFor();
-    const code = (await host.page.getByTestId('lobby-code').innerText()).trim();
+    code = (await host.page.getByTestId('lobby-code').innerText()).trim();
     const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
     if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
     await snap(host, 'created');
@@ -1039,9 +1041,17 @@ async function leagueRun() {
       httpErrors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, responses: seat.http })),
       evidence: ev,
     };
-    assertRefreshCoverage(reloadSeat !== null, reload);
+    summary.reload = reloadRecord(reloadSeat !== null, reload);
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
-    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reload, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    summaryWritten = true;
+    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reload: summary.reload, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    if (summary.reload.coverage !== 'ok') throw new Error(`refresh coverage missing: ${summary.reload.coverage}`);
+  } catch (error) {
+    if (!summaryWritten) {
+      const failure = leagueFailureSummary({ error, code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reloadRequested: reloadSeat !== null, reload, evidence: ev, at: new Date().toISOString() });
+      fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(failure, null, 2));
+    }
+    throw error;
   } finally {
     await browser.close();
   }
