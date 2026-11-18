@@ -265,4 +265,28 @@ describe('local-db main', () => {
     expect(receipt.ok).toBe(false);
     expect(receipt.services[0]?.reason).toContain('exit 3');
   });
+
+  it('removes its signal listeners when it returns', async () => {
+    const before = process.listenerCount('SIGINT') + process.listenerCount('SIGTERM');
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300);
+    test.exit(0);
+    let calls = 0;
+    await main({
+      argv: ['--data-dir', dir, '--', 'true'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: () => {},
+    });
+    const after = process.listenerCount('SIGINT') + process.listenerCount('SIGTERM');
+    expect(after).toBe(before);
+  });
 });

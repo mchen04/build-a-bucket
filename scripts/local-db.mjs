@@ -95,8 +95,12 @@ export async function main({
     if (receiptPath) writeJson(receiptPath, { ok: result.state === 'clean', services: [result] });
     exit(1);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  let shutdownPromise = null;
+  const onSignal = () => {
+    shutdownPromise = shutdown();
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
   try {
     const handle = await startLocalDb({
       pgPort: value('pg-port', process.env.BAB_LOCAL_PG_PORT ?? 55434),
@@ -132,6 +136,10 @@ export async function main({
     const result = await stopPostgres();
     if (receiptPath) writeJson(receiptPath, { ok: false, services: [result], reason: error instanceof Error ? error.message : String(error) });
     exit(1);
+  } finally {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+    if (shutdownPromise) await shutdownPromise;
   }
 }
 
