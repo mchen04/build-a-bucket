@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { allEliminated, assertRefreshCoverage, awaitReloadProof, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, refreshCoverage, reloadCapturePhase, reloadRecord } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
+import { allEliminated, assertRefreshCoverage, awaitReloadProof, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, refreshCoverage, reloadRecord } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
 
 function read(seat: number, revision: unknown, tables: string[][]) {
   return { seat: { seat, name: `S${seat}` }, revision, tables };
@@ -129,12 +129,6 @@ describe('reload proof boundary', () => {
     const result = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: { seat: 2, name: 'S2' }, wait: async () => {}, attempts: 1 });
     expect(result.classification).toBe('no-held-boundary');
     expect(allEliminated({ out: [true, false], activity: ['The playoffs started automatically'] })).toBe(false);
-  });
-
-  it('names no-boundary captures none and reload captures after', () => {
-    expect(reloadCapturePhase('no-held-boundary')).toBe('none');
-    expect(reloadCapturePhase('stable-match')).toBe('after');
-    expect(reloadCapturePhase('unequal')).toBe('after');
   });
 
   it('classifies unobserved navigation as invalid-display', async () => {

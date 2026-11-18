@@ -100,10 +100,6 @@ export function allEliminated({ out, activity }) {
   );
 }
 
-export function reloadCapturePhase(classification) {
-  return classification === 'no-held-boundary' ? 'none' : 'after';
-}
-
 export async function awaitReloadProof({ readAll, isRecap, refreshedSeat, wait, attempts = 40, gate = true, navigation = null }) {
   if (!gate) return { classification: 'no-held-boundary', reason: 'no held playoff gate', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: [] };
   if (navigation && navigation.observed !== true) {

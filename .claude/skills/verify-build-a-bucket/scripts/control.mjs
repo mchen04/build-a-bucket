@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allEliminated, awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
+import { recordNoBoundary } from './reload-boundary.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
 import { buildSupervisorSpec } from './supervisor-spec.mjs';
@@ -753,17 +754,8 @@ async function leagueRun() {
         if (reloadSeat !== null && !reload.ran) {
           const seat = seats[reloadSeat - 1];
           const other = active().find((entry) => entry.seat !== seat.seat);
-          await snapReload(seat, 'before');
-          if (other) await snapReload(other, 'before');
-          await snapReload(seat, 'none');
-          if (other) await snapReload(other, 'none');
           const proof = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: seat, wait: async () => {}, attempts: 1 });
-          reload.classification = proof.classification;
-          reload.reason = proof.reason;
-          reload.samples = proof.attempts;
-          reload.ran = false;
-          fs.writeFileSync(path.join(ev, 'reload-attempts.json'), JSON.stringify({ classification: proof.classification, reason: proof.reason, revision: null, seats: [], rowsCompared: 0, samples: proof.attempts }, null, 2));
-          reload.attempts = 'reload-attempts.json';
+          await recordNoBoundary({ seat, other, snapReload, proof, ev, reload });
         }
         break;
       }
