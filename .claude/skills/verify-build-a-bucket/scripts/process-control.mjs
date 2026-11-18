@@ -173,13 +173,21 @@ export async function stopOwnedPostgres({ handle, controls }) {
   const { readIdentity, signal, sleep, probe, probePort, groupMembers } = controls;
   const identity = handle.postmasterIdentity ?? null;
   const dataDir = handle.dataDir;
+  const postStopProof = () => {
+    const group = groupMembers(identity.pgid);
+    if (!group.ok) return { state: 'uncertain', reason: `postmaster group enumeration failed: ${group.reason}` };
+    const leftover = group.members.filter((member) => member.pid !== identity.pid && probe(member.pid) !== 'absent');
+    if (leftover.length) return { state: 'uncertain', reason: `postmaster group still has ${leftover.length} live member(s)` };
+    const portState = probePort(handle.pgPort);
+    if (portState !== 'absent') return { state: 'uncertain', reason: `postgres port ${portState}` };
+    return { state: 'clean', reason: null };
+  };
   if (!identity) return { state: 'uncertain', reason: 'no postmaster identity recorded', dataDir, removed: false };
   const current = readIdentity(identity.pid);
   if (!current) {
     const pidState = probe(identity.pid);
-    const portState = probePort(handle.pgPort);
-    if (pidState === 'absent' && portState === 'absent') return { state: 'clean', reason: null, dataDir, removed: false };
-    return { state: 'uncertain', reason: `postmaster ${pidState}, port ${portState}`, dataDir, removed: false };
+    if (pidState !== 'absent') return { state: 'uncertain', reason: `postmaster ${pidState}`, dataDir, removed: false };
+    return { ...postStopProof(), dataDir, removed: false };
   }
   if (!sameIdentity(identity, current) || !current.command.includes(dataDir)) {
     return { state: 'uncertain', reason: 'postmaster identity changed', dataDir, removed: false };
@@ -198,13 +206,7 @@ export async function stopOwnedPostgres({ handle, controls }) {
     }
   }
   if (!stopped) return { state: 'uncertain', reason: 'postmaster still live at the deadline', dataDir, removed: false };
-  const group = groupMembers(identity.pgid);
-  if (!group.ok) return { state: 'uncertain', reason: `postmaster group enumeration failed: ${group.reason}`, dataDir, removed: false };
-  const leftover = group.members.filter((member) => member.pid !== identity.pid && probe(member.pid) !== 'absent');
-  if (leftover.length) return { state: 'uncertain', reason: `postmaster group still has ${leftover.length} live member(s)`, dataDir, removed: false };
-  const portState = probePort(handle.pgPort);
-  if (portState !== 'absent') return { state: 'uncertain', reason: `postgres port ${portState}`, dataDir, removed: false };
-  return { state: 'clean', reason: null, dataDir, removed: false };
+  return { ...postStopProof(), dataDir, removed: false };
 }
 
 export async function cleanupAll({ state, controls }) {

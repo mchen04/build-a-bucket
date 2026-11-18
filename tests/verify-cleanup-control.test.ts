@@ -11,6 +11,7 @@ function harness({
   identities = new Map<number, ProcessIdentity>(),
   probes = new Map<number, ProbeState>(),
   group = { ok: true, members: [] as ProcessIdentity[] } as GroupResult,
+  groups = new Map<number, GroupResult>(),
   portState = 'absent' as ProbeState,
 } = {}) {
   const signals: [number, string][] = [];
@@ -30,7 +31,7 @@ function harness({
         log.push('sleep');
       },
       probe: (pid: number) => probes.get(pid) ?? 'absent',
-      groupMembers: () => group,
+      groupMembers: (pgid: number) => groups.get(pgid) ?? group,
       probePort: () => portState,
       removeDir: (dir: string) => removed.push(dir),
     },
@@ -247,6 +248,27 @@ describe('owned Postgres cleanup', () => {
     expect(signals).toEqual([[200, 'SIGINT']]);
     expect(result.state).toBe('uncertain');
     expect(result.reason).toContain('live member');
+  });
+
+  it('fails a leftover postmaster group member when the postmaster is already gone', async () => {
+    const backend = { pid: 201, startTime: 'Wed Nov 19 10:00:03 2026', command: 'postgres: checkpointer', pgid: 200 };
+    const { signals, controls } = harness({ probes: new Map([[200, 'absent'], [201, 'present']]), group: { ok: true, members: [postmaster, backend] } });
+    const result = await stopOwnedPostgres({ handle, controls });
+    expect(signals).toEqual([]);
+    expect(result.state).toBe('uncertain');
+    expect(result.reason).toContain('live member');
+  });
+
+  it('keeps the data dir when an already-gone postmaster has a leftover group member', async () => {
+    const backend = { pid: 201, startTime: 'Wed Nov 19 10:00:03 2026', command: 'postgres: checkpointer', pgid: 200 };
+    const { removed, controls } = harness({
+      probes: new Map([[200, 'absent'], [201, 'present']]),
+      groups: new Map([[200, { ok: true, members: [postmaster, backend] }]]),
+    });
+    const result = await cleanupAll({ state: { pid: 100, port: 4391, identity: root, localDb: { ...handle, remove: true } }, controls });
+    expect(result.postgres.state).toBe('uncertain');
+    expect(result.postgres.removed).toBe(false);
+    expect(removed).toEqual([]);
   });
 
   it('sends no signal to a reused postmaster pid', async () => {
