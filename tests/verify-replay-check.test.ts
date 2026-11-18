@@ -19,15 +19,17 @@ const plan = {
   ],
 };
 
+const head = '0123456789abcdef0123456789abcdef01234567';
+
 function control() {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'r23-'));
   temps.push(dir);
-  buildControlFixture({ out: dir, plan, head: 'abc' });
+  buildControlFixture({ out: dir, plan, head });
   return dir;
 }
 
 function check(dir: string, options: { expectedHead?: string | null; cleanup?: boolean } = {}) {
-  return checkReplay({ out: dir, planPath: path.join(dir, 'plan.json'), expectedHead: options.expectedHead ?? 'abc', cleanup: options.cleanup ?? true });
+  return checkReplay({ out: dir, planPath: path.join(dir, 'plan.json'), expectedHead: options.expectedHead ?? head, cleanup: options.cleanup ?? true });
 }
 
 const read = (file: string) => JSON.parse(readFileSync(file, 'utf8'));
@@ -242,6 +244,30 @@ describe('replay checker', () => {
     const launch = read(path.join(dir, 'launch.json'));
     launch.head = '67eb0d5';
     write(path.join(dir, 'launch.json'), launch);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails an empty launch head', () => {
+    const dir = control();
+    const launch = read(path.join(dir, 'launch.json'));
+    launch.head = '';
+    write(path.join(dir, 'launch.json'), launch);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a one-character launch head', () => {
+    const dir = control();
+    const launch = read(path.join(dir, 'launch.json'));
+    launch.head = 'a';
+    write(path.join(dir, 'launch.json'), launch);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a short meta head', () => {
+    const dir = control();
+    const meta = read(path.join(dir, 'meta.json'));
+    meta.head = 'abc';
+    write(path.join(dir, 'meta.json'), meta);
     expect(check(dir).ok).toBe(false);
   });
 

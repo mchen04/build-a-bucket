@@ -30,6 +30,14 @@ function isPositiveInt(value) {
   return Number.isInteger(value) && value > 0;
 }
 
+function isFullSha(value) {
+  return typeof value === 'string' && /^[0-9a-f]{40}$/.test(value);
+}
+
+function isShortSha(value) {
+  return typeof value === 'string' && /^[0-9a-f]{7,40}$/.test(value);
+}
+
 function validRevision(revision) {
   return Boolean(
     revision &&
@@ -203,9 +211,12 @@ function checkLaunch(out, expectedHead) {
   if (!tracked) failures.push('tracked.json is missing or malformed');
   if (!launch) failures.push('launch.json is missing or malformed');
   if (!exactZero(path.join(out, 'launch.exit'))) failures.push('launch.exit is not exactly 0');
+  if (expectedHead && !isFullSha(expectedHead)) failures.push(`expected head '${expectedHead}' is not a full 40-hex SHA`);
+  if (meta && !isFullSha(meta.head)) failures.push(`meta.head '${meta.head}' is not a full 40-hex SHA`);
+  if (launch && !isShortSha(launch.head)) failures.push(`launch.head '${launch.head}' is not a lowercase hex SHA of at least 7 characters`);
   if (meta && expectedHead && meta.head !== expectedHead) failures.push(`meta.head '${meta.head}' != '${expectedHead}'`);
-  if (launch && expectedHead && !expectedHead.startsWith(launch.head)) failures.push(`launch.head '${launch.head}' is not a prefix of '${expectedHead}'`);
-  if (meta && launch && !meta.head.startsWith(launch.head)) failures.push(`meta.head '${meta.head}' does not start with launch.head '${launch.head}'`);
+  if (launch && expectedHead && isShortSha(launch.head) && !expectedHead.startsWith(launch.head)) failures.push(`launch.head '${launch.head}' is not a prefix of '${expectedHead}'`);
+  if (meta && launch && isShortSha(launch.head) && !meta.head.startsWith(launch.head)) failures.push(`meta.head '${meta.head}' does not start with launch.head '${launch.head}'`);
   if (meta && tracked && meta.port !== tracked.port) failures.push('meta.port != tracked.port');
   if (launch && tracked && launch.pid !== tracked.pid) failures.push('launch.pid != tracked.pid');
   if (launch && tracked && launch.port !== tracked.port) failures.push('launch.port != tracked.port');

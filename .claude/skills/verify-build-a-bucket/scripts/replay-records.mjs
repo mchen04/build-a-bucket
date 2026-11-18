@@ -117,7 +117,7 @@ export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, p
   writeJson(path.join(out, 'plan.json'), plan);
   writeJson(path.join(out, 'meta.json'), buildMetaRecord({ head, out, babVerifyHome: path.join(out, 'bab-home'), port, e2ePort, suitePgPort }));
   writeJson(path.join(out, 'tracked.json'), buildTrackedRecord({ pid, port, pgPort }));
-  writeJson(path.join(out, 'launch.json'), { head, pid, port, localDb: { pgPort } });
+  writeJson(path.join(out, 'launch.json'), { head: head.slice(0, 7), pid, port, localDb: { pgPort } });
   writeText(path.join(out, 'launch.exit'), '0\n');
   writeText(path.join(out, 'cleanup.exit'), '0\n');
   writeText(
