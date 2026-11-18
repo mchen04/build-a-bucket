@@ -36,6 +36,7 @@ export async function startLocalDb(options = {}) {
   const port = Number(options.pgPort ?? process.env.BAB_LOCAL_PG_PORT ?? 55434);
   const database = options.database ?? 'bab_local';
   const schema = options.schema ?? path.join(root, 'db', 'schema.sql');
+  const createdRoot = options.dataRoot === undefined;
   const dataRoot = options.dataRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), 'bab-local-db-'));
   const owned = await createOwnedPostgres({
     root: dataRoot,
@@ -50,7 +51,7 @@ export async function startLocalDb(options = {}) {
     onChild: options.onChild,
     logPath: options.logPath,
   });
-  return { ...owned, root, runnerPath: RUNNER, remove: options.remove ?? true };
+  return { ...owned, root, dataRoot, createdRoot, runnerPath: RUNNER, remove: options.remove ?? true };
 }
 
 export async function stopLocalDb(handle, clock) {
@@ -59,6 +60,11 @@ export async function stopLocalDb(handle, clock) {
   if (result.state === 'clean' && handle.remove) {
     fs.rmSync(handle.dataDir, { recursive: true, force: true });
     fs.rmSync(handle.sockDir, { recursive: true, force: true });
+    if (handle.createdRoot) {
+      try {
+        fs.rmdirSync(handle.dataRoot);
+      } catch {}
+    }
   }
   return result;
 }
@@ -130,6 +136,11 @@ export async function main({
     if (ok && handle.remove) {
       fs.rmSync(handle.dataDir, { recursive: true, force: true });
       fs.rmSync(handle.sockDir, { recursive: true, force: true });
+      if (handle.createdRoot) {
+        try {
+          fs.rmdirSync(handle.dataRoot);
+        } catch {}
+      }
     }
     exit(ok ? (exitResult?.code ?? 1) : 1);
   } catch (error) {

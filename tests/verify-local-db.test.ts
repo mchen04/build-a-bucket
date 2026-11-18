@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
@@ -288,5 +288,129 @@ describe('local-db main', () => {
     });
     const after = process.listenerCount('SIGINT') + process.listenerCount('SIGTERM');
     expect(after).toBe(before);
+  });
+
+  it('removes the created data root after a clean stop', async () => {
+    const before = readdirSync(process.env.TMPDIR!).filter((name) => name.startsWith('bab-local-db-')).length;
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300);
+    test.exit(0);
+    let calls = 0;
+    await main({
+      argv: ['--', 'true'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: () => {},
+    });
+    const after = readdirSync(process.env.TMPDIR!).filter((name) => name.startsWith('bab-local-db-')).length;
+    expect(after).toBe(before);
+  });
+
+  it('keeps the created data root after a failed stop', async () => {
+    const before = readdirSync(process.env.TMPDIR!).filter((name) => name.startsWith('bab-local-db-')).length;
+    const dir = tempDir();
+    const postgres = new FakeChild(200, { exitOn: new Set() });
+    const test = new FakeChild(300);
+    test.exit(0);
+    let calls = 0;
+    await main({
+      argv: ['--', 'true'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: () => {},
+    });
+    const after = readdirSync(process.env.TMPDIR!).filter((name) => name.startsWith('bab-local-db-')).length;
+    expect(after).toBe(before + 1);
+  });
+
+  it('keeps the created data root with --keep', async () => {
+    const before = readdirSync(process.env.TMPDIR!).filter((name) => name.startsWith('bab-local-db-')).length;
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300);
+    test.exit(0);
+    let calls = 0;
+    await main({
+      argv: ['--keep', '--', 'true'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: () => {},
+    });
+    const after = readdirSync(process.env.TMPDIR!).filter((name) => name.startsWith('bab-local-db-')).length;
+    expect(after).toBe(before + 1);
+  });
+
+  it('does not remove a caller data dir', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300);
+    test.exit(0);
+    let calls = 0;
+    await main({
+      argv: ['--data-dir', dir, '--', 'true'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: () => {},
+    });
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it('keeps a non-empty created root and still writes a clean receipt', async () => {
+    const before = readdirSync(process.env.TMPDIR!).filter((name) => name.startsWith('bab-local-db-')).length;
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const test = new FakeChild(300);
+    test.exit(0);
+    let calls = 0;
+    await main({
+      argv: ['--', 'true'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+        writeFileSync(path.join(dataDir, 'postmaster.pid'), `${postgres.pid}\n`);
+        writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+        writeFileSync(path.join(path.dirname(dataDir), 'extra.txt'), 'x');
+      },
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: () => {},
+    });
+    const after = readdirSync(process.env.TMPDIR!).filter((name) => name.startsWith('bab-local-db-')).length;
+    expect(after).toBe(before + 1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(true);
   });
 });
