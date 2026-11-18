@@ -151,6 +151,43 @@ describe('local-db main', () => {
     expect(signals.listenerCount('SIGINT')).toBe(0);
   });
 
+  it('skips the wait when the command child already exited', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200, { exitOn: new Set() });
+    const test = new FakeChild(300);
+    test.exit(0);
+    const signals = new EventEmitter();
+    let calls = 0;
+    let code: number | null = null;
+    const promise = main({
+      argv: ['--data-dir', dir, '--', 'npm', 'test'],
+      spawn: () => {
+        calls += 1;
+        return calls === 1 ? postgres : test;
+      },
+      initdb: initFor(postgres),
+      psql: () => '1',
+      schemaLoad: () => {},
+      clock: { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 20)) },
+      signals,
+      receiptPath: path.join(dir, 'receipt.json'),
+      exit: (value: number) => {
+        code = value;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    signals.emit('SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    postgres.exit(0);
+    await promise;
+    expect(postgres.signals).toEqual(['SIGINT']);
+    expect(code).toBe(1);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(true);
+    expect(signals.listenerCount('SIGTERM')).toBe(0);
+    expect(signals.listenerCount('SIGINT')).toBe(0);
+  });
+
   it('fails promptly on an async command spawn error', async () => {
     const dir = tempDir();
     const postgres = new FakeChild(200);

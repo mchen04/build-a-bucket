@@ -97,7 +97,7 @@ export async function main({
     return Promise.resolve({ state: 'clean', reason: null });
   });
   const shutdown = async () => {
-    if (active?.testChild) {
+    if (active?.testChild && active.testChild.exitCode === null && active.testChild.signalCode === null) {
       active.testChild.kill('SIGTERM');
       await waitForExit(active.testChild, 0, clock);
     }
