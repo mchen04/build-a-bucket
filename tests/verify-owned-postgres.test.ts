@@ -1,7 +1,7 @@
-import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { checkSocketPath, createOwnedPostgres } from '../.claude/skills/verify-build-a-bucket/scripts/owned-postgres.mjs';
 
 class FakeChild {
@@ -26,12 +26,16 @@ class FakeChild {
 }
 
 const temps: string[] = [];
-const socketDirsBefore = new Set(readdirSync(os.tmpdir()).filter((name) => name.startsWith('bab-pgsock-')));
+const previousTmp = process.env.TMPDIR;
+const ownedTmp = mkdtempSync(path.join(os.tmpdir(), 'bab-test-'));
+process.env.TMPDIR = ownedTmp;
 afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
-  for (const name of readdirSync(os.tmpdir())) {
-    if (name.startsWith('bab-pgsock-') && !socketDirsBefore.has(name)) rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
-  }
+});
+afterAll(() => {
+  if (previousTmp === undefined) delete process.env.TMPDIR;
+  else process.env.TMPDIR = previousTmp;
+  rmSync(ownedTmp, { recursive: true, force: true });
 });
 
 function tempDir() {
@@ -138,24 +142,25 @@ describe('owned postgres locale', () => {
     const bin = tempDir();
     const postgresEnv = path.join(dir, 'postgres-env.txt');
     const initdbEnv = path.join(dir, 'initdb-env.txt');
+    const psqlEnv = path.join(dir, 'psql-env.txt');
     writeFileSync(
       path.join(bin, 'postgres'),
-      `#!/bin/sh\nprintf '%s\\n' "$LC_ALL" > "${postgresEnv}"\nprintf '%s\\n' "$LANG" >> "${postgresEnv}"\nexit 3\n`,
+      `#!/bin/sh\nprintf '%s\\n' "$LC_ALL" > "${postgresEnv}"\nprintf '%s\\n' "$LANG" >> "${postgresEnv}"\ndata=""; sock=""; port=""\nwhile [ $# -gt 0 ]; do case "$1" in -D) data="$2"; shift 2;; -k) sock="$2"; shift 2;; -p) port="$2"; shift 2;; *) shift;; esac; done\nprintf '%s\\n' "$$" > "$data/postmaster.pid"\n: > "$sock/.s.PGSQL.$port"\nsleep 0.2\nexit 0\n`,
     );
     writeFileSync(path.join(bin, 'initdb'), `#!/bin/sh\nprintf '%s\\n' "$LC_ALL" > "${initdbEnv}"\nprintf '%s\\n' "$LANG" >> "${initdbEnv}"\nexit 0\n`);
-    writeFileSync(path.join(bin, 'psql'), `#!/bin/sh\nprintf '1\\n'\nexit 0\n`);
+    writeFileSync(path.join(bin, 'psql'), `#!/bin/sh\nprintf '%s\\n' "$LC_ALL" > "${psqlEnv}"\nprintf '%s\\n' "$LANG" >> "${psqlEnv}"\nprintf '1\\n'\nexit 0\n`);
     chmodSync(path.join(bin, 'postgres'), 0o755);
     chmodSync(path.join(bin, 'initdb'), 0o755);
     chmodSync(path.join(bin, 'psql'), 0o755);
     const previous = process.env.BAB_PG_BIN;
     process.env.BAB_PG_BIN = bin;
     try {
-      await expect(createOwnedPostgres({ root: dir, port: 55434, database: 'bab_local', schema: path.join(dir, 'schema.sql'), clock: { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 20)) } })).rejects.toThrow();
+      await createOwnedPostgres({ root: dir, port: 55434, database: 'bab_local', schema: path.join(dir, 'schema.sql'), clock: { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 20)) } });
     } finally {
       if (previous === undefined) delete process.env.BAB_PG_BIN;
       else process.env.BAB_PG_BIN = previous;
     }
-    for (const file of [postgresEnv, initdbEnv]) {
+    for (const file of [postgresEnv, initdbEnv, psqlEnv]) {
       expect(readFileSync(file, 'utf8').trim().split('\n')).toEqual(['C', 'C']);
     }
   });

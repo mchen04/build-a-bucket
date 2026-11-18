@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { requestStop, runSupervised, runSupervisorCli, startSupervisor, stopService } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
 import type { Controls } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor.mjs';
 import { descendants } from '../.claude/skills/verify-build-a-bucket/scripts/process-control.mjs';
@@ -92,12 +92,16 @@ function controls({
 }
 
 const temps: string[] = [];
-const socketDirsBefore = new Set(readdirSync(os.tmpdir()).filter((name) => name.startsWith('bab-pgsock-')));
+const previousTmp = process.env.TMPDIR;
+const ownedTmp = mkdtempSync(path.join(os.tmpdir(), 'bab-test-'));
+process.env.TMPDIR = ownedTmp;
 afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
-  for (const name of readdirSync(os.tmpdir())) {
-    if (name.startsWith('bab-pgsock-') && !socketDirsBefore.has(name)) rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
-  }
+});
+afterAll(() => {
+  if (previousTmp === undefined) delete process.env.TMPDIR;
+  else process.env.TMPDIR = previousTmp;
+  rmSync(ownedTmp, { recursive: true, force: true });
 });
 
 function tempDir() {
