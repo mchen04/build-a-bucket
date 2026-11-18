@@ -12,7 +12,6 @@ import { requestStop } from './supervisor.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
-const localDb = await import(path.join(repo, 'scripts/local-db.mjs'));
 const home = process.env.BAB_VERIFY_HOME ?? path.join(os.homedir(), '.cache', 'verify-build-a-bucket');
 const [cmd, ...rest] = process.argv.slice(2);
 
@@ -61,37 +60,21 @@ async function launch() {
   fs.mkdirSync(evidenceDir(dir), { recursive: true });
   const mode = o.prod ? 'prod' : 'dev';
   const local = mode === 'dev' && !o.neon;
-  const prepared = local
-    ? localDb.prepareLocalDb({
-        root: repo,
-        dataDir: path.join(dir, 'pgdata'),
-        pgPort: Number(o['pg-port'] ?? 55500 + Math.floor(Math.random() * 400)),
-      })
-    : null;
-  const env = prepared ? { ...process.env, ...localDb.localDbEnv(prepared) } : process.env;
+  const prepared = local ? { pgPort: Number(o['pg-port'] ?? 55500 + Math.floor(Math.random() * 400)), database: 'bab_local' } : null;
+  const env = process.env;
   const log = fs.openSync(path.join(dir, 'server.log'), 'a');
   const services = [];
-  if (prepared) {
-    services.push({
-      name: 'postgres',
-      kind: 'postgres',
-      port: prepared.pgPort,
-      command: path.join(process.env.BAB_PG_BIN ?? '/opt/homebrew/bin', 'postgres'),
-      args: ['-D', prepared.dataDir, '-p', String(prepared.pgPort), '-k', '/tmp', '-c', 'listen_addresses=127.0.0.1', '-c', 'fsync=off', '-c', 'full_page_writes=off', '-c', 'synchronous_commit=off', '-c', 'max_connections=100'],
-      logPath: path.join(dir, 'pg.log'),
-    });
-  }
   if (mode === 'prod') {
     execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: ['ignore', log, log] });
-    services.push({ name: 'app', kind: 'app', command: path.join(repo, 'node_modules/.bin/vite'), args: ['preview', '--port', String(port), '--strictPort'], cwd: repo, env, detached: true, logPath: path.join(dir, 'server.log') });
+    services.push({ name: 'app', kind: 'app', command: path.join(repo, 'node_modules/.bin/vite'), args: ['preview', '--port', String(port), '--strictPort'], cwd: repo, env, envFromPostgres: false, detached: true, logPath: path.join(dir, 'server.log') });
   } else {
-    services.push({ name: 'app', kind: 'app', command: process.execPath, args: ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], cwd: repo, env, detached: true, logPath: path.join(dir, 'server.log') });
+    services.push({ name: 'app', kind: 'app', command: process.execPath, args: ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], cwd: repo, env, envFromPostgres: Boolean(prepared), detached: true, logPath: path.join(dir, 'server.log') });
   }
   const specPath = path.join(dir, 'supervisor-spec.json');
   const controlPath = path.join(dir, 'supervisor-control.json');
   const receiptPath = path.join(dir, 'supervisor-receipt.json');
   const ackPath = path.join(dir, 'supervisor-ack.json');
-  fs.writeFileSync(specPath, JSON.stringify({ services }, null, 2));
+  fs.writeFileSync(specPath, JSON.stringify({ postgresInit: prepared ? { root: dir, port: prepared.pgPort, database: prepared.database, schema: path.join(repo, 'db', 'schema.sql') } : null, services }, null, 2));
   const supervisor = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'supervisor.mjs'), dir, controlPath, receiptPath, ackPath, specPath], { detached: true, stdio: 'ignore' });
   supervisor.unref();
   const base = `http://localhost:${port}`;
@@ -1332,7 +1315,11 @@ async function cleanup() {
     const outText = execFileSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'drop-lobbies.ts'), ...state.lobbies], { cwd: repo, encoding: 'utf8' });
     removed = JSON.parse(outText);
   }
-  if (receipt.ok && state.localDb?.remove) fs.rmSync(state.localDb.dataDir, { recursive: true, force: true });
+  if (receipt.ok && state.localDb?.remove) {
+    for (const entry of fs.readdirSync(dir)) {
+      if (entry.startsWith('pgdata-') || entry.startsWith('pgsock-')) fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
+    }
+  }
   fs.rmSync(path.join(home, 'current'), { force: true });
   for (const f of fs.readdirSync(dir)) if (f.startsWith('session-')) fs.rmSync(path.join(dir, f));
   const evidence = path.join(dir, 'evidence');

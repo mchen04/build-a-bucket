@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 
 const HOST = process.env.BAB_PG_HOST ?? '127.0.0.1';
 const PORT = Number(process.env.BAB_PG_PORT ?? 55432);
+const SOCKET_DIR = process.env.BAB_PG_SOCKET_DIR ?? '';
 const USER = process.env.BAB_PG_USER ?? 'postgres';
 const DATABASE = process.env.BAB_PG_DATABASE ?? 'bab_perf';
 const LOG = process.env.BAB_DB_METER_LOG ?? '';
@@ -98,7 +100,7 @@ class Connection {
   }
 
   async open() {
-    const sock = net.connect({ host: HOST, port: PORT });
+    const sock = SOCKET_DIR ? net.connect({ path: path.join(SOCKET_DIR, `.s.PGSQL.${PORT}`) }) : net.connect({ host: HOST, port: PORT });
     this.sock = sock;
     await new Promise((resolve, reject) => {
       sock.once('connect', resolve);

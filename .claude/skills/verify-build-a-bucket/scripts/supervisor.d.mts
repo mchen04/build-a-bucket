@@ -9,6 +9,7 @@ export type Service = {
   stdio?: unknown;
   logPath?: string;
   detached?: boolean;
+  envFromPostgres?: boolean;
 };
 export type ServiceResult = { name: string; pid: number; state: 'clean' | 'uncertain'; reason: string | null };
 export type Clock = {
@@ -34,6 +35,16 @@ export function startSupervisor(options: {
   controlPath: string;
   receiptPath: string;
   ackPath: string;
+  postgresInit?: {
+    root: string;
+    port: number;
+    database?: string;
+    schema?: string;
+    psql?: (sql: string, db?: string) => string;
+    initdb?: (dirs: { dataDir: string; sockDir: string; port: number }) => void;
+    schemaLoad?: () => void;
+    logPath?: string;
+  } | null;
   spawn?: unknown;
   clock?: Clock;
   controls: Controls;

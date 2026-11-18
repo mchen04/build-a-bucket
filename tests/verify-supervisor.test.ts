@@ -29,6 +29,10 @@ class FakeChild {
     return this;
   }
 
+  on(event: string, listener: (code: number | null, signal: string | null) => void) {
+    return this.once(event, listener);
+  }
+
   kill(signal: string) {
     this.signals.push(signal);
     if (this.exitOn.has(signal)) this.exit(signal === 'SIGKILL' ? null : 0, signal === 'SIGKILL' ? 'SIGKILL' : null);
@@ -182,6 +186,115 @@ describe('supervised service stop', () => {
 });
 
 describe('supervisor lifecycle', () => {
+  it('initializes Postgres before spawning the app', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const app = new FakeChild(100);
+    const order: string[] = [];
+    const children = [postgres, app];
+    const supervisor = await startSupervisor({
+      runDir: dir,
+      services: [{ name: 'app', kind: 'app', command: 'node', args: ['app'], envFromPostgres: true }],
+      controlPath: path.join(dir, 'control.json'),
+      receiptPath: path.join(dir, 'receipt.json'),
+      ackPath: path.join(dir, 'ack.json'),
+      postgresInit: {
+        root: dir,
+        port: 55434,
+        database: 'bab_local',
+        schema: '/schema.sql',
+        initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+          writeFileSync(path.join(dataDir, 'postmaster.pid'), `${postgres.pid}\n`);
+          writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+        },
+        psql: () => '1',
+        schemaLoad: () => {
+          order.push('schema');
+        },
+      },
+      spawn: () => {
+        const child = children.shift();
+        order.push(child === postgres ? 'postgres' : 'app');
+        return child;
+      },
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+    });
+    expect(order).toEqual(['postgres', 'schema', 'app']);
+    await supervisor.stop();
+  });
+
+  it('stops Postgres when the app spawn throws', async () => {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    let calls = 0;
+    await startSupervisor({
+      runDir: dir,
+      services: [{ name: 'app', kind: 'app', command: 'node', args: ['app'] }],
+      controlPath: path.join(dir, 'control.json'),
+      receiptPath: path.join(dir, 'receipt.json'),
+      ackPath: path.join(dir, 'ack.json'),
+      postgresInit: {
+        root: dir,
+        port: 55434,
+        database: 'bab_local',
+        schema: '/schema.sql',
+        initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+          writeFileSync(path.join(dataDir, 'postmaster.pid'), `${postgres.pid}\n`);
+          writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+        },
+        psql: () => '1',
+        schemaLoad: () => {},
+      },
+      spawn: () => {
+        calls += 1;
+        if (calls === 1) return postgres;
+        throw new Error('app spawn failed');
+      },
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+    });
+    expect(postgres.signals).toEqual(['SIGINT']);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+    expect(receipt.reason).toContain('app spawn failed');
+  });
+
+  it('does not spawn the app when Postgres init fails', async () => {
+    const dir = tempDir();
+    let appSpawns = 0;
+    await startSupervisor({
+      runDir: dir,
+      services: [{ name: 'app', kind: 'app', command: 'node', args: ['app'] }],
+      controlPath: path.join(dir, 'control.json'),
+      receiptPath: path.join(dir, 'receipt.json'),
+      ackPath: path.join(dir, 'ack.json'),
+      postgresInit: {
+        root: dir,
+        port: 55434,
+        database: 'bab_local',
+        schema: '/schema.sql',
+        initdb: () => {
+          throw new Error('init failed');
+        },
+        psql: () => '1',
+        schemaLoad: () => {},
+      },
+      spawn: () => {
+        appSpawns += 1;
+        return new FakeChild(100);
+      },
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+    });
+    expect(appSpawns).toBe(0);
+    const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
+    expect(receipt.ok).toBe(false);
+  });
+
   it('does not stop when the launch ack arrives', async () => {
     const dir = tempDir();
     const app = new FakeChild(100);
@@ -288,6 +401,10 @@ describe('in-process suite supervision', () => {
       dataDir: dir,
       pgPort: 55434,
       spawn: () => child,
+      initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+        writeFileSync(path.join(dataDir, 'postmaster.pid'), `${child.pid}\n`);
+        writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+      },
       psql: () => '1',
       schemaLoad: () => {},
       onChild: (value: FakeChild) => {

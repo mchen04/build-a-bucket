@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn as realSpawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { createOwnedPostgres } from './owned-postgres.mjs';
 
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -81,17 +82,15 @@ export async function startSupervisor({
   controlPath,
   receiptPath,
   ackPath,
+  postgresInit,
   spawn = realSpawn,
   clock = { setTimeout: globalThis.setTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, clearTimeout: globalThis.clearTimeout },
   controls,
   handoffMs = 180000,
   exit = process.exit,
 }) {
-  const children = services.map((service) => {
-    const stdio = service.logPath ? ['ignore', fs.openSync(service.logPath, 'a'), fs.openSync(service.logPath, 'a')] : (service.stdio ?? 'ignore');
-    return { service, child: spawn(service.command, service.args, { cwd: service.cwd, env: service.env, stdio, detached: service.detached ?? false }) };
-  });
-  writeJson(path.join(runDir, 'supervisor.json'), { pid: process.pid, controlPath, receiptPath, ackPath, services: children.map(({ service, child }) => ({ name: service.name, pid: child.pid })) });
+  const children = [];
+  let postgres = null;
   let stopping = false;
   let poll = null;
   let handoff = null;
@@ -101,11 +100,41 @@ export async function startSupervisor({
     if (poll) clock.clearInterval(poll);
     if (handoff) clock.clearTimeout(handoff);
     const results = [];
+    if (postgres) results.push(await stopService({ service: { name: 'postgres', kind: 'postgres', port: postgres.port }, child: postgres.child, controls }));
     for (const { service, child } of children) results.push(await stopService({ service, child, controls }));
     writeJson(receiptPath, { ok: results.every((result) => result.state === 'clean'), services: results });
     exit(0);
     return results;
   };
+  const fail = async (error) => {
+    const reason = error instanceof Error ? error.message : String(error);
+    const results = [];
+    if (postgres) results.push(await stopService({ service: { name: 'postgres', kind: 'postgres', port: postgres.port }, child: postgres.child, controls }));
+    for (const { service, child } of children) results.push(await stopService({ service, child, controls }));
+    writeJson(path.join(runDir, 'supervisor-init.json'), { state: 'failed', reason });
+    writeJson(receiptPath, { ok: false, reason, services: results });
+    exit(1);
+  };
+  try {
+    if (postgresInit) {
+      postgres = await createOwnedPostgres({ ...postgresInit, spawn, clock });
+      writeJson(path.join(runDir, 'supervisor-init.json'), { state: 'initialized', database: postgres.database, sockDir: postgres.sockDir });
+    }
+    for (const service of services) {
+      const stdio = service.logPath ? ['ignore', fs.openSync(service.logPath, 'a'), fs.openSync(service.logPath, 'a')] : (service.stdio ?? 'ignore');
+      const env = service.envFromPostgres && postgres ? { ...service.env, ...postgres.env } : service.env;
+      const child = spawn(service.command, service.args, { cwd: service.cwd, env, stdio, detached: service.detached ?? false });
+      child.on('error', (error) => fail(error));
+      child.on('exit', (code, signal) => {
+        if (!stopping && code !== 0) fail(new Error(`service ${service.name} exited ${code ?? signal}`));
+      });
+      children.push({ service, child });
+    }
+  } catch (error) {
+    await fail(error);
+    return { children, stop };
+  }
+  writeJson(path.join(runDir, 'supervisor.json'), { pid: process.pid, controlPath, receiptPath, ackPath, services: children.map(({ service, child }) => ({ name: service.name, pid: child.pid })) });
   poll = clock.setInterval(() => {
     if (fs.existsSync(controlPath)) {
       clock.clearInterval(poll);

@@ -203,6 +203,8 @@ function checkSuite(step, out) {
     const receipt = readJson(path.join(dir, 'postgres-receipt.json'));
     if (!receipt) failures.push('missing postgres-receipt.json');
     else if (receipt.ok !== true) failures.push('postgres receipt is not clean');
+    else if (!Array.isArray(receipt.services) || !receipt.services.some((service) => service.name === 'postgres' && service.state === 'clean')) failures.push('postgres receipt does not cover a clean postgres service');
+    else if (receipt.reason) failures.push('postgres receipt has a failed-start reason');
   }
   return failures;
 }
