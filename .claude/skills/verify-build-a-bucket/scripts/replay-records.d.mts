@@ -17,5 +17,6 @@ export function buildMetaRecord(fields: { head: string; out: string; babVerifyHo
 export function buildTrackedRecord(fields: { pid: number; port: number; pgPort?: number | null }): Record<string, unknown>;
 export function buildCleanupLines(fields: { pid: number; pgPort?: number | null; e2ePort?: number | null; suitePgPort?: number | null; probes: Record<string, string> }): string[];
 export function buildControlSummary(run: PlanRun): Record<string, unknown>;
+export function standInGate(players: number, readySeats?: number[]): Record<string, unknown>;
 export function buildControlFixture(fields: { out: string; plan: Plan; head: string; pid?: number; port?: number; pgPort?: number; e2ePort?: number; suitePgPort?: number }): string;
 export function selectRunDir(options: { out: string; launchAttempted: boolean; verifyHome: string }): string;

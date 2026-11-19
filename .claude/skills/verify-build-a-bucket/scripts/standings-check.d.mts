@@ -47,9 +47,15 @@ export function readLeagueStandings(): { revision: Revision; tables: string[][] 
 export function seatIdentities(seats: unknown): Map<number, Set<string>>;
 export function distinctSeatLabels(seats: unknown): Set<string>;
 export function canonicalTables(tables: unknown): string[][];
-export function playoffSampleFrom(args: { out: boolean[]; activity: string[] }): { out: boolean[]; autoStart: boolean[] };
+export type SeatView = { phase: string; gate: { progress: string | null; ready: number; readyEnabled: number; start: number } | null; next: boolean; log: boolean; out: boolean; activity: string };
+export type PlayoffSample = { seats: { seat: number; phase: string; rendered: boolean; out: boolean; autoStart: boolean }[] };
+export function sampleReadComplete(read: Partial<SeatView> | null | undefined): boolean;
+export type GateReadiness = { coherent: boolean; reason: string | null; readySeats: number[]; qualified: number | null };
+export function readSeatView(): SeatView;
+export function playoffSampleFrom(args: { reads: ({ seat: number } & Partial<SeatView>)[] }): PlayoffSample;
+export function gateReadiness(args: { players: number; hostSeat: number; reads: ({ seat: number } & Partial<SeatView>)[] }): GateReadiness;
 export function parseRecapCapture(aria: string): RecapCapture | null;
-export function recapElimination(args: { players: number; captures: { seat: number; aria: string }[]; playoffSample?: { out: boolean[]; autoStart: boolean[] } | null; gateSeen?: boolean }): RecapElimination;
+export function recapElimination(args: { players: number; captures: { seat: number; aria: string }[]; playoffSample?: PlayoffSample | null; gateSeen?: boolean }): RecapElimination;
 export function newReloadState(): ReloadRecord;
 export function shouldAwaitStandings(args: { navigation?: { observed?: boolean } | null; session?: { present?: boolean } | null }): boolean;
 export function awaitReloadProof(args: {

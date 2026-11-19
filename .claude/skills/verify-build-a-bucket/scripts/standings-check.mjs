@@ -99,8 +99,60 @@ function plainAutoStart(text) {
   return rows.includes(AUTO_START.toUpperCase()) && !rows.some((row) => HELD_START.some((held) => row.includes(held.toUpperCase())));
 }
 
-export function playoffSampleFrom({ out, activity }) {
-  return { out, autoStart: Array.isArray(activity) ? activity.map(plainAutoStart) : [] };
+export function readSeatView() {
+  const find = (id) => document.querySelector(`[data-testid="${id}"]`);
+  const shown = (node) => Boolean(node) && !node.hidden && node.getClientRects().length > 0 && node.ownerDocument.defaultView.getComputedStyle(node).visibility !== 'hidden';
+  const gate = find('playoff-gate');
+  const buttons = shown(gate) ? [...gate.querySelectorAll('button')].filter(shown) : [];
+  const named = (name) => buttons.filter((button) => (button.textContent ?? '').trim() === name);
+  const ready = named('Ready');
+  const progress = shown(gate) ? (gate.textContent ?? '').match(/\d+\/\d+ playoff teams ready/) : null;
+  const next = find('next-action');
+  const log = find('activity-log');
+  return {
+    phase: (find('lobby-status')?.textContent ?? '').trim(),
+    gate: shown(gate) ? { progress: progress ? progress[0] : null, ready: ready.length, readyEnabled: ready.filter((button) => !button.disabled).length, start: named('Start playoffs').length } : null,
+    next: shown(next),
+    log: shown(log),
+    out: shown(next) && (next.textContent ?? '').includes('You are out'),
+    activity: shown(log) ? log.innerText : '',
+  };
+}
+
+export function sampleReadComplete(read) {
+  return read?.phase === 'Recap' || (read?.phase === 'Playoffs' && read?.next === true && read?.log === true);
+}
+
+export function playoffSampleFrom({ reads }) {
+  return { seats: Array.isArray(reads) ? reads.map((read) => ({ seat: read?.seat, phase: typeof read?.phase === 'string' ? read.phase : '', rendered: read?.next === true && read?.log === true, out: read?.out === true, autoStart: plainAutoStart(read?.activity) })) : [] };
+}
+
+function seatsOnce(reads, players) {
+  return Array.isArray(reads) && reads.length === players && JSON.stringify(reads.map((read) => read?.seat)) === JSON.stringify(Array.from({ length: players }, (_, index) => index + 1));
+}
+
+export function gateReadiness({ players, hostSeat, reads }) {
+  const fail = (reason) => ({ coherent: false, reason, readySeats: [], qualified: null });
+  if (!Number.isInteger(players) || players < 1 || !Number.isInteger(hostSeat) || hostSeat < 1 || hostSeat > players) return fail('players or host seat is invalid');
+  if (!seatsOnce(reads, players)) return fail('the gate read does not cover every seat once');
+  const progress = new Set();
+  for (const read of reads) {
+    if (read.phase !== 'Playoffs') return fail(`seat ${read.seat} shows '${read.phase}', not Playoffs`);
+    if (!read.gate || typeof read.gate.progress !== 'string') return fail(`seat ${read.seat} shows no held playoff gate`);
+    progress.add(read.gate.progress);
+    const { ready, readyEnabled, start } = read.gate;
+    if (![0, 1].includes(ready) || readyEnabled !== ready) return fail(`seat ${read.seat} Ready control is not actionable`);
+    if (start !== (read.seat === hostSeat ? 1 : 0)) return fail(`seat ${read.seat} Start playoffs control is wrong`);
+  }
+  if (progress.size !== 1) return fail('seats show different gate progress');
+  const match = /^(\d+)\/(\d+) playoff teams ready$/.exec([...progress][0]);
+  if (!match) return fail('gate progress is malformed');
+  const done = Number(match[1]);
+  const qualified = Number(match[2]);
+  if (done !== 0 || qualified < 1 || qualified > players) return fail(`gate progress ${match[0]} is not an untouched held gate`);
+  const readySeats = reads.filter((read) => read.gate.readyEnabled === 1).map((read) => read.seat);
+  if (readySeats.length !== qualified) return fail(`${readySeats.length} actionable Ready controls for ${qualified} playoff teams`);
+  return { coherent: true, reason: null, readySeats, qualified };
 }
 
 function section(text, start, end) {
@@ -160,8 +212,13 @@ export function recapElimination({ players, captures, playoffSample = null, gate
     if (!OUT_AT_ENTRY.has(row.finish)) return fail(`seat ${row.seat} finished '${row.finish}', a playoff finish`);
   }
   if (playoffSample !== null) {
-    const allTrue = (values) => Array.isArray(values) && values.length === players && values.every((value) => value === true);
-    if (!allTrue(playoffSample?.out) || !allTrue(playoffSample?.autoStart)) return fail('the live playoff sample contradicts all-eliminated');
+    if (!seatsOnce(playoffSample?.seats, players)) return fail('the live playoff sample does not cover every seat once');
+    for (const sample of playoffSample.seats) {
+      if (sample.phase === 'Recap') continue;
+      if (sample.phase !== 'Playoffs') return fail(`seat ${sample.seat} live playoff sample shows no Playoffs or Recap phase`);
+      if (sample.rendered !== true) return fail(`seat ${sample.seat} live playoff sample is incomplete`);
+      if (sample.out !== true || sample.autoStart !== true) return fail('the live playoff sample contradicts all-eliminated');
+    }
   }
   return { allEliminated: true, reason: null, record: { source: 'recap', champion: first.champion, seats: first.seats.map(({ seat, name, finish, record }) => ({ seat, name, finish, record })), playoffSample } };
 }

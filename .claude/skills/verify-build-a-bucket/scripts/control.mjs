@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, newReloadState, playoffSampleFrom, readLeagueStandings, recapElimination, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
+import { awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, gateReadiness, newReloadState, playoffSampleFrom, readLeagueStandings, readSeatView, recapElimination, sampleReadComplete, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
 import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
@@ -321,7 +321,7 @@ async function leagueRun() {
   const reloadSeat = o.reload === undefined ? null : Number(o.reload);
   const reload = newReloadState();
   let gateSeen = false;
-  let gateReadySeats = [];
+  let gateRecord = null;
   const awaySeat = o.away === undefined ? null : Number(o.away);
   const hostLeave = Boolean(o['host-leave']);
   for (const [flag, value] of [['--reload', reloadSeat], ['--away', awaySeat]]) {
@@ -803,10 +803,22 @@ async function leagueRun() {
       if (await visible(host, 'playoff-gate')) {
         if (!gateSeen) {
           gateSeen = true;
-          gateReadySeats = [];
-          for (const seat of active()) {
-            const button = seat.page.getByTestId('playoff-gate').getByRole('button', { name: 'Ready', exact: true });
-            if (await button.isVisible().catch(() => false)) gateReadySeats.push(seat.seat);
+          if (fixture) {
+            const started = Date.now();
+            const trail = [];
+            let read = [];
+            let verdict = null;
+            for (let attempt = 0; attempt < 40; attempt++) {
+              read = await Promise.all(active().map(async (seat) => {
+                const view = await seat.page.evaluate(readSeatView).catch(() => null);
+                return { seat: seat.seat, phase: view?.phase ?? '', gate: view?.gate ?? null };
+              }));
+              verdict = gateReadiness({ players, hostSeat: host.seat, reads: read });
+              trail.push({ attempt, ms: Date.now() - started, coherent: verdict.coherent, reason: verdict.reason });
+              if (verdict.coherent) break;
+              await host.page.waitForTimeout(250);
+            }
+            gateRecord = { ...verdict, hostSeat: host.seat, read, trail };
           }
         }
         const record = await verifyStage(`gate-${checkpoint}`, null);
@@ -906,9 +918,17 @@ async function leagueRun() {
         const record = await verifyStage(`stage-${checkpoint}`, null);
         stages.push(record);
         if (record.phase === 'Playoffs' && (reloadSeat !== null || fixture) && reload.playoffSample == null) {
-          const out = await Promise.all(active().map((entry) => entry.page.getByText('You are out').first().isVisible().catch(() => false)));
-          const activity = await Promise.all(active().map(logText));
-          reload.playoffSample = playoffSampleFrom({ out, activity });
+          let reads = [];
+          const trail = [];
+          for (let attempt = 0; attempt < 20; attempt++) {
+            reads = await Promise.all(active().map(async (entry, index) => (sampleReadComplete(reads[index]) ? reads[index] : { seat: entry.seat, ...((await entry.page.evaluate(readSeatView).catch(() => null)) ?? {}) })));
+            const incomplete = reads.filter((read) => !sampleReadComplete(read)).map((read) => read.seat);
+            trail.push({ attempt, incomplete });
+            if (!incomplete.length) break;
+            await host.page.waitForTimeout(250);
+          }
+          reload.playoffSample = playoffSampleFrom({ reads });
+          reload.playoffSampleTrail = trail;
         }
         const roundLabel = clean(record.roundName ?? record.stageName ?? '').toUpperCase();
         if ((record.phase === 'Awards' || record.phase === 'Play-In' || record.phase === 'Playoffs') && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
@@ -1138,10 +1158,11 @@ async function leagueRun() {
     summary.reload = reloadRecord(reloadSeat !== null, reload);
     let fixtureError = null;
     if (fixture) {
-      const classified = classifyFixture({ gateSeen, gateReadySeats, allEliminated: reload.allEliminated, recap: marks.some((entry) => entry.label === 'recap') });
+      const classified = classifyFixture({ gateSeen, gate: gateRecord, allEliminated: reload.allEliminated, recap: marks.some((entry) => entry.label === 'recap') });
       const verdict = fixtureVerdict({ entry: fixture, classified });
       summary.fixture = verdict.record;
       summary.fixture.elimination = reload.eliminationEvidence ?? null;
+      summary.fixture.gate = gateRecord;
       fixtureError = verdict.error;
     }
     summary.lifecycle = lifecycle;

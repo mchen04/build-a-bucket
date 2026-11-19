@@ -216,27 +216,29 @@ describe('fixture verdict', () => {
 
 describe('fixture class', () => {
   it('classifies a gate as qualifying', () => {
-    expect(classifyFixture({ gateSeen: true, gateReadySeats: [1], allEliminated: false, recap: false })).toEqual({ observedClass: 'qualifying', qualifyingSeats: [1] });
+    expect(classifyFixture({ gateSeen: true, gate: { coherent: true, readySeats: [1] }, allEliminated: false, recap: false })).toEqual({ observedClass: 'qualifying', qualifyingSeats: [1] });
+    expect(classifyFixture({ gateSeen: true, gate: { coherent: false, readySeats: [] }, allEliminated: false, recap: false })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
+    expect(classifyFixture({ gateSeen: true, gate: null, allEliminated: false, recap: false })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
   });
 
   it('classifies no gate and all eliminated by recap', () => {
-    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: true, recap: true })).toEqual({ observedClass: 'all-eliminated', qualifyingSeats: [] });
+    expect(classifyFixture({ gateSeen: false, gate: null, allEliminated: true, recap: true })).toEqual({ observedClass: 'all-eliminated', qualifyingSeats: [] });
   });
 
   it('classifies no gate before recap as unknown', () => {
-    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: true, recap: false })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
+    expect(classifyFixture({ gateSeen: false, gate: null, allEliminated: true, recap: false })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
   });
 
   it('rejects all-eliminated without the signature', () => {
-    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: false, recap: true })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
+    expect(classifyFixture({ gateSeen: false, gate: null, allEliminated: false, recap: true })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
   });
 
   it('rejects all-eliminated when the gate was seen', () => {
-    expect(classifyFixture({ gateSeen: true, gateReadySeats: [1], allEliminated: true, recap: true })).toEqual({ observedClass: 'qualifying', qualifyingSeats: [1] });
+    expect(classifyFixture({ gateSeen: true, gate: { coherent: true, readySeats: [1] }, allEliminated: true, recap: true })).toEqual({ observedClass: 'qualifying', qualifyingSeats: [1] });
   });
 
   it('accepts all-eliminated only with the signature', () => {
-    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: true, recap: true })).toEqual({ observedClass: 'all-eliminated', qualifyingSeats: [] });
+    expect(classifyFixture({ gateSeen: false, gate: null, allEliminated: true, recap: true })).toEqual({ observedClass: 'all-eliminated', qualifyingSeats: [] });
   });
 });
 

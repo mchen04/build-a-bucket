@@ -630,6 +630,52 @@ describe('replay checker', () => {
   const editElimAttempts = (dir: string, edit: (value: any) => void) => { const file = elimAttemptsPath(dir); const value = read(file); edit(value); write(file, value); };
   const elimCapturePath = (dir: string, name: string) => path.join(path.dirname(elimSummaryPath(dir)), name);
 
+  const editRun = (dir: string, run: string, edit: (value: any) => void) => { const file = summaryPath(dir, run); const value = read(file); edit(value); write(file, value); };
+  const failuresOf = (dir: string) => check(dir).rows.flatMap((row) => row.failures);
+
+  it('accepts the recorded coherent gate', async () => {
+    const summary = read(summaryPath(await control(), 'run-a'));
+    expect(summary.fixture.gate).toMatchObject({ coherent: true, readySeats: [1], qualified: 1, hostSeat: 1 });
+  });
+
+  it.each([
+    ['a missing gate record', (value: any) => { delete value.fixture.gate; }, 'summary.fixture.gate is missing'],
+    ['the old instant scan record', (value: any) => { value.fixture.gate = null; value.fixture.gateReadySeats = [1]; }, 'summary.fixture.gate is missing'],
+    ['a stale seat in the read', (value: any) => { value.fixture.gate.read[1].phase = 'Awards'; value.fixture.gate.read[1].gate = null; }, "fixture gate evidence is not a coherent held gate: seat 2 shows 'Awards', not Playoffs"],
+    ['a partial read', (value: any) => { value.fixture.gate.read.pop(); }, 'fixture gate evidence is not a coherent held gate: the gate read does not cover every seat once'],
+    ['a coherent flag over a different seat', (value: any) => { value.fixture.gate.read[0].gate = { ...value.fixture.gate.read[0].gate, ready: 0, readyEnabled: 0 }; value.fixture.gate.read[1].gate = { ...value.fixture.gate.read[1].gate, ready: 1, readyEnabled: 1 }; }, 'summary.fixture.gate does not match its recorded read'],
+    ['qualifying seats that disagree with the read', (value: any) => { value.fixture.qualifyingSeats = [2]; }, 'summary.fixture.gate does not match its recorded read'],
+    ['an incoherent verdict with a coherent read', (value: any) => { value.fixture.gate.coherent = false; }, 'summary.fixture.gate does not match its recorded read'],
+  ])('fails %s', async (_label, edit, failure) => {
+    const dir = await control();
+    editRun(dir, 'run-a', edit);
+    expect(failuresOf(dir)).toContain(failure);
+  });
+
+  it('fails a gate record on the no-gate row', async () => {
+    const dir = await control();
+    editElimSummary(dir, (value) => { value.fixture.gate = read(summaryPath(dir, 'run-a')).fixture.gate; });
+    expect(failuresOf(dir)).toContain('summary.fixture.gate is present on a no-gate fixture');
+  });
+
+  it('accepts a sample whose late seat shows Recap', async () => {
+    const dir = await control();
+    const playoffSample = { seats: [1, 2, 3, 4].map((seat) => ({ seat, phase: seat === 4 ? 'Recap' : 'Playoffs', rendered: true, out: seat !== 4, autoStart: true })) };
+    editElimSummary(dir, (value) => { value.reload.playoffSample = playoffSample; value.fixture.elimination.playoffSample = playoffSample; });
+    const result = check(dir);
+    expect(result.rows.find((row) => row.name === 'run-elim')?.failures).toEqual([]);
+  });
+
+  it.each([
+    ['the old boolean sample', { out: [true, true, true, false], autoStart: [true, true, true, false] }, 'the live playoff sample does not cover every seat once'],
+    ['a same-phase seat not out', { seats: [1, 2, 3, 4].map((seat) => ({ seat, phase: 'Playoffs', rendered: true, out: seat !== 4, autoStart: true })) }, 'the live playoff sample contradicts all-eliminated'],
+    ['an incomplete Playoffs read', { seats: [1, 2, 3, 4].map((seat) => ({ seat, phase: 'Playoffs', rendered: seat !== 4, out: seat !== 4, autoStart: seat !== 4 })) }, 'seat 4 live playoff sample is incomplete'],
+  ])('fails %s on the no-gate row', async (_label, playoffSample, reason) => {
+    const dir = await control();
+    editElimSummary(dir, (value) => { value.reload.playoffSample = playoffSample; value.fixture.elimination.playoffSample = playoffSample; });
+    expect(failuresOf(dir)).toContain(`recap evidence does not prove all-eliminated: ${reason}`);
+  });
+
   it('fails a deleted all-eliminated attempts file', async () => {
     const dir = await control();
     rmSync(elimAttemptsPath(dir));

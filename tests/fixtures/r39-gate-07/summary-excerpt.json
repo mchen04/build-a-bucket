@@ -1,0 +1,50 @@
+{
+ "fixture": {
+  "id": "squad-4p-q7",
+  "expectedClass": "qualifying",
+  "observedClass": "qualifying",
+  "qualifyingSeats": [],
+  "elimination": {
+   "source": "recap",
+   "reason": "a held playoff gate was seen"
+  }
+ },
+ "stages": [
+  {
+   "label": "stage-0",
+   "phase": "Playoffs"
+  },
+  {
+   "label": "gate-1",
+   "phase": "Playoffs"
+  },
+  {
+   "label": "after-reload",
+   "phase": "Playoffs"
+  },
+  {
+   "label": "stage-2",
+   "phase": "Playoffs"
+  },
+  {
+   "label": "stage-3",
+   "phase": "Playoffs"
+  },
+  {
+   "label": "recap-4",
+   "phase": "Recap"
+  }
+ ],
+ "reload": {
+  "classification": "stable-match",
+  "rowsCompared": 20,
+  "session": {
+   "present": true
+  },
+  "navigation": {
+   "observed": true,
+   "type": "reload",
+   "marker": null
+  }
+ }
+}

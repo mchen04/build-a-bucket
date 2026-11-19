@@ -1,0 +1,40 @@
+{
+ "playoffSample": {
+  "out": [
+   true,
+   true,
+   true,
+   false
+  ],
+  "autoStart": [
+   true,
+   true,
+   true,
+   false
+  ]
+ },
+ "stages": [
+  {
+   "label": "stage-0",
+   "phase": "Playoffs"
+  },
+  {
+   "label": "stage-1",
+   "phase": "Recap"
+  },
+  {
+   "label": "recap-2",
+   "phase": "Recap"
+  }
+ ],
+ "fixture": {
+  "id": "squad-4p-elim",
+  "expectedClass": "all-eliminated",
+  "observedClass": "unknown",
+  "qualifyingSeats": [],
+  "elimination": {
+   "source": "recap",
+   "reason": "the live playoff sample contradicts all-eliminated"
+  }
+ }
+}

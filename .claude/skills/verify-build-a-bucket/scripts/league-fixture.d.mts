@@ -49,7 +49,7 @@ export function fixtureVerdict(args: { entry: FixtureEntry; classified: { observ
 export function fixtureStorageState(args: { base: string; code: string; secret: string; name: string }): { cookies: unknown[]; origins: { origin: string; localStorage: { name: string; value: string }[] }[] };
 export function fixtureAppOrigin(args: { state: { mode?: string; base?: string; port?: number }; spec: { services?: { kind?: string; args?: string[] }[] } }): string;
 export function openFixtureRun(args: { base?: string; dir: string; fixture: FixtureEntry; readJson: (file: string) => unknown; apply?: (args: { entry: FixtureEntry; run: FixtureRun; secrets: string[] }) => Promise<unknown>; launch: () => Promise<unknown>; makeSecret: () => string }): Promise<{ origin: string; secrets: string[]; browser: unknown }>;
-export function classifyFixture(args: { gateSeen: boolean; gateReadySeats: number[]; allEliminated: boolean; recap: boolean }): { observedClass: 'qualifying' | 'all-eliminated' | 'unknown'; qualifyingSeats: number[] };
+export function classifyFixture(args: { gateSeen: boolean; gate?: { coherent: boolean; readySeats: number[] } | null; allEliminated: boolean; recap: boolean }): { observedClass: 'qualifying' | 'all-eliminated' | 'unknown'; qualifyingSeats: number[] };
 export function defaultConnect(target: FixtureTarget): Promise<FixtureRunner>;
 export function guardOwnedRun(args: { run: FixtureRun | null; base?: string; readFile?: (path: string, encoding: string) => string; pidAlive?: (pid: number) => boolean }): FixtureTarget;
 export function applyLeagueFixture(args: {

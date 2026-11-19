@@ -28,7 +28,7 @@ describe('the saved fast-to-recap control', () => {
     expect(rounds.length).toBeGreaterThan(0);
     expect(rounds.every((mark: { at: number }) => mark.at === recap)).toBe(true);
     expect(saved.stages.some((stage: { phase: string }) => stage.phase === 'Playoffs')).toBe(false);
-    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: saved.reload.allEliminated, recap: true }).observedClass).toBe('unknown');
+    expect(classifyFixture({ gateSeen: false, gate: null, allEliminated: saved.reload.allEliminated, recap: true }).observedClass).toBe('unknown');
   });
 
   it('classifies all-eliminated from every seat recap', () => {
@@ -36,13 +36,13 @@ describe('the saved fast-to-recap control', () => {
     expect(result.reason).toBeNull();
     expect(result.allEliminated).toBe(true);
     expect(result.record?.seats.map((seat) => seat.finish)).toEqual(['Play-in exit', 'Missed playoffs', 'Missed playoffs', 'Play-in exit']);
-    const classified = classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: result.allEliminated, recap: true });
+    const classified = classifyFixture({ gateSeen: false, gate: null, allEliminated: result.allEliminated, recap: true });
     expect(classified.observedClass).toBe('all-eliminated');
     expect(fixtureVerdict({ entry: elimEntry, classified }).error).toBeNull();
   });
 
   it('accepts an agreeing live playoff sample', () => {
-    const playoffSample = { out: [true, true, true, true], autoStart: [true, true, true, true] };
+    const playoffSample = { seats: [1, 2, 3, 4].map((seat) => ({ seat, phase: 'Playoffs', rendered: true, out: true, autoStart: true })) };
     expect(recapElimination({ players: 4, captures: real(), playoffSample }).allEliminated).toBe(true);
   });
 
@@ -55,7 +55,7 @@ describe('the saved fast-to-recap control', () => {
 });
 
 describe('recap elimination refuses', () => {
-  const refuses = (captures: { seat: number; aria: string }[], options: { playoffSample?: { out: boolean[]; autoStart: boolean[] } | null; gateSeen?: boolean; players?: number } = {}) => {
+  const refuses = (captures: { seat: number; aria: string }[], options: { playoffSample?: { seats: { seat: number; phase: string; rendered: boolean; out: boolean; autoStart: boolean }[] } | null; gateSeen?: boolean; players?: number } = {}) => {
     const result = recapElimination({ players: options.players ?? 4, captures, playoffSample: options.playoffSample ?? null, gateSeen: options.gateSeen ?? false });
     expect(result.allEliminated).toBe(false);
     expect(result.record).toBeNull();
@@ -132,6 +132,6 @@ describe('recap elimination refuses', () => {
   });
 
   it('a live playoff sample with a seat not out', () => {
-    expect(refuses(real(), { playoffSample: { out: [true, false, true, true], autoStart: [true, true, true, true] } })).toMatch(/live playoff sample/);
+    expect(refuses(real(), { playoffSample: { seats: [1, 2, 3, 4].map((seat) => ({ seat, phase: 'Playoffs', rendered: true, out: seat !== 2, autoStart: true })) } })).toMatch(/live playoff sample/);
   });
 });

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { awaitReloadProof, newReloadState, recapElimination, reloadRecord, revisionLabel } from './standings-check.mjs';
+import { awaitReloadProof, gateReadiness, newReloadState, recapElimination, reloadRecord, revisionLabel } from './standings-check.mjs';
 import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -112,8 +112,18 @@ export function buildControlSummary(run) {
   });
   if (run.fixture !== null && run.fixture !== undefined) {
     summary.fixture = { id: run.fixture, expectedClass: run.expectedClass, observedClass: run.expectedClass, qualifyingSeats: run.expectedClass === 'qualifying' ? [1] : [] };
+    summary.fixture.gate = run.expectedClass === 'qualifying' ? standInGate(run.players) : null;
   }
   return summary;
+}
+
+export function standInGate(players, readySeats = [1]) {
+  const read = Array.from({ length: players }, (_, index) => {
+    const seat = index + 1;
+    const ready = readySeats.includes(seat) ? 1 : 0;
+    return { seat, phase: 'Playoffs', gate: { progress: `0/${readySeats.length} playoff teams ready`, ready, readyEnabled: ready, start: seat === 1 ? 1 : 0 } };
+  });
+  return { ...gateReadiness({ players, hostSeat: 1, reads: read }), hostSeat: 1, read, trail: [{ attempt: 0, ms: 0, coherent: true, reason: null }] };
 }
 
 function writeJson(file, value) {

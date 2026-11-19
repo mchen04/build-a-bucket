@@ -107,8 +107,8 @@ export async function openFixtureRun({ base, dir, fixture, readJson, apply = app
   return { origin, secrets, browser };
 }
 
-export function classifyFixture({ gateSeen, gateReadySeats, allEliminated, recap }) {
-  if (gateSeen) return { observedClass: 'qualifying', qualifyingSeats: [...gateReadySeats] };
+export function classifyFixture({ gateSeen, gate, allEliminated, recap }) {
+  if (gateSeen) return gate?.coherent === true ? { observedClass: 'qualifying', qualifyingSeats: [...gate.readySeats] } : { observedClass: 'unknown', qualifyingSeats: [] };
   if (allEliminated === true && recap) return { observedClass: 'all-eliminated', qualifyingSeats: [] };
   return { observedClass: 'unknown', qualifyingSeats: [] };
 }

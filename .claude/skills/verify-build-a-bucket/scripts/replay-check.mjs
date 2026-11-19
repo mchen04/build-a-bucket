@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { recapElimination, refreshCoverage, revisionLabel } from './standings-check.mjs';
+import { gateReadiness, recapElimination, refreshCoverage, revisionLabel } from './standings-check.mjs';
 import { reloadCaptureBase } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -282,6 +282,13 @@ function checkRun(run, dir) {
       if (fixture.expectedClass !== run.expectedClass) failures.push(`summary.fixture.expectedClass '${fixture.expectedClass}' != '${run.expectedClass}'`);
       if (fixture.observedClass !== run.expectedClass) failures.push(`summary.fixture.observedClass '${fixture.observedClass}' != '${run.expectedClass}'`);
       if (!Array.isArray(fixture.qualifyingSeats) || fixture.qualifyingSeats.some((seat) => !isPositiveInt(seat) || seat > run.players)) failures.push('summary.fixture.qualifyingSeats is not an in-range seat array');
+      if (run.expectedClass === 'qualifying') {
+        const gate = fixture.gate;
+        const derived = gate && typeof gate === 'object' ? gateReadiness({ players: run.players, hostSeat: 1, reads: gate.read }) : null;
+        if (!derived) failures.push('summary.fixture.gate is missing');
+        else if (!derived.coherent) failures.push(`fixture gate evidence is not a coherent held gate: ${derived.reason}`);
+        else if (gate.coherent !== true || gate.hostSeat !== 1 || gate.qualified !== derived.qualified || JSON.stringify(gate.readySeats) !== JSON.stringify(derived.readySeats) || JSON.stringify(fixture.qualifyingSeats) !== JSON.stringify(derived.readySeats)) failures.push('summary.fixture.gate does not match its recorded read');
+      } else if (fixture.gate !== null) failures.push('summary.fixture.gate is present on a no-gate fixture');
     }
   } else if (summary.fixture !== undefined) {
     failures.push('summary.fixture is present on a non-fixture run');

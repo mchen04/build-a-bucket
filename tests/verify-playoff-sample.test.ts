@@ -9,7 +9,9 @@ const captures = () => NAMES.map((name, index) => ({ seat: index + 1, aria: read
 const renderedLog = readFileSync(path.join(FIXTURES, 'rendered-activity.txt'), 'utf8');
 const rendered = (...lines: string[]) => ['League activity', ...lines, 'P1 finished 35-47 · #11'].join('\n').toUpperCase();
 const four = (text: string) => [text, text, text, text];
-const sampled = (activity: string[], out = [true, true, true, true]) => recapElimination({ players: 4, captures: captures(), playoffSample: playoffSampleFrom({ out, activity }) });
+const toReads = (out: boolean[], activity: string[]) => Array.from({ length: Math.min(out.length, activity.length) }, (_, index) => ({ seat: index + 1, phase: 'Playoffs', next: true, log: true, out: out[index], activity: activity[index] }));
+const flags = (out: boolean[], activity: string[]) => playoffSampleFrom({ reads: toReads(out, activity) }).seats.map((seat) => seat.autoStart);
+const sampled = (activity: string[], out = [true, true, true, true]) => recapElimination({ players: 4, captures: captures(), playoffSample: playoffSampleFrom({ reads: toReads(out, activity) }) });
 
 describe('the live playoff sample read from the rendered activity log', () => {
   it('the saved capture is the uppercase multiline render', () => {
@@ -20,7 +22,7 @@ describe('the live playoff sample read from the rendered activity log', () => {
 
   it('reads the uppercase plain automatic start as corroboration', () => {
     const activity = four(rendered('The playoffs started automatically'));
-    expect(playoffSampleFrom({ out: [true, true, true, true], activity }).autoStart).toEqual([true, true, true, true]);
+    expect(flags([true, true, true, true], activity)).toEqual([true, true, true, true]);
     const result = sampled(activity);
     expect(result.reason).toBeNull();
     expect(result.allEliminated).toBe(true);
@@ -28,7 +30,7 @@ describe('the live playoff sample read from the rendered activity log', () => {
 
   it('reads unstyled text the same way', () => {
     const plain = ['League activity', 'The playoffs started automatically'].join('\n');
-    expect(playoffSampleFrom({ out: [true], activity: [plain] }).autoStart).toEqual([true]);
+    expect(flags([true], [plain])).toEqual([true]);
   });
 
   it('reads the start line in the saved render shape', () => {
@@ -41,7 +43,7 @@ describe('the live playoff sample read from the rendered activity log', () => {
   });
 
   it('rejects a render without the start line', () => {
-    expect(playoffSampleFrom({ out: [true], activity: [renderedLog] }).autoStart).toEqual([false]);
+    expect(flags([true], [renderedLog])).toEqual([false]);
     expect(sampled(four(renderedLog)).reason).toMatch(/live playoff sample/);
   });
 
@@ -50,16 +52,16 @@ describe('the live playoff sample read from the rendered activity log', () => {
     ['all ready', 'Everyone was ready, so the playoffs started'],
     ['host start', 'P1 started the playoffs'],
   ])('rejects a %s start', (_label, line) => {
-    expect(playoffSampleFrom({ out: [true], activity: [rendered(line)] }).autoStart).toEqual([false]);
+    expect(flags([true], [rendered(line)])).toEqual([false]);
     expect(sampled(four(rendered(line))).allEliminated).toBe(false);
   });
 
   it('rejects a plain start beside a held start', () => {
-    expect(playoffSampleFrom({ out: [true], activity: [rendered('The playoffs started automatically', 'P1 started the playoffs')] }).autoStart).toEqual([false]);
+    expect(flags([true], [rendered('The playoffs started automatically', 'P1 started the playoffs')])).toEqual([false]);
   });
 
   it('rejects the start text inside another line', () => {
-    expect(playoffSampleFrom({ out: [true], activity: [rendered('P2 said the playoffs started automatically')] }).autoStart).toEqual([false]);
+    expect(flags([true], [rendered('P2 said the playoffs started automatically')])).toEqual([false]);
   });
 
   it('rejects one seat without the start', () => {
