@@ -88,6 +88,8 @@ Chaos options, applied at the first sampled stage:
   reaches recap with every active seat out and
   no gate records `no-held-boundary`, never reloads, and still finishes to recap and Play Again. A missing or failed
   comparison still writes `summary.json` with `reload.coverage` naming the reason, then exits non-zero.
+
+Predeclared setups (`--fixture ID`) write the entry preview rows in one transaction only after the owned-run guard passes, seed each seat `bab:mp:v1` session, and continue from preview Ready; no standings, rounds, stages or gates are written or forced. `summary.fixture` records the catalog `expectedClass` and the browsers `observedClass`/`qualifyingSeats`; a mismatch fails and is never rerolled, qualifying rows pass only with `stable-match`, and the all-eliminated row passes only with `no-held-boundary`, recap and Play Again and is never a refresh pass. Rows without `--fixture` play the whole unmodified journey and must record no fixture.
 - `--away 2` closes seat 2's browser context; the host must still start the playoffs and the remaining seats must agree.
 - `--host-leave` taps Leave lobby on the host; another seat must receive Start playoffs and carry the league.
 
