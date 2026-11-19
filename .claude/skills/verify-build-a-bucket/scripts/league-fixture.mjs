@@ -157,10 +157,23 @@ export async function applyLeagueFixture({ entry, run, connect = defaultConnect,
       },
     ]),
   ];
+  let result = null;
+  let failure = null;
   try {
     await runner.transaction(queries);
-    return { lobbyId, code: entry.code, participantIds: entry.participants.map((participant) => participant.id), target };
-  } finally {
-    await runner.close?.();
+    result = { lobbyId, code: entry.code, participantIds: entry.participants.map((participant) => participant.id), target };
+  } catch (error) {
+    failure = error;
   }
+  let cleanupError = null;
+  try {
+    if (typeof runner.close !== 'function') throw new Error('fixture runner has no close');
+    await runner.close();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (failure && cleanupError) throw new AggregateError([failure, cleanupError], `fixture failed (${failure.message}) and cleanup failed (${cleanupError.message})`);
+  if (failure) throw failure;
+  if (cleanupError) throw new Error(`fixture committed but cleanup failed: ${cleanupError.message}`);
+  return result;
 }

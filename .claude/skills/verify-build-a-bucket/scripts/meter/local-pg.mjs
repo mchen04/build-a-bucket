@@ -244,6 +244,27 @@ class Connection {
       this.broken = this.broken ?? new Error('close failed');
     }
   }
+
+  terminate(timeoutMs = 2000) {
+    const sock = this.sock;
+    if (!sock || sock.destroyed) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = globalThis.setTimeout(() => {
+        sock.destroy();
+        resolve();
+      }, timeoutMs);
+      timer.unref();
+      sock.once('close', () => {
+        globalThis.clearTimeout(timer);
+        resolve();
+      });
+      try {
+        sock.end(Buffer.from([0x58, 0, 0, 0, 4]));
+      } catch {
+        sock.destroy();
+      }
+    });
+  }
 }
 
 class Pool {
@@ -253,9 +274,12 @@ class Pool {
     this.idle = [];
     this.count = 0;
     this.waiting = [];
+    this.all = new Set();
+    this.closed = false;
   }
 
   async acquire() {
+    if (this.closed) throw new Error('runner is closed');
     const free = this.idle.pop();
     if (free && !free.broken) return free;
     if (this.count < this.max) {
@@ -263,6 +287,7 @@ class Pool {
       const connection = new Connection(this.target);
       try {
         await connection.open();
+        this.all.add(connection);
         return connection;
       } catch (error) {
         this.count -= 1;
@@ -276,6 +301,7 @@ class Pool {
   release(connection) {
     if (connection.broken) {
       this.count -= 1;
+      this.all.delete(connection);
       const next = this.waiting.shift();
       if (next) next();
       return;
@@ -286,6 +312,15 @@ class Pool {
       return;
     }
     this.idle.push(connection);
+  }
+
+  async close() {
+    this.closed = true;
+    const connections = [...this.all];
+    this.all.clear();
+    this.idle = [];
+    for (const resolve of this.waiting.splice(0)) resolve(undefined);
+    await Promise.all(connections.map((connection) => connection.terminate()));
   }
 }
 
@@ -342,6 +377,9 @@ export async function createRunner(target) {
       } finally {
         pool.release(connection);
       }
+    },
+    async close() {
+      await pool.close();
     },
   };
 }

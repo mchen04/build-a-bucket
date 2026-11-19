@@ -4,6 +4,7 @@ export type LocalPgRunner = {
   query: (text: string, params?: unknown[]) => Promise<unknown[]>;
   batch: (queries: { text: string; params?: unknown[] }[]) => Promise<void>;
   transaction: (queries: { text: string; params?: unknown[] }[]) => Promise<unknown[]>;
+  close: () => Promise<void>;
 };
 
 export function createRunner(target?: LocalPgTarget): Promise<LocalPgRunner>;

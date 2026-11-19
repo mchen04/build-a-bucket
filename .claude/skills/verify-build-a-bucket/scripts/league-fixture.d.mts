@@ -38,7 +38,7 @@ export type FixtureTarget = { socketDir: string; port: number; database: string 
 export type FixtureRunner = {
   query?: (sql: string, params?: unknown[]) => Promise<unknown[]>;
   transaction: (queries: { text: string; params?: unknown[] }[]) => Promise<unknown[]>;
-  close?: () => Promise<void>;
+  close: () => Promise<void>;
   target?: FixtureTarget;
 };
 
