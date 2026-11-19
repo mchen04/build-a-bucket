@@ -8,16 +8,22 @@ export interface FixtureEntry {
   participants: { id: string }[];
 }
 
-export function ownedEntry<T extends FixtureEntry>(source: T): T {
-  return {
-    ...source,
-    id: `${source.id}-test-${randomUUID()}`,
-    code: generateCode(),
-    participants: source.participants.map((participant) => ({ ...participant, id: randomUUID() })),
-  };
+export interface Owned {
+  serverCodes: string[];
+  participantIds: string[];
 }
 
-export async function deleteOwned(codes: string[]): Promise<void> {
-  if (!codes.length) return;
-  await db().query('delete from lobbies where code = any($1::text[])', [codes]);
+export function newOwned(): Owned {
+  return { serverCodes: [], participantIds: [] };
+}
+
+export function ownedEntry<T extends FixtureEntry>(owned: Owned, source: T): T {
+  const participants = source.participants.map((participant) => ({ ...participant, id: randomUUID() }));
+  owned.participantIds.push(...participants.map((participant) => participant.id));
+  return { ...source, id: `${source.id}-test-${randomUUID()}`, code: generateCode(), participants };
+}
+
+export async function deleteOwned(owned: Owned): Promise<void> {
+  if (!owned.serverCodes.length && !owned.participantIds.length) return;
+  await db().query('delete from lobbies where code = any($1::text[]) or id in (select lobby_id from participants where id = any($2::uuid[]))', [owned.serverCodes, owned.participantIds]);
 }

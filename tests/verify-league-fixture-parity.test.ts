@@ -12,7 +12,7 @@ import {
 } from '../src/server/actions';
 import { db } from '../src/server/db';
 import { dbSuite } from './local-db-gate';
-import { deleteOwned, ownedEntry } from './fixture-identity';
+import { deleteOwned, newOwned, ownedEntry } from './fixture-identity';
 import { applyLeagueFixture } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import { createRunner } from '../.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs';
 import { loadCatalog, poolFor } from '../src/shared/data/loader';
@@ -23,7 +23,7 @@ import { generateSecret, newActionId } from '../src/shared/mp/codes';
 import type { LobbyBuild, LobbySettings, LobbyView, NormalBuild } from '../src/shared/mp/types';
 
 const BASE = 'http://localhost:4173/api';
-const owned: string[] = [];
+const owned = newOwned();
 
 const MAY_DIFFER = {
   lobbies: new Set(['id', 'code', 'host_participant', 'season_secret', 'create_action', 'created_at', 'updated_at', 'stage_started_at', 'locked_at', 'league_claimed_at']),
@@ -57,7 +57,7 @@ async function createLobby(name: string, settings: LobbySettings): Promise<{ cod
   const response = await createHandler(authed(secret, 'lobby', { name, actionId: newActionId(), settings }));
   expect(response.status).toBe(201);
   const body = await read<{ lobby: LobbyView; code: string; seat: number }>(response);
-  owned.push(body.code);
+  owned.serverCodes.push(body.code);
   return { code: body.code, host: { secret, seat: body.seat }, view: body.lobby };
 }
 
@@ -210,9 +210,8 @@ dbSuite()('fixture rows match the real lobby path', () => {
     const realCode = host.code;
 
     const catalog = JSON.parse(readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/fixtures/league-fixtures.json'), 'utf8'));
-    const entry = ownedEntry(catalog.entries.find((candidate: { id: string }) => candidate.id === 'normal-2p-q1'));
+    const entry = ownedEntry(owned, catalog.entries.find((candidate: { id: string }) => candidate.id === 'normal-2p-q1'));
     const secrets = entry.participants.map(() => generateSecret());
-    owned.push(entry.code);
     await applyLeagueFixture({ entry, run, connect, secrets });
     const fixtureCode = entry.code;
 
