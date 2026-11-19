@@ -100,7 +100,7 @@ export function buildControlSummary(run) {
         ? undefined
         : run.expectedClass === 'all-eliminated'
           ? { classification: 'no-held-boundary', ran: false, revision: null, seats: [], rowsCompared: 0, refreshedSeat: null, navigation: { observed: true }, attempts: null, coverage: 'no-held-boundary' }
-          : { classification: 'stable-match', ran: true, revision, seats, rowsCompared: 20, refreshedSeat: { seat: run.reloadSeat, name: `P${run.reloadSeat}` }, navigation: { observed: true }, attempts: null, coverage: 'ok' },
+          : { classification: 'stable-match', ran: true, revision, seats, rowsCompared: 20, refreshedSeat: { seat: run.reloadSeat, name: `P${run.reloadSeat}` }, navigation: { observed: true }, session: { present: true }, attempts: null, coverage: 'ok' },
     stages,
     marks: [{ label: 'recap', at: '2026-01-01T00:00:00.000Z' }],
     errors: seatEntries(run.players, 'errors'),

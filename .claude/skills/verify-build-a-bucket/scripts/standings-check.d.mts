@@ -52,6 +52,7 @@ export function awaitReloadProof(args: {
   attempts?: number;
   gate?: boolean;
   navigation?: { observed?: boolean; reason?: string } | null;
+  session?: { present?: boolean } | null;
 }): Promise<ReloadProof>;
 export function compareStandings(reads: Read[], refreshedSeat: Seat): CompareResult;
 export function createLeagueEvidenceDir(evidenceRoot: string, stamp?: string, suffix?: string): string;

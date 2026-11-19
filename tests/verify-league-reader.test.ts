@@ -138,7 +138,7 @@ describe('distinct players', () => {
   });
 
   it('coverage requires the refreshed seat', () => {
-    const base = { classification: 'stable-match', navigation: { observed: true }, attempts: 'attempts.json', ran: true, revision: rev('Season', '1 / 10'), rowsCompared: 20, seats: ['1:Ava', '2:Ben'] };
+    const base = { classification: 'stable-match', navigation: { observed: true }, session: { present: true }, attempts: 'attempts.json', ran: true, revision: rev('Season', '1 / 10'), rowsCompared: 20, seats: ['1:Ava', '2:Ben'] };
     expect(refreshCoverage(true, { ...base, refreshedSeat: seat(2, 'Ben') }).ok).toBe(true);
     expect(refreshCoverage(true, { ...base, refreshedSeat: seat(3, 'Cara') }).ok).toBe(false);
     expect(refreshCoverage(true, { ...base, refreshedSeat: null }).ok).toBe(false);

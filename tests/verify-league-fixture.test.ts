@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { applyLeagueFixture, classifyFixture, defaultConnect, fixtureOptions, fixtureRunFrom, fixtureVerdict, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
+import { applyLeagueFixture, classifyFixture, defaultConnect, fixtureOptions, fixtureRunFrom, fixtureStorageState, fixtureVerdict, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
+import { awaitReloadProof, refreshCoverage } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
 import type { FixtureRunner, FixtureTarget } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import { createRunner } from '../.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs';
 import { hashSecret } from '../src/shared/mp/codes.js';
@@ -226,6 +227,80 @@ describe('fixture class', () => {
 
   it('classifies no gate before recap as unknown', () => {
     expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminatedObserved: true, recap: false })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
+  });
+});
+
+describe('fixture storage state', () => {
+  it('seeds one owned origin with the session', () => {
+    const state = fixtureStorageState({ base: 'http://127.0.0.1:4173', code: 'ABC123', secret: 's', name: 'Ava' });
+    expect(state.origins).toHaveLength(1);
+    expect(state.origins[0]!.origin).toBe('http://127.0.0.1:4173');
+    expect(state.origins[0]!.localStorage).toEqual([{ name: 'bab:mp:v1', value: JSON.stringify({ v: 1, code: 'ABC123', secret: 's', name: 'Ava' }) }]);
+  });
+
+  it('refuses https', () => {
+    expect(() => fixtureStorageState({ base: 'https://127.0.0.1:4173', code: 'ABC123', secret: 's', name: 'Ava' })).toThrow();
+  });
+
+  it('refuses a foreign host', () => {
+    expect(() => fixtureStorageState({ base: 'http://example.com', code: 'ABC123', secret: 's', name: 'Ava' })).toThrow();
+  });
+
+  it('refuses a non-URL', () => {
+    expect(() => fixtureStorageState({ base: 'not a url', code: 'ABC123', secret: 's', name: 'Ava' })).toThrow();
+  });
+});
+
+describe('fixture session persistence', () => {
+  const read = (seat: number, name: string) => ({ seat: { seat, name }, revision: { stage: 'Playoffs', progress: 'First Round' }, tables: [['1 A 1-0'], ['1 B 1-0']] });
+  const readAll = async () => [read(1, 'Ava'), read(2, 'Ben')];
+  const proof = (session: { present: boolean }) => awaitReloadProof({ session, readAll, isRecap: async () => false, refreshedSeat: { seat: 2, name: 'Ben' }, wait: async () => {}, attempts: 1 });
+
+  it('clears the session and fails the next document', async () => {
+    const storage = new Map<string, string>();
+    const initScripts: (() => void)[] = [];
+    const state = fixtureStorageState({ base: 'http://127.0.0.1:4173', code: 'ABC123', secret: 's', name: 'Ava' });
+    for (const entry of state.origins[0]!.localStorage) storage.set(entry.name, entry.value);
+    const document = () => { for (const script of initScripts) script(); };
+    document();
+    storage.clear();
+    document();
+    const session = { present: storage.has('bab:mp:v1') };
+    expect(session.present).toBe(false);
+    const result = await proof(session);
+    expect(result.classification).toBe('invalid-display');
+    expect(result.classification).not.toBe('stable-match');
+  });
+
+  it('keeps the session without a clear', async () => {
+    const storage = new Map<string, string>();
+    const state = fixtureStorageState({ base: 'http://127.0.0.1:4173', code: 'ABC123', secret: 's', name: 'Ava' });
+    for (const entry of state.origins[0]!.localStorage) storage.set(entry.name, entry.value);
+    const session = { present: storage.has('bab:mp:v1') };
+    expect(session.present).toBe(true);
+    const result = await proof(session);
+    expect(result.classification).toBe('stable-match');
+  });
+
+  it('the old init script restores the session', () => {
+    const storage = new Map<string, string>();
+    const initScripts = [() => storage.set('bab:mp:v1', JSON.stringify({ v: 1, code: 'ABC123', secret: 's', name: 'Ava' }))];
+    storage.clear();
+    for (const script of initScripts) script();
+    expect(storage.has('bab:mp:v1')).toBe(true);
+  });
+
+  it('keeps bab:mp:v1 out of init scripts', () => {
+    const source = readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/scripts/control.mjs'), 'utf8');
+    const initCalls = [...source.matchAll(/addInitScript\(([\s\S]*?)\)/g)].map((match) => match[1]);
+    expect(initCalls.some((text) => text?.includes('bab:mp:v1'))).toBe(false);
+    expect(source.split('bab:mp:v1').length - 1).toBe(1);
+  });
+
+  it('fails refresh coverage without a persisted session', () => {
+    const value = { classification: 'stable-match', ran: true, revision: { stage: 'Season', progress: '1 / 10' }, seats: ['1:Ava', '2:Ben'], rowsCompared: 20, refreshedSeat: { seat: 2, name: 'Ben' }, navigation: { observed: true }, attempts: 'reload-attempts.json', session: { present: false } };
+    expect(refreshCoverage(true, value).ok).toBe(false);
+    expect(refreshCoverage(true, value).reason).toBe('session not persisted after reload');
   });
 });
 

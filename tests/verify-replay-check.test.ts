@@ -486,6 +486,15 @@ describe('replay checker', () => {
     expect(result.refreshProofs).toBe(11);
   });
 
+  it('fails a stable-match row without a persisted session', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-a');
+    const value = read(file);
+    value.reload.session = { present: false };
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
   it('fails a fixture row without summary.fixture', () => {
     const dir = control();
     const file = summaryPath(dir, 'run-q02');

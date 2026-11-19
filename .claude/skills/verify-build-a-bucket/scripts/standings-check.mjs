@@ -100,10 +100,13 @@ export function allEliminated({ out, activity }) {
   );
 }
 
-export async function awaitReloadProof({ readAll, isRecap, refreshedSeat, wait, attempts = 40, gate = true, navigation = null }) {
+export async function awaitReloadProof({ readAll, isRecap, refreshedSeat, wait, attempts = 40, gate = true, navigation = null, session = null }) {
   if (!gate) return { classification: 'no-held-boundary', reason: 'no held playoff gate', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: [] };
   if (navigation && navigation.observed !== true) {
     return { classification: 'invalid-display', reason: navigation.reason ?? 'reload navigation not observed', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: [] };
+  }
+  if (session && session.present !== true) {
+    return { classification: 'invalid-display', reason: 'session not persisted after reload', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: [] };
   }
   const start = Date.now();
   const samples = [];
@@ -210,6 +213,7 @@ export function refreshCoverage(reloadRequested, reload) {
   if (!identities.has(refreshedNumber)) return { ok: false, reason: 'reload did not include the refreshed seat' };
   if (!Number.isInteger(reload.rowsCompared) || reload.rowsCompared <= 0) return { ok: false, reason: 'reload compared no valid rows' };
   if (reload?.navigation?.observed !== true) return { ok: false, reason: 'reload navigation not observed' };
+  if (reload?.session?.present !== true) return { ok: false, reason: 'session not persisted after reload' };
   if (!reload?.attempts) return { ok: false, reason: 'reload attempts file missing' };
   return { ok: true, reason: null };
 }

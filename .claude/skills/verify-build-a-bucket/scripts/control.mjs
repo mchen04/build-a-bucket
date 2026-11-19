@@ -12,7 +12,7 @@ import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
 import { buildSupervisorSpec } from './supervisor-spec.mjs';
 import { removeOwnedDirs } from './owned-dirs.mjs';
-import { applyLeagueFixture, classifyFixture, fixtureOptions, fixtureRunFrom, fixtureVerdict } from './league-fixture.mjs';
+import { applyLeagueFixture, classifyFixture, fixtureOptions, fixtureRunFrom, fixtureStorageState, fixtureVerdict } from './league-fixture.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -353,7 +353,7 @@ async function leagueRun() {
     return `${method} ${pathname}`;
   };
   for (let index = 0; index < players; index++) {
-    const context = await browser.newContext({ ...ctxOpts, viewport });
+    const context = await browser.newContext({ ...ctxOpts, viewport, ...(fixture ? { storageState: fixtureStorageState({ base: state.base, code: fixture.code, secret: fixtureSecrets[index], name: names[index] }) } : {}) });
     const page = await context.newPage();
     const errors = [];
     const http = [];
@@ -751,13 +751,7 @@ async function leagueRun() {
   try {
     let host = seats[0];
     if (fixture) {
-      for (let index = 0; index < seats.length; index++) {
-        const seat = seats[index];
-        await seat.context.addInitScript(({ code, secret, name }) => {
-          localStorage.setItem('bab:mp:v1', JSON.stringify({ v: 1, code, secret, name }));
-        }, { code, secret: fixtureSecrets[index], name: seat.name });
-        await seat.page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
-      }
+      for (const seat of seats) await seat.page.goto(`${state.base}/`, { waitUntil: 'domcontentloaded' });
       await startFromPreview(host, seats, true);
     } else {
       await host.page.goto(base);
@@ -838,6 +832,15 @@ async function leagueRun() {
             return { marker: window.__reloadMarker ?? null, type: entry?.type ?? null };
           });
           reload.navigation = { observed: navigation.marker === null && navigation.type === 'reload', type: navigation.type, marker: navigation.marker };
+          const session = await seat.page.evaluate((expected) => {
+            try {
+              const s = JSON.parse(localStorage.getItem('bab:mp:v1') ?? 'null');
+              return { present: s?.v === 1 && s?.code === expected && typeof s?.secret === 'string' && s.secret.length > 0 };
+            } catch {
+              return { present: false };
+            }
+          }, code);
+          reload.session = session;
           await waitStage(seat);
           await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
           const proof = await awaitReloadProof({
@@ -847,6 +850,7 @@ async function leagueRun() {
             wait: () => host.page.waitForTimeout(250),
             attempts: 40,
             navigation: reload.navigation,
+            session,
           });
           reload.classification = proof.classification;
           reload.reason = proof.reason ?? null;

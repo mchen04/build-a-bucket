@@ -66,7 +66,7 @@ One command opens N real browser contexts and walks the whole multiplayer path t
 
 - Predeclared setups:
   - `--fixture ID` loads `fixtures/league-fixtures.json` (pinned catalog DATA_SHA, regenerated and checked with `npx vite-node .claude/skills/verify-build-a-bucket/scripts/generate-fixtures.ts [--check]`; `tests/verify-fixture-catalog.test.ts` re-simulates every entry offline).
-  - It writes the entry preview rows in one transaction only after `guardOwnedRun` passes (dev-local run, live supervisor and postgres, socket/port/database matching postmaster.pid; refuses `--base`, Neon, prod), seeds each seat `bab:mp:v1` session, and continues from preview Ready; no standings, rounds, stages or gates are written or forced.
+  - It writes the entry preview rows in one transaction only after `guardOwnedRun` passes (dev-local run, live supervisor and postgres, socket/port/database matching postmaster.pid; refuses `--base`, Neon, prod), seeds each seat `bab:mp:v1` session, and continues from preview Ready; no standings, rounds, stages or gates are written or forced. Fixture sessions are seeded once via storageState on the owned origin, and after the refresh the runner checks the stored session is still present; a missing one is invalid-display.
   - `summary.fixture { id, expectedClass, observedClass, qualifyingSeats }` comes from what the browsers show; a mismatch fails and is never rerolled.
   - Qualifying rows pass only with `stable-match`; the all-eliminated row passes only with `no-held-boundary`, recap and Play Again and is never a refresh pass; the checker requires exactly 12 refresh proofs.
   - Rows without `--fixture` (squad UI, salary, away, host-leave) play the whole unmodified journey and must record no fixture.

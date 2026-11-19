@@ -9,7 +9,7 @@ function read(seat: number, revision: unknown, tables: string[][]) {
 }
 
 const rev = (stage: string, progress: string) => ({ stage, progress });
-const proof = (overrides: Record<string, unknown> = {}) => ({ classification: 'stable-match', navigation: { observed: true }, attempts: 'attempts.json', ...overrides });
+const proof = (overrides: Record<string, unknown> = {}) => ({ classification: 'stable-match', navigation: { observed: true }, session: { present: true }, attempts: 'attempts.json', ...overrides });
 const rows = Array.from({ length: 20 }, (_, index) => [`${index + 1} T${index} P 60-22`]);
 const reads = (revision: unknown, seats = [1, 2, 3]) => seats.map((seat) => read(seat, revision, rows));
 
@@ -137,6 +137,12 @@ describe('reload proof boundary', () => {
     expect(result.reason).toBe('marker survived');
   });
 
+  it('fails a reload whose session did not persist', async () => {
+    const result = await awaitReloadProof({ session: { present: false }, readAll: async () => reads(rev('Playoffs', 'First Round')), isRecap: async () => false, refreshedSeat: { seat: 2, name: 'S2' }, wait: async () => {}, attempts: 3 });
+    expect(result.classification).toBe('invalid-display');
+    expect(result.reason).toBe('session not persisted after reload');
+  });
+
   it('detects the all-eliminated signature', () => {
     expect(allEliminated({ out: [true, true], activity: ['The playoffs started automatically', 'The playoffs started automatically'] })).toBe(true);
     expect(allEliminated({ out: [true, false], activity: ['The playoffs started automatically', 'The playoffs started automatically'] })).toBe(false);
@@ -163,6 +169,7 @@ describe('league evidence and refresh coverage', () => {
     expect(reloadRecord(true, proof({ ran: false, revision: null, seats: [], rowsCompared: 0 }))).toEqual({
       classification: 'stable-match',
       navigation: { observed: true },
+      session: { present: true },
       attempts: 'attempts.json',
       ran: false,
       revision: null,

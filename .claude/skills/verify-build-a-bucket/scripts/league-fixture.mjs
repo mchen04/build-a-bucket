@@ -62,6 +62,12 @@ export function fixtureVerdict({ entry, classified }) {
   return { record, error: null };
 }
 
+export function fixtureStorageState({ base, code, secret, name }) {
+  const url = new URL(base);
+  if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('fixture session needs the owned local origin');
+  return { cookies: [], origins: [{ origin: url.origin, localStorage: [{ name: 'bab:mp:v1', value: JSON.stringify({ v: 1, code, secret, name }) }] }] };
+}
+
 export function classifyFixture({ gateSeen, gateReadySeats, allEliminatedObserved, recap }) {
   if (gateSeen) return { observedClass: 'qualifying', qualifyingSeats: [...gateReadySeats] };
   if (allEliminatedObserved && recap) return { observedClass: 'all-eliminated', qualifyingSeats: [] };
