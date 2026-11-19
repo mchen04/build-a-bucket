@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { afterAll, expect, it } from 'vitest';
 import { dbSuite } from './local-db-gate';
@@ -65,18 +66,20 @@ dbSuite()('league fixtures on the real server', () => {
     const catalog = JSON.parse(readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/fixtures/league-fixtures.json'), 'utf8'));
     const source = catalog.entries.find((candidate: { id: string }) => candidate.id === 'normal-2p-q1');
     const code = Array.from({ length: 6 }, () => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)]).join('');
-    const entry = { ...source, code };
+    const entry = { ...source, id: `${source.id}-child-${code}`, code, participants: source.participants.map((participant: Record<string, unknown>) => ({ ...participant, id: randomUUID() })) };
     const moduleUrl = new URL('../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs', import.meta.url).href;
     const childCode = `import { applyLeagueFixture } from ${JSON.stringify(moduleUrl)}; const args = JSON.parse(process.env.BAB_FIXTURE_ARGS); args.run.pidAlive = () => true; args.run.readFile = () => ['1', '', '', String(args.run.port), args.run.socketDir].join('\\n'); await applyLeagueFixture(args); console.log('applied');`;
     created.push(code);
     const child = spawn(process.execPath, ['--input-type=module', '-e', childCode], { env: { ...process.env, BAB_FIXTURE_ARGS: JSON.stringify({ entry, run, secrets: entry.participants.map(() => generateSecret()) }) } });
     let output = '';
+    let errors = '';
     child.stdout.on('data', (chunk) => { output += chunk; });
+    child.stderr.on('data', (chunk) => { errors += chunk; });
     const exit = await new Promise<number | null>((resolve) => {
       const timer = setTimeout(() => { child.kill(); resolve(null); }, 15000);
       child.on('exit', (code) => { clearTimeout(timer); resolve(code); });
     });
-    expect(output).toContain('applied');
+    expect(output, errors).toContain('applied');
     expect(exit).toBe(0);
     const rows = await db().query<{ count: string }>('select count(*) from participants p join lobbies l on l.id=p.lobby_id where l.code=$1', [code]);
     expect(Number(rows[0]?.count)).toBe(entry.players);
