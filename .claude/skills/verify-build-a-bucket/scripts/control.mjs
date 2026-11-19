@@ -338,8 +338,7 @@ async function leagueRun() {
       supervisor: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor.json'), 'utf8')),
     }), base: o.base };
     await applyLeagueFixture({ entry: fixture, run, secrets: fixtureSecrets });
-    code = fixture.code;
-    if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
+    if (!state.lobbies.includes(fixture.code)) { state.lobbies.push(fixture.code); saveState(dir, state); }
   }
   const browser = await pw[browserName].launch({ headless: true });
   const ev = createLeagueEvidenceDir(path.join(dir, 'evidence'));
@@ -747,7 +746,7 @@ async function leagueRun() {
     await startFromPreview(hostSeat, activeSeats, recordMarks);
   };
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
-  let code = null;
+  let code = fixture ? fixture.code : null;
   let summaryWritten = false;
   try {
     let host = seats[0];
