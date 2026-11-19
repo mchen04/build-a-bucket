@@ -169,14 +169,27 @@ export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, p
     const summary = buildControlSummary(run);
     if (run.reloadSeat !== null) {
       fs.mkdirSync(evidenceDir, { recursive: true });
-      const seats = seatLabels(run.players);
-      const revision = summary.reload.revision;
-      const samples = [
-        { attempt: 0, ms: 0, recap: false, seats: [] },
-        { attempt: 1, ms: 250, recap: false, seats: seats.map((label) => { const [seat, name] = label.split(':'); return { seat: Number(seat), name, revision: revisionLabel(revision), rows: 20 }; }) },
-      ];
-      summary.reload.attempts = writeReloadAttempts(evidenceDir, { classification: 'stable-match', reason: null, revision, seats: summary.reload.seats, rowsCompared: summary.reload.rowsCompared, samples });
-      if (summary.reload.classification === 'stable-match') {
+      if (run.expectedClass === 'all-eliminated') {
+        summary.reload.attempts = writeReloadAttempts(evidenceDir, { classification: 'no-held-boundary', reason: 'no held playoff gate', revision: null, seats: [], rowsCompared: 0, samples: [] });
+        summary.reload.allEliminated = true;
+        summary.fixture.elimination = { out: Array(run.players).fill(true), autoStart: Array(run.players).fill(true) };
+        const refreshed = { seat: run.reloadSeat, name: `P${run.reloadSeat}` };
+        const other = run.reloadSeat === 1 ? { seat: 2, name: 'P2' } : { seat: 1, name: 'P1' };
+        for (const seat of [refreshed, other]) {
+          for (const phase of ['before', 'none']) {
+            const base = reloadCaptureBase(phase, seat);
+            writeText(path.join(evidenceDir, `${base}.png`), 'png');
+            writeText(path.join(evidenceDir, `${base}.aria.txt`), '- main');
+          }
+        }
+      } else {
+        const seats = seatLabels(run.players);
+        const revision = summary.reload.revision;
+        const samples = [
+          { attempt: 0, ms: 0, recap: false, seats: [] },
+          { attempt: 1, ms: 250, recap: false, seats: seats.map((label) => { const [seat, name] = label.split(':'); return { seat: Number(seat), name, revision: revisionLabel(revision), rows: 20 }; }) },
+        ];
+        summary.reload.attempts = writeReloadAttempts(evidenceDir, { classification: 'stable-match', reason: null, revision, seats: summary.reload.seats, rowsCompared: summary.reload.rowsCompared, samples });
         const refreshed = summary.reload.refreshedSeat;
         const other = refreshed.seat === 1 ? { seat: 2, name: 'P2' } : { seat: 1, name: 'P1' };
         for (const seat of [refreshed, other]) {

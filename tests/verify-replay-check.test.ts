@@ -611,6 +611,90 @@ describe('replay checker', () => {
     expect(result.refreshProofs).toBe(11);
   });
 
+  it('passes the all-eliminated row', () => {
+    const result = check(control());
+    expect(result.ok).toBe(true);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  const elimSummaryPath = (dir: string) => summaryPath(dir, 'run-elim');
+  const elimAttemptsPath = (dir: string) => path.join(path.dirname(elimSummaryPath(dir)), 'reload-attempts.json');
+  const editElimSummary = (dir: string, edit: (value: any) => void) => { const file = elimSummaryPath(dir); const value = read(file); edit(value); write(file, value); };
+  const editElimAttempts = (dir: string, edit: (value: any) => void) => { const file = elimAttemptsPath(dir); const value = read(file); edit(value); write(file, value); };
+  const elimCapturePath = (dir: string, name: string) => path.join(path.dirname(elimSummaryPath(dir)), name);
+
+  it('fails a deleted all-eliminated attempts file', () => {
+    const dir = control();
+    rmSync(elimAttemptsPath(dir));
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails an all-eliminated attempts classification', () => {
+    const dir = control();
+    editElimAttempts(dir, (value) => { value.classification = 'stable-match'; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails allEliminated false', () => {
+    const dir = control();
+    editElimSummary(dir, (value) => { value.reload.allEliminated = false; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails an elimination out false', () => {
+    const dir = control();
+    editElimSummary(dir, (value) => { value.fixture.elimination.out[0] = false; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails a short autoStart', () => {
+    const dir = control();
+    editElimSummary(dir, (value) => { value.fixture.elimination.autoStart.pop(); });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails a null elimination', () => {
+    const dir = control();
+    editElimSummary(dir, (value) => { value.fixture.elimination = null; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails a deleted none capture', () => {
+    const dir = control();
+    rmSync(elimCapturePath(dir, 'reload-none-2-P2.png'));
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails an extra after capture', () => {
+    const dir = control();
+    writeFileSync(elimCapturePath(dir, 'reload-after-2-P2.png'), 'png');
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails no other seat captures', () => {
+    const dir = control();
+    for (const name of ['reload-before-1-P1.png', 'reload-before-1-P1.aria.txt', 'reload-none-1-P1.png', 'reload-none-1-P1.aria.txt']) rmSync(elimCapturePath(dir, name));
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(12);
+  });
+
   it('fails a fixture row without summary.fixture', () => {
     const dir = control();
     const file = summaryPath(dir, 'run-q02');

@@ -265,6 +265,36 @@ function checkRun(run, dir) {
       if (!reload || reload.ran !== false) failures.push('reload.ran is not false');
       if (!(Array.isArray(summary.marks) ? summary.marks : []).some((mark) => mark?.label === 'recap')) failures.push('recap not reached');
       if (!Array.isArray(summary.fixture?.qualifyingSeats) || summary.fixture.qualifyingSeats.length !== 0) failures.push('summary.fixture.qualifyingSeats is not empty');
+      if (reload?.attempts !== 'reload-attempts.json') failures.push(`reload attempts path is '${reload?.attempts}'`);
+      else {
+        const attempts = readJson(path.join(path.dirname(summaries[0]), reload.attempts));
+        if (!attempts) failures.push('reload attempts file malformed');
+        else {
+          if (attempts.classification !== 'no-held-boundary') failures.push(`reload attempts classification is '${attempts.classification}'`);
+          if (attempts.revision !== null) failures.push('reload attempts revision is not null');
+          if (!Array.isArray(attempts.seats) || attempts.seats.length !== 0) failures.push('reload attempts seats is not empty');
+          if (attempts.rowsCompared !== 0) failures.push('reload attempts rowsCompared is not 0');
+          if (!Array.isArray(attempts.samples) || attempts.samples.length > 60) failures.push('reload attempts count out of bound');
+        }
+      }
+      if (reload?.allEliminated !== true) failures.push('reload allEliminated is not true');
+      const elimination = summary.fixture?.elimination;
+      if (!elimination || typeof elimination !== 'object') failures.push('summary.fixture.elimination is missing');
+      else {
+        if (!Array.isArray(elimination.out) || elimination.out.length !== run.players || elimination.out.some((value) => value !== true)) failures.push('summary.fixture.elimination.out is not all true');
+        if (!Array.isArray(elimination.autoStart) || elimination.autoStart.length !== run.players || elimination.autoStart.some((value) => value !== true)) failures.push('summary.fixture.elimination.autoStart is not all true');
+      }
+      const evidenceDir = path.dirname(summaries[0]);
+      const files = new Map(fs.readdirSync(evidenceDir).map((name) => [name, fs.statSync(path.join(evidenceDir, name)).size]));
+      const hasCapture = (seat, phase, suffix) => [...files].some(([name, size]) => name.startsWith(`reload-${phase}-${seat}-`) && name.endsWith(suffix) && size > 0);
+      for (const suffix of ['.png', '.aria.txt']) {
+        if (!hasCapture(run.reloadSeat, 'before', suffix)) failures.push(`reload before capture for seat ${run.reloadSeat} is missing or empty`);
+        if (!hasCapture(run.reloadSeat, 'none', suffix)) failures.push(`reload none capture for seat ${run.reloadSeat} is missing or empty`);
+      }
+      const otherSeats = [...new Set([...files.keys()].map((name) => { const match = name.match(/^reload-(?:before|none)-(\d+)-/); return match ? Number(match[1]) : null; }).filter((seat) => seat !== null && seat !== run.reloadSeat))];
+      const other = otherSeats.find((seat) => ['.png', '.aria.txt'].every((suffix) => hasCapture(seat, 'before', suffix) && hasCapture(seat, 'none', suffix)));
+      if (other === undefined) failures.push('no other seat has before and none captures');
+      if ([...files.keys()].some((name) => name.startsWith('reload-after-'))) failures.push('reload-after capture is present');
     } else {
       if (reload?.classification !== 'stable-match') failures.push(`reload classification is '${reload?.classification}'`);
       if (!reload || reload.ran !== true) failures.push('reload.ran is not true');
