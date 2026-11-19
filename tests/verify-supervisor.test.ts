@@ -955,15 +955,13 @@ describe('supervisor record binds the fixture', () => {
     const state = { mode: 'dev', localDb: { pgPort: 55434, database: 'bab_local' }, supervisor: { pid: record.pid } };
     return { supervisor, record, init, state };
   }
-  async function bind(state: unknown, init: unknown, record: unknown) {
-    const targets: unknown[] = [];
+  async function bind(state: unknown, init: unknown, record: unknown, targets: unknown[]) {
     const connect = async (target: unknown) => {
       targets.push(target);
       throw new Error('stop');
     };
     const run = fixtureRunFrom({ state, init, supervisor: record } as never);
     await applyLeagueFixture({ entry, run: { ...run, pidAlive: () => true }, connect, secrets: ['s'] } as never);
-    return targets;
   }
 
   it('binds the database the launcher recorded', async () => {
@@ -980,18 +978,18 @@ describe('supervisor record binds the fixture', () => {
   });
 
   it.each([
-    ['no postgres record', (r: Record<string, any>) => { delete r.postgres; }, () => {}],
-    ['pid 0', (r: Record<string, any>) => { r.postgres.pid = 0; }, () => {}],
-    ['wrong port', (r: Record<string, any>) => { r.postgres.port = 55435; }, () => {}],
-    ['other database', (r: Record<string, any>) => { r.postgres.database = 'other'; }, () => {}],
-    ['other socket dir', (r: Record<string, any>) => { r.postgres.sockDir = '/elsewhere'; }, () => {}],
-    ['init failed', () => {}, (i: Record<string, any>) => { i.state = 'failed'; }],
+    ['no postgres record', (r: Record<string, Record<string, unknown>>) => { delete r.postgres; }, () => {}],
+    ['pid 0', (r: Record<string, Record<string, unknown>>) => { r.postgres!.pid = 0; }, () => {}],
+    ['wrong port', (r: Record<string, Record<string, unknown>>) => { r.postgres!.port = 55435; }, () => {}],
+    ['other database', (r: Record<string, Record<string, unknown>>) => { r.postgres!.database = 'other'; }, () => {}],
+    ['other socket dir', (r: Record<string, Record<string, unknown>>) => { r.postgres!.sockDir = '/elsewhere'; }, () => {}],
+    ['init failed', () => {}, (i: Record<string, unknown>) => { i.state = 'failed'; }],
   ])('refuses %s before connecting', async (_name, patchRecord, patchInit) => {
     const { supervisor, record, init, state } = await launched();
     patchRecord(record);
     patchInit(init);
-    let targets: unknown[] = [];
-    await expect((async () => { targets = await bind(state, init, record); })()).rejects.toThrow();
+    const targets: unknown[] = [];
+    await expect(bind(state, init, record, targets)).rejects.toThrow();
     expect(targets).toEqual([]);
     await supervisor.stop();
   });
