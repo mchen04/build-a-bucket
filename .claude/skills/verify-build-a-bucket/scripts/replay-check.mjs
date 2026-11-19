@@ -79,6 +79,9 @@ function validatePlan(plan) {
   if (!Array.isArray(plan.runs) || plan.runs.length === 0) failures.push('plan.runs is empty');
   if (!Array.isArray(plan.suite)) failures.push('plan.suite is not an array');
   const names = new Set();
+  const fixtures = new Set();
+  let qualifyingReloads = 0;
+  let allEliminatedReloads = 0;
   for (const run of Array.isArray(plan.runs) ? plan.runs : []) {
     if (!run || typeof run.name !== 'string' || run.name.length === 0) {
       failures.push('plan run has no name');
@@ -93,7 +96,22 @@ function validatePlan(plan) {
     if (run.awaySeat !== null && !isPositiveInt(run.awaySeat)) failures.push(`plan run '${run.name}' has invalid awaySeat`);
     if (typeof run.hostLeave !== 'boolean') failures.push(`plan run '${run.name}' has invalid hostLeave`);
     if (!Array.isArray(run.args)) failures.push(`plan run '${run.name}' has invalid args`);
+    if (!('fixture' in run) || !('expectedClass' in run)) failures.push(`plan run '${run.name}' is missing fixture or expectedClass`);
+    if ((run.fixture === null) !== (run.expectedClass === null)) failures.push(`plan run '${run.name}' fixture and expectedClass must both be null or both be set`);
+    if (run.expectedClass !== null && run.expectedClass !== 'qualifying' && run.expectedClass !== 'all-eliminated') failures.push(`plan run '${run.name}' has invalid expectedClass`);
+    if (run.fixture !== null) {
+      if (typeof run.fixture !== 'string' || run.fixture.length === 0) failures.push(`plan run '${run.name}' has invalid fixture`);
+      if (fixtures.has(run.fixture)) failures.push(`plan run '${run.name}' duplicates fixture '${run.fixture}'`);
+      fixtures.add(run.fixture);
+      const index = run.args.indexOf('--fixture');
+      if (index < 0 || run.args[index + 1] !== run.fixture) failures.push(`plan run '${run.name}' args do not name fixture '${run.fixture}' after --fixture`);
+      if (run.args.filter((arg) => arg === run.fixture).length !== 1) failures.push(`plan run '${run.name}' names fixture '${run.fixture}' more than once`);
+    }
+    if (run.expectedClass === 'qualifying' && run.reloadSeat !== null) qualifyingReloads += 1;
+    if (run.expectedClass === 'all-eliminated' && run.reloadSeat !== null) allEliminatedReloads += 1;
   }
+  if (qualifyingReloads !== 12) failures.push(`plan has ${qualifyingReloads} qualifying reload runs, expected 12`);
+  if (allEliminatedReloads !== 1) failures.push(`plan has ${allEliminatedReloads} all-eliminated reload runs, expected 1`);
   for (const step of Array.isArray(plan.suite) ? plan.suite : []) {
     if (!step || typeof step.id !== 'string' || step.id.length === 0) failures.push('plan suite step has no id');
     if (!Array.isArray(step.command) || step.command.length === 0) failures.push(`plan suite step '${step?.id}' has no command`);
@@ -164,40 +182,59 @@ function checkRun(run, dir) {
   }
   if (!summary.champion) failures.push('champion missing');
   if (summary.playAgain !== true) failures.push('Play Again not reached');
+  if (run.fixture !== null) {
+    const fixture = summary.fixture;
+    if (!fixture || typeof fixture !== 'object') failures.push('summary.fixture is missing');
+    else {
+      if (fixture.id !== run.fixture) failures.push(`summary.fixture.id '${fixture.id}' != '${run.fixture}'`);
+      if (fixture.expectedClass !== run.expectedClass) failures.push(`summary.fixture.expectedClass '${fixture.expectedClass}' != '${run.expectedClass}'`);
+      if (fixture.observedClass !== run.expectedClass) failures.push(`summary.fixture.observedClass '${fixture.observedClass}' != '${run.expectedClass}'`);
+      if (!Array.isArray(fixture.qualifyingSeats) || fixture.qualifyingSeats.some((seat) => !isPositiveInt(seat) || seat > run.players)) failures.push('summary.fixture.qualifyingSeats is not an in-range seat array');
+    }
+  } else if (summary.fixture !== undefined) {
+    failures.push('summary.fixture is present on a non-fixture run');
+  }
   if (run.reloadSeat !== null) {
     const reload = summary.reload;
-    if (reload?.classification !== 'stable-match') failures.push(`reload classification is '${reload?.classification}'`);
-    if (!reload || reload.ran !== true) failures.push('reload.ran is not true');
-    if (!reload || !isPositiveInt(reload.rowsCompared)) failures.push('reload.rowsCompared is not a positive integer');
-    if (!reload || !validRevision(reload.revision)) failures.push('reload.revision is not valid');
-    if (!reload || reload.coverage !== 'ok') failures.push(`reload.coverage is '${reload?.coverage}'`);
-    if (reload?.refreshedSeat?.seat !== run.reloadSeat) failures.push(`reload.refreshedSeat ${reload?.refreshedSeat?.seat} != ${run.reloadSeat}`);
-    const identities = seatNumbers(reload?.seats);
-    if (identities.size < 2) failures.push(`reload.seats has ${identities.size} distinct seats`);
-    if (!identities.has(run.reloadSeat)) failures.push(`reload.seats does not include seat ${run.reloadSeat}`);
-    for (const number of identities.keys()) if (number < 1 || number > run.players) failures.push(`reload.seats has out-of-range seat ${number}`);
-    if (reload?.navigation?.observed !== true) failures.push('reload navigation not observed');
-    if (typeof reload?.attempts !== 'string' || reload.attempts !== 'reload-attempts.json') failures.push(`reload attempts path is '${reload?.attempts}'`);
-    else {
-      const attempts = readJson(path.join(path.dirname(summaries[0]), reload.attempts));
-      if (!attempts) failures.push('reload attempts file malformed');
+    if (run.expectedClass === 'all-eliminated') {
+      if (reload?.classification !== 'no-held-boundary') failures.push(`reload classification is '${reload?.classification}'`);
+      if (!reload || reload.ran !== false) failures.push('reload.ran is not false');
+      if (!(Array.isArray(summary.marks) ? summary.marks : []).some((mark) => mark?.label === 'recap')) failures.push('recap not reached');
+      if (!Array.isArray(summary.fixture?.qualifyingSeats) || summary.fixture.qualifyingSeats.length !== 0) failures.push('summary.fixture.qualifyingSeats is not empty');
+    } else {
+      if (reload?.classification !== 'stable-match') failures.push(`reload classification is '${reload?.classification}'`);
+      if (!reload || reload.ran !== true) failures.push('reload.ran is not true');
+      if (!reload || !isPositiveInt(reload.rowsCompared)) failures.push('reload.rowsCompared is not a positive integer');
+      if (!reload || !validRevision(reload.revision)) failures.push('reload.revision is not valid');
+      if (!reload || reload.coverage !== 'ok') failures.push(`reload.coverage is '${reload?.coverage}'`);
+      if (reload?.refreshedSeat?.seat !== run.reloadSeat) failures.push(`reload.refreshedSeat ${reload?.refreshedSeat?.seat} != ${run.reloadSeat}`);
+      const identities = seatNumbers(reload?.seats);
+      if (identities.size < 2) failures.push(`reload.seats has ${identities.size} distinct seats`);
+      if (!identities.has(run.reloadSeat)) failures.push(`reload.seats does not include seat ${run.reloadSeat}`);
+      for (const number of identities.keys()) if (number < 1 || number > run.players) failures.push(`reload.seats has out-of-range seat ${number}`);
+      if (reload?.navigation?.observed !== true) failures.push('reload navigation not observed');
+      if (typeof reload?.attempts !== 'string' || reload.attempts !== 'reload-attempts.json') failures.push(`reload attempts path is '${reload?.attempts}'`);
       else {
-        if (attempts.classification !== reload.classification) failures.push('reload attempts classification mismatch');
-        if (JSON.stringify(attempts.revision) !== JSON.stringify(reload.revision)) failures.push('reload attempts revision mismatch');
-        if (!Array.isArray(attempts.samples) || attempts.samples.length > 60) failures.push('reload attempts count out of bound');
+        const attempts = readJson(path.join(path.dirname(summaries[0]), reload.attempts));
+        if (!attempts) failures.push('reload attempts file malformed');
+        else {
+          if (attempts.classification !== reload.classification) failures.push('reload attempts classification mismatch');
+          if (JSON.stringify(attempts.revision) !== JSON.stringify(reload.revision)) failures.push('reload attempts revision mismatch');
+          if (!Array.isArray(attempts.samples) || attempts.samples.length > 60) failures.push('reload attempts count out of bound');
+        }
       }
-    }
-    const after = stages.find((stage) => stage?.label === 'after-reload');
-    if (!after) failures.push('summary has no after-reload stage');
-    else {
-      if (JSON.stringify(after.revision) !== JSON.stringify(reload?.revision)) failures.push('after-reload revision differs from reload.revision');
-      if (JSON.stringify(after.seats) !== JSON.stringify(reload?.seats)) failures.push('after-reload seats differ from reload.seats');
-      const tables = after.standings;
-      if (!Array.isArray(tables) || tables.length === 0) failures.push('after-reload standings are missing');
+      const after = stages.find((stage) => stage?.label === 'after-reload');
+      if (!after) failures.push('summary has no after-reload stage');
       else {
-        const rows = tables.reduce((sum, table) => sum + (Array.isArray(table) ? table.length : 0), 0);
-        if (rows !== reload?.rowsCompared) failures.push(`after-reload rows ${rows} != rowsCompared ${reload?.rowsCompared}`);
-        if (tables.some((table) => !Array.isArray(table) || table.some((row) => String(row).trim().length === 0))) failures.push('after-reload standings have a blank row');
+        if (JSON.stringify(after.revision) !== JSON.stringify(reload?.revision)) failures.push('after-reload revision differs from reload.revision');
+        if (JSON.stringify(after.seats) !== JSON.stringify(reload?.seats)) failures.push('after-reload seats differ from reload.seats');
+        const tables = after.standings;
+        if (!Array.isArray(tables) || tables.length === 0) failures.push('after-reload standings are missing');
+        else {
+          const rows = tables.reduce((sum, table) => sum + (Array.isArray(table) ? table.length : 0), 0);
+          if (rows !== reload?.rowsCompared) failures.push(`after-reload rows ${rows} != rowsCompared ${reload?.rowsCompared}`);
+          if (tables.some((table) => !Array.isArray(table) || table.some((row) => String(row).trim().length === 0))) failures.push('after-reload standings have a blank row');
+        }
       }
     }
   }
@@ -387,7 +424,9 @@ export function checkReplay({ out, planPath, expectedHead = null, cleanup = fals
   }
   failures.push(...checkLaunch(out, expectedHead));
   if (cleanup) failures.push(...checkCleanup(out));
-  return { ok: failures.length === 0, rows, failures };
+  const refreshProofs = Array.isArray(plan?.runs) ? plan.runs.filter((run) => run.expectedClass === 'qualifying' && run.reloadSeat !== null && rows.find((row) => row.name === run.name)?.failures.length === 0).length : 0;
+  if (refreshProofs !== 12) failures.push(`refresh proofs ${refreshProofs} != 12`);
+  return { ok: failures.length === 0, rows, failures, refreshProofs };
 }
 
 export function runReplayCheck(argv) {
@@ -415,6 +454,7 @@ export function runReplayCheck(argv) {
   }
   const result = checkReplay({ out, planPath, expectedHead, cleanup });
   for (const row of result.rows) console.log(`${row.failures.length ? 'FAIL' : 'PASS'} ${row.name}${row.failures.length ? `: ${row.failures.join('; ')}` : ''}`);
+  console.log(`refreshProofs: ${result.refreshProofs}`);
   if (result.failures.length) {
     console.log('');
     for (const failure of result.failures) console.log(`- ${failure}`);

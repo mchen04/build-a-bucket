@@ -9,12 +9,20 @@ const projects = {
   'mobile-webkit': { 'e2e/lobby.spec.ts': 2, 'e2e/mobile.spec.ts': 4, 'e2e/modes.spec.ts': 7 },
   'mobile-chromium': { 'e2e/lobby.spec.ts': 2, 'e2e/mobile.spec.ts': 4, 'e2e/modes.spec.ts': 7 },
 };
+const qualifying = (name: string, fixture: string) => ({ name, players: 2, mode: 'normal', device: 'iphone', reloadSeat: 2, awaySeat: null, hostLeave: false, fixture, expectedClass: 'qualifying', args: ['--reload', '2', '--fixture', fixture] });
 const plan = {
   suite: [
     { id: '04-test-local-db', command: ['npm', 'run', 'test:local-db'], required: { files: { 'tests/league-api.test.ts': 41, 'tests/league-stage-defects.test.ts': 22, 'tests/migration.test.ts': 1 } } },
     { id: '05-e2e-local-db', command: ['npm', 'run', 'e2e:local-db'], rootDir: 'e2e', required: { projects } },
   ],
-  runs: [{ name: 'run-a', players: 2, mode: 'normal', device: 'iphone', reloadSeat: null, awaySeat: null, hostLeave: false, args: [] }],
+  runs: [
+    qualifying('run-a', 'fx-01'),
+    { name: 'run-b', players: 3, mode: 'normal', device: 'iphone', reloadSeat: null, awaySeat: 3, hostLeave: false, fixture: null, expectedClass: null, args: ['--away', '3'] },
+    { name: 'run-c', players: 3, mode: 'normal', device: 'iphone', reloadSeat: null, awaySeat: null, hostLeave: true, fixture: null, expectedClass: null, args: ['--host-leave'] },
+    ...Array.from({ length: 11 }, (_, index) => qualifying(`run-q${String(index + 2).padStart(2, '0')}`, `fx-${String(index + 2).padStart(2, '0')}`)),
+    { name: 'run-elim', players: 4, mode: 'squad', device: 'iphone', reloadSeat: 2, awaySeat: null, hostLeave: false, fixture: 'fx-elim', expectedClass: 'all-eliminated', args: ['--reload', '2', '--fixture', 'fx-elim'] },
+    { name: 'run-ui', players: 4, mode: 'squad', device: 'iphone', reloadSeat: null, awaySeat: null, hostLeave: false, fixture: null, expectedClass: null, args: [] },
+  ],
 };
 const head = '0123456789abcdef0123456789abcdef01234567';
 const temps: string[] = [];

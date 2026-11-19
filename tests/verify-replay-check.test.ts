@@ -10,12 +10,16 @@ afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
+const qualifying = (name: string, fixture: string) => ({ name, players: 2, mode: 'normal', device: 'iphone', reloadSeat: 2, awaySeat: null, hostLeave: false, fixture, expectedClass: 'qualifying', args: ['--reload', '2', '--fixture', fixture] });
 const plan = {
   suite: [{ id: '01-typecheck', command: ['npm', 'run', 'typecheck'] }],
   runs: [
-    { name: 'run-a', players: 2, mode: 'normal', device: 'iphone', reloadSeat: 2, awaySeat: null, hostLeave: false, args: ['--reload', '2'] },
-    { name: 'run-b', players: 3, mode: 'normal', device: 'iphone', reloadSeat: null, awaySeat: 3, hostLeave: false, args: ['--away', '3'] },
-    { name: 'run-c', players: 3, mode: 'normal', device: 'iphone', reloadSeat: null, awaySeat: null, hostLeave: true, args: ['--host-leave'] },
+    qualifying('run-a', 'fx-01'),
+    { name: 'run-b', players: 3, mode: 'normal', device: 'iphone', reloadSeat: null, awaySeat: 3, hostLeave: false, fixture: null, expectedClass: null, args: ['--away', '3'] },
+    { name: 'run-c', players: 3, mode: 'normal', device: 'iphone', reloadSeat: null, awaySeat: null, hostLeave: true, fixture: null, expectedClass: null, args: ['--host-leave'] },
+    ...Array.from({ length: 11 }, (_, index) => qualifying(`run-q${String(index + 2).padStart(2, '0')}`, `fx-${String(index + 2).padStart(2, '0')}`)),
+    { name: 'run-elim', players: 4, mode: 'squad', device: 'iphone', reloadSeat: 2, awaySeat: null, hostLeave: false, fixture: 'fx-elim', expectedClass: 'all-eliminated', args: ['--reload', '2', '--fixture', 'fx-elim'] },
+    { name: 'run-ui', players: 4, mode: 'squad', device: 'iphone', reloadSeat: null, awaySeat: null, hostLeave: false, fixture: null, expectedClass: null, args: [] },
   ],
 };
 
@@ -438,6 +442,94 @@ describe('replay checker', () => {
   it('fails a nonzero cleanup exit', () => {
     const dir = control();
     writeFileSync(path.join(dir, 'cleanup.exit'), '1\n');
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('passes the plan with 12 refresh proofs', () => {
+    const result = check(control());
+    expect(result.ok).toBe(true);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails an all-eliminated row with a stable-match reload', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-elim');
+    const value = read(file);
+    value.reload = { ...value.reload, classification: 'stable-match', ran: true };
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('passes an all-eliminated row with no-held-boundary and keeps 12 proofs', () => {
+    const result = check(control());
+    expect(result.ok).toBe(true);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails an all-eliminated row without a recap mark', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-elim');
+    const value = read(file);
+    value.marks = [];
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a wrong observedClass and drops to 11 proofs', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-q02');
+    const value = read(file);
+    value.fixture.observedClass = 'all-eliminated';
+    write(file, value);
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails a fixture row without summary.fixture', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-q02');
+    const value = read(file);
+    delete value.fixture;
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a non-fixture row with summary.fixture', () => {
+    const dir = control();
+    const file = summaryPath(dir, 'run-ui');
+    const value = read(file);
+    value.fixture = { id: 'fx-ui', expectedClass: 'qualifying', observedClass: 'qualifying', qualifyingSeats: [1] };
+    write(file, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a plan fixture with null expectedClass', () => {
+    const dir = control();
+    const planFile = path.join(dir, 'plan.json');
+    const value = read(planFile);
+    value.runs.find((run: { name: string }) => run.name === 'run-q02').expectedClass = null;
+    write(planFile, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a duplicate fixture id', () => {
+    const dir = control();
+    const planFile = path.join(dir, 'plan.json');
+    const value = read(planFile);
+    const run = value.runs.find((entry: { name: string }) => entry.name === 'run-q03');
+    run.fixture = 'fx-02';
+    run.args = ['--reload', '2', '--fixture', 'fx-02'];
+    write(planFile, value);
+    expect(check(dir).ok).toBe(false);
+  });
+
+  it('fails a plan without run-q12', () => {
+    const dir = control();
+    const planFile = path.join(dir, 'plan.json');
+    const value = read(planFile);
+    value.runs = value.runs.filter((run: { name: string }) => run.name !== 'run-q12');
+    write(planFile, value);
     expect(check(dir).ok).toBe(false);
   });
 });

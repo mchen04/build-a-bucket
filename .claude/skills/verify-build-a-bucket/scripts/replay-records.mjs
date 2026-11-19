@@ -90,7 +90,7 @@ export function buildControlSummary(run) {
   if (run.awaySeat !== null) stages.push({ label: 'away', seat: run.awaySeat, name: `P${run.awaySeat}` });
   if (run.hostLeave === true) stages.push({ label: 'host-left', seat: 1, name: 'P1' });
   stages.push({ label: 'recap', phase: 'Recap', champion: 'OKC are champions' });
-  return buildLeagueSummary({
+  const summary = buildLeagueSummary({
     players: run.players,
     mode: run.mode,
     device: run.device,
@@ -98,13 +98,20 @@ export function buildControlSummary(run) {
     reload:
       run.reloadSeat === null
         ? undefined
-        : { classification: 'stable-match', ran: true, revision, seats, rowsCompared: 20, refreshedSeat: { seat: run.reloadSeat, name: `P${run.reloadSeat}` }, navigation: { observed: true }, attempts: null, coverage: 'ok' },
+        : run.expectedClass === 'all-eliminated'
+          ? { classification: 'no-held-boundary', ran: false, revision: null, seats: [], rowsCompared: 0, refreshedSeat: null, navigation: { observed: true }, attempts: null, coverage: 'no-held-boundary' }
+          : { classification: 'stable-match', ran: true, revision, seats, rowsCompared: 20, refreshedSeat: { seat: run.reloadSeat, name: `P${run.reloadSeat}` }, navigation: { observed: true }, attempts: null, coverage: 'ok' },
     stages,
+    marks: [{ label: 'recap', at: '2026-01-01T00:00:00.000Z' }],
     errors: seatEntries(run.players, 'errors'),
     httpErrors: seatEntries(run.players, 'responses'),
     champion: 'OKC are champions',
     playAgain: true,
   });
+  if (run.fixture !== null && run.fixture !== undefined) {
+    summary.fixture = { id: run.fixture, expectedClass: run.expectedClass, observedClass: run.expectedClass, qualifyingSeats: run.expectedClass === 'qualifying' ? [1] : [] };
+  }
+  return summary;
 }
 
 function writeJson(file, value) {
