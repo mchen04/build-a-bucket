@@ -89,21 +89,19 @@ function countRows(tables) {
   return Array.isArray(tables) ? tables.reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0) : 0;
 }
 
-export function allEliminated({ out, activity }) {
-  return (
-    Array.isArray(out) &&
-    out.length > 0 &&
-    out.every(Boolean) &&
-    Array.isArray(activity) &&
-    activity.length > 0 &&
-    activity.every((text) => String(text).includes('The playoffs started automatically'))
-  );
-}
-
 const FINISHES = ['Champion', 'Finals loss', 'Conference finals', 'Semis', 'First round', 'Play-in exit', 'Missed playoffs'];
 const OUT_AT_ENTRY = new Set(['Play-in exit', 'Missed playoffs']);
 const AUTO_START = 'The playoffs started automatically';
 const HELD_START = ['The playoffs started automatically after waiting for', 'Everyone was ready, so the playoffs started', ' started the playoffs'];
+
+function plainAutoStart(text) {
+  const rows = String(text ?? '').split('\n').map((row) => row.trim().toUpperCase());
+  return rows.includes(AUTO_START.toUpperCase()) && !rows.some((row) => HELD_START.some((held) => row.includes(held.toUpperCase())));
+}
+
+export function playoffSampleFrom({ out, activity }) {
+  return { out, autoStart: Array.isArray(activity) ? activity.map(plainAutoStart) : [] };
+}
 
 function section(text, start, end) {
   const from = text.indexOf(start);

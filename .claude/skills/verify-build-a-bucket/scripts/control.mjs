@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, newReloadState, readLeagueStandings, recapElimination, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
+import { awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, newReloadState, playoffSampleFrom, readLeagueStandings, recapElimination, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
 import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
@@ -908,7 +908,7 @@ async function leagueRun() {
         if (record.phase === 'Playoffs' && (reloadSeat !== null || fixture) && reload.playoffSample == null) {
           const out = await Promise.all(active().map((entry) => entry.page.getByText('You are out').first().isVisible().catch(() => false)));
           const activity = await Promise.all(active().map(logText));
-          reload.playoffSample = { out, autoStart: activity.map((text) => String(text).includes('The playoffs started automatically')) };
+          reload.playoffSample = playoffSampleFrom({ out, activity });
         }
         const roundLabel = clean(record.roundName ?? record.stageName ?? '').toUpperCase();
         if ((record.phase === 'Awards' || record.phase === 'Play-In' || record.phase === 'Playoffs') && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');

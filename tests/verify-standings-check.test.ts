@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { allEliminated, assertRefreshCoverage, awaitReloadProof, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, refreshCoverage, reloadRecord, shouldAwaitStandings } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
+import { assertRefreshCoverage, awaitReloadProof, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, refreshCoverage, reloadRecord, shouldAwaitStandings } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
 
 function read(seat: number, revision: unknown, tables: string[][]) {
   return { seat: { seat, name: `S${seat}` }, revision, tables };
@@ -128,7 +128,6 @@ describe('reload proof boundary', () => {
   it('records no-held-boundary even when the all-eliminated signature is absent', async () => {
     const result = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: { seat: 2, name: 'S2' }, wait: async () => {}, attempts: 1 });
     expect(result.classification).toBe('no-held-boundary');
-    expect(allEliminated({ out: [true, false], activity: ['The playoffs started automatically'] })).toBe(false);
   });
 
   it('classifies unobserved navigation as invalid-display', async () => {
@@ -149,17 +148,6 @@ describe('reload proof boundary', () => {
     expect(shouldAwaitStandings({ navigation: { observed: true }, session: null })).toBe(false);
     expect(shouldAwaitStandings({ navigation: { observed: false }, session: { present: true } })).toBe(false);
     expect(shouldAwaitStandings({ navigation: null, session: { present: true } })).toBe(false);
-  });
-
-  it('detects the all-eliminated signature', () => {
-    expect(allEliminated({ out: [true, true], activity: ['The playoffs started automatically', 'The playoffs started automatically'] })).toBe(true);
-    expect(allEliminated({ out: [true, false], activity: ['The playoffs started automatically', 'The playoffs started automatically'] })).toBe(false);
-    expect(allEliminated({ out: [true, true], activity: ['The playoffs started automatically', 'Waiting'] })).toBe(false);
-  });
-
-  it('rejects the all-eliminated signature when one seat or log is missing', () => {
-    expect(allEliminated({ out: [true, false], activity: ['The playoffs started automatically', 'The playoffs started automatically'] })).toBe(false);
-    expect(allEliminated({ out: [true, true], activity: ['The playoffs started automatically', 'Waiting'] })).toBe(false);
   });
 });
 

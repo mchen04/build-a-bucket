@@ -47,7 +47,7 @@ export function readLeagueStandings(): { revision: Revision; tables: string[][] 
 export function seatIdentities(seats: unknown): Map<number, Set<string>>;
 export function distinctSeatLabels(seats: unknown): Set<string>;
 export function canonicalTables(tables: unknown): string[][];
-export function allEliminated(args: { out: unknown; activity: unknown }): boolean;
+export function playoffSampleFrom(args: { out: boolean[]; activity: string[] }): { out: boolean[]; autoStart: boolean[] };
 export function parseRecapCapture(aria: string): RecapCapture | null;
 export function recapElimination(args: { players: number; captures: { seat: number; aria: string }[]; playoffSample?: { out: boolean[]; autoStart: boolean[] } | null; gateSeen?: boolean }): RecapElimination;
 export function newReloadState(): ReloadRecord;
