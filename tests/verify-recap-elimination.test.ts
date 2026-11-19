@@ -123,6 +123,10 @@ describe('recap elimination refuses', () => {
     expect(refuses(captures)).toMatch(/seat 1 recap capture is malformed/);
   });
 
+  it('unparsed text inside the seat table', () => {
+    expect(refuses(edit(real(), (aria) => aria.replace(' · 35-47 3 P3', ' · 35-47 Eliminated early 3 P3')))).toMatch(/malformed/);
+  });
+
   it('a seat listed twice in the table', () => {
     expect(refuses(edit(real(), (aria) => aria.replace(/ 4 P4( YOU)? Play-in exit · 40-42/, (match) => ` 3 P3 Missed playoffs · 22-60${match}`)))).toMatch(/does not list every seat once|disagrees/);
   });
