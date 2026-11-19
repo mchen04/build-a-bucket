@@ -29,14 +29,19 @@ export function fixtureRunFrom({ state, init, supervisor }) {
   if (!state || !init || !supervisor) throw new Error('fixture run needs state, init and supervisor');
   if (supervisor.pid !== state.supervisor?.pid) throw new Error('supervisor pid does not match the run');
   if (state.localDb != null && init.database !== state.localDb.database) throw new Error('database does not match the run');
-  const postgres = supervisor.services?.find((service) => service.name === 'postgres');
-  const port = state.localDb?.pgPort;
+  const postgres = supervisor.postgres;
+  if (!postgres || typeof postgres !== 'object') throw new Error('supervisor does not record its postgres');
+  if (!Number.isInteger(postgres.pid) || postgres.pid <= 0) throw new Error('supervisor postgres pid is invalid');
+  if (init.state !== 'initialized') throw new Error('postgres was not initialized');
+  if (postgres.database !== init.database || postgres.dataDir !== init.dataDir || postgres.sockDir !== init.sockDir) throw new Error('supervisor postgres does not match init');
+  if (state.localDb == null || postgres.port !== state.localDb.pgPort || postgres.database !== state.localDb.database) throw new Error('supervisor postgres does not match the run');
+  const port = postgres.port;
   return {
     devLocal: state.mode === 'dev' && state.localDb != null,
     neon: state.localDb == null,
     prod: state.mode === 'prod',
     supervisorPid: state.supervisor?.pid,
-    postgresPid: postgres?.pid,
+    postgresPid: postgres.pid,
     socketDir: init.sockDir,
     port,
     database: init.database,

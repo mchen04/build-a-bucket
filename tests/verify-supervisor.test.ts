@@ -10,6 +10,7 @@ import { createStopOnce, startLocalDb } from '../scripts/local-db.mjs';
 import { buildSupervisorSpec } from '../.claude/skills/verify-build-a-bucket/scripts/supervisor-spec.mjs';
 import { createOwnedPostgres } from '../.claude/skills/verify-build-a-bucket/scripts/owned-postgres.mjs';
 import { removeOwnedDirs } from '../.claude/skills/verify-build-a-bucket/scripts/owned-dirs.mjs';
+import { applyLeagueFixture, fixtureRunFrom } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 
 class FakeChild {
   pid: number;
@@ -916,5 +917,82 @@ describe('app drain', () => {
       controls: controls({ trees: new Map([[100, { ok: true, pids: [101] }]]), probe: () => 'unknown' }),
     });
     expect(result.state).toBe('uncertain');
+  });
+});
+
+describe('supervisor record binds the fixture', () => {
+  const entry = { id: 'fx', mode: 'normal', era: 'current', players: 1, code: 'ABC123', secret: 's', expectedClass: 'qualifying' as const, qualifyingSeats: [1], participants: [{ id: 'p1', seat: 1, name: 'Ava', team: 'ATL', build: { kind: 'normal' }, summary: {} }] };
+  async function launched() {
+    const dir = tempDir();
+    const postgres = new FakeChild(200);
+    const app = new FakeChild(100);
+    const children = [postgres, app];
+    const supervisor = await startSupervisor({
+      runDir: dir,
+      services: [{ name: 'app', kind: 'app', command: 'node', args: ['app'], envFromPostgres: true }],
+      controlPath: path.join(dir, 'control.json'),
+      receiptPath: path.join(dir, 'receipt.json'),
+      ackPath: path.join(dir, 'ack.json'),
+      postgresInit: {
+        root: dir,
+        port: 55434,
+        database: 'bab_local',
+        schema: '/schema.sql',
+        initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+          writeFileSync(path.join(dataDir, 'postmaster.pid'), `${postgres.pid}\n${dataDir}\n0\n${port}\n${sockDir}\n`);
+          writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+        },
+        psql: () => '1',
+        schemaLoad: () => {},
+      },
+      spawn: () => children.shift(),
+      clock: clock(),
+      controls: controls(),
+      exit: () => {},
+    });
+    const record = JSON.parse(readFileSync(path.join(dir, 'supervisor.json'), 'utf8'));
+    const init = JSON.parse(readFileSync(path.join(dir, 'supervisor-init.json'), 'utf8'));
+    const state = { mode: 'dev', localDb: { pgPort: 55434, database: 'bab_local' }, supervisor: { pid: record.pid } };
+    return { supervisor, record, init, state };
+  }
+  async function bind(state: unknown, init: unknown, record: unknown) {
+    const targets: unknown[] = [];
+    const connect = async (target: unknown) => {
+      targets.push(target);
+      throw new Error('stop');
+    };
+    const run = fixtureRunFrom({ state, init, supervisor: record } as never);
+    await applyLeagueFixture({ entry, run: { ...run, pidAlive: () => true }, connect, secrets: ['s'] } as never);
+    return targets;
+  }
+
+  it('binds the database the launcher recorded', async () => {
+    const { supervisor, record, init, state } = await launched();
+    const targets: unknown[] = [];
+    const connect = async (target: unknown) => {
+      targets.push(target);
+      throw new Error('stop');
+    };
+    const run = fixtureRunFrom({ state, init, supervisor: record } as never);
+    await expect(applyLeagueFixture({ entry, run: { ...run, pidAlive: () => true }, connect, secrets: ['s'] } as never)).rejects.toThrow('stop');
+    expect(targets).toEqual([{ socketDir: init.sockDir, port: 55434, database: 'bab_local' }]);
+    await supervisor.stop();
+  });
+
+  it.each([
+    ['no postgres record', (r: Record<string, any>) => { delete r.postgres; }, () => {}],
+    ['pid 0', (r: Record<string, any>) => { r.postgres.pid = 0; }, () => {}],
+    ['wrong port', (r: Record<string, any>) => { r.postgres.port = 55435; }, () => {}],
+    ['other database', (r: Record<string, any>) => { r.postgres.database = 'other'; }, () => {}],
+    ['other socket dir', (r: Record<string, any>) => { r.postgres.sockDir = '/elsewhere'; }, () => {}],
+    ['init failed', () => {}, (i: Record<string, any>) => { i.state = 'failed'; }],
+  ])('refuses %s before connecting', async (_name, patchRecord, patchInit) => {
+    const { supervisor, record, init, state } = await launched();
+    patchRecord(record);
+    patchInit(init);
+    let targets: unknown[] = [];
+    await expect((async () => { targets = await bind(state, init, record); })()).rejects.toThrow();
+    expect(targets).toEqual([]);
+    await supervisor.stop();
   });
 });

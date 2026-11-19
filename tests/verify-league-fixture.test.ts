@@ -128,8 +128,8 @@ describe('league fixture guard binds the target', () => {
 
 describe('fixture run from state', () => {
   const state = { mode: 'dev', localDb: { database: 'bab', pgPort: 55434 }, supervisor: { pid: 100 } };
-  const init = { database: 'bab', dataDir: '/owned/data', sockDir: '/owned/socket' };
-  const supervisor = { pid: 100, services: [{ name: 'postgres', pid: 200 }] };
+  const init = { state: 'initialized', database: 'bab', dataDir: '/owned/data', sockDir: '/owned/socket' };
+  const supervisor = { pid: 100, services: [], postgres: { pid: 200, port: 55434, database: 'bab', dataDir: '/owned/data', sockDir: '/owned/socket' } };
 
   it('maps the run record', () => {
     expect(fixtureRunFrom({ state, init, supervisor })).toEqual({
@@ -155,9 +155,7 @@ describe('fixture run from state', () => {
   });
 
   it('yields a neon run the guard refuses', () => {
-    const run = fixtureRunFrom({ state: { ...state, localDb: null }, init, supervisor });
-    expect(run.neon).toBe(true);
-    expect(() => guardOwnedRun({ run, readFile: () => '', pidAlive: () => true })).toThrow();
+    expect(() => fixtureRunFrom({ state: { ...state, localDb: null }, init, supervisor })).toThrow('supervisor postgres does not match the run');
   });
 
   it('yields a prod run the guard refuses', () => {
@@ -364,8 +362,8 @@ describe('fixture app origin', () => {
 
 describe('open fixture run', () => {
   const state = { mode: 'dev', base: 'http://127.0.0.1:4173/', port: 4173, localDb: { database: 'bab', pgPort: 55434 }, supervisor: { pid: 100 } };
-  const init = { database: 'bab', dataDir: '/owned/data', sockDir: '/owned/socket' };
-  const supervisor = { pid: 100, services: [{ name: 'postgres', pid: 200 }] };
+  const init = { state: 'initialized', database: 'bab', dataDir: '/owned/data', sockDir: '/owned/socket' };
+  const supervisor = { pid: 100, services: [], postgres: { pid: 200, port: 55434, database: 'bab', dataDir: '/owned/data', sockDir: '/owned/socket' } };
   const spec = { services: [{ kind: 'app', args: ['--port', '4173', '--strictPort'] }] };
   const files: Record<string, unknown> = { 'run.json': state, 'supervisor-init.json': init, 'supervisor.json': supervisor, 'supervisor-spec.json': spec };
   const readJson = (file: string) => files[path.basename(file)];

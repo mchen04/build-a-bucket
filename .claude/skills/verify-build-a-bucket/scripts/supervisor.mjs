@@ -187,7 +187,7 @@ export async function startSupervisor({
     await fail(error);
     return { children, stop, fail };
   }
-  writeJson(path.join(runDir, 'supervisor.json'), { pid: process.pid, controlPath, receiptPath, ackPath, services: children.map(({ service, child }) => ({ name: service.name, pid: child.pid })) });
+  writeJson(path.join(runDir, 'supervisor.json'), { pid: process.pid, controlPath, receiptPath, ackPath, services: children.map(({ service, child }) => ({ name: service.name, pid: child.pid })), postgres: postgres ? { pid: postgres.child.pid, port: postgres.port, database: postgres.database, dataDir: postgres.dataDir, sockDir: postgres.sockDir } : null });
   poll = clock.setInterval(() => {
     if (fs.existsSync(controlPath)) {
       clock.clearInterval(poll);

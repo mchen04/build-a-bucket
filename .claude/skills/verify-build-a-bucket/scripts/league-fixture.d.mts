@@ -31,8 +31,8 @@ export type FixtureState = {
   localDb?: { database?: string; pgPort?: number } | null;
   supervisor?: { pid?: number } | null;
 };
-export type FixtureInit = { database: string; dataDir: string; sockDir: string };
-export type FixtureSupervisor = { pid: number; services?: { name: string; pid: number }[] };
+export type FixtureInit = { state?: string; database: string; dataDir: string; sockDir: string };
+export type FixtureSupervisor = { pid: number; services?: { name: string; pid: number }[]; postgres?: { pid: number; port: number; database: string; dataDir: string; sockDir: string } | null };
 
 export type FixtureTarget = { socketDir: string; port: number; database: string };
 export type FixtureRunner = {
