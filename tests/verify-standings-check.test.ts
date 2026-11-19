@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { assertRefreshCoverage, awaitReloadProof, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, refreshCoverage, reloadRecord, shouldAwaitStandings } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
+import { conference, fullTables } from './standings-rows';
 
 function read(seat: number, revision: unknown, tables: string[][]) {
   return { seat: { seat, name: `S${seat}` }, revision, tables };
@@ -10,7 +11,7 @@ function read(seat: number, revision: unknown, tables: string[][]) {
 
 const rev = (stage: string, progress: string) => ({ stage, progress });
 const proof = (overrides: Record<string, unknown> = {}) => ({ classification: 'stable-match', navigation: { observed: true }, session: { present: true }, attempts: 'attempts.json', ...overrides });
-const rows = Array.from({ length: 20 }, (_, index) => [`${index + 1} T${index} P 60-22`]);
+const rows = fullTables();
 const reads = (revision: unknown, seats = [1, 2, 3]) => seats.map((seat) => read(seat, revision, rows));
 
 const temps: string[] = [];
@@ -36,19 +37,20 @@ describe('standings comparison', () => {
   });
 
   it('accepts identical full tables at the same revision', () => {
-    const table = [['1 BOS Host 60-22 —', '2 NYK Away 55-27 5']];
+    const table = fullTables();
     const result = compareStandings([read(1, rev('Season', '100 / 1230'), table), read(2, rev('Season', '100 / 1230'), table)], { seat: 2, name: 'S2' });
     expect(result.ok).toBe(true);
-    expect(result.rowsCompared).toBe(2);
+    expect(result.rowsCompared).toBe(20);
   });
 
   it('accepts differing own-team rows after the first ten', () => {
-    const top = Array.from({ length: 10 }, (_, index) => `${index + 1} T${index} P ${60 - index}-2`);
+    const [east, west] = fullTables();
     const result = compareStandings(
-      [read(1, rev('Season', '100 / 1230'), [top.concat('15 SAC Ben 30-32')]), read(2, rev('Season', '100 / 1230'), [top.concat('15 MIL Ava 31-31')])],
+      [read(1, rev('Season', '100 / 1230'), [east.concat('15 SAC Ben 30-32'), west]), read(2, rev('Season', '100 / 1230'), [east, west.concat('15 MIL Ava 31-31')])],
       { seat: 2, name: 'S2' },
     );
     expect(result.ok).toBe(true);
+    expect(result.rowsCompared).toBe(20);
   });
 
   it('rejects empty tables', () => {
@@ -77,7 +79,7 @@ describe('reload proof boundary', () => {
 
   it('classifies differing tables at one revision as unequal', async () => {
     const result = await awaitReloadProof({
-      readAll: async () => [read(1, rev('Playoffs', 'First Round'), rows), read(2, rev('Playoffs', 'First Round'), [['1 BOS Host 20-62 35']])],
+      readAll: async () => [read(1, rev('Playoffs', 'First Round'), rows), read(2, rev('Playoffs', 'First Round'), [conference('E'), [...conference('W', 9), '10 BOS Host 20-62 35']])],
       isRecap: async () => false,
       refreshedSeat: { seat: 2, name: 'S2' },
       wait: async () => {},
@@ -208,7 +210,7 @@ describe('league evidence and refresh coverage', () => {
 });
 
 describe('displayed revision validity (R21-A)', () => {
-  const table = [['1 BOS Host 60-22 —', '2 NYK Away 55-27 5']];
+  const table = fullTables();
 
   it('rejects a missing displayed revision even with identical full rows', () => {
     expect(compareStandings([read(1, ':', table), read(2, ':', table)], { seat: 2, name: 'S2' }).ok).toBe(false);
@@ -235,11 +237,11 @@ describe('displayed revision validity (R21-A)', () => {
     const result = compareStandings([read(1, rev('Season', '100 / 1230'), table), read(2, rev('Season', '100 / 1230'), table)], { seat: 2, name: 'S2' });
     expect(result.ok).toBe(true);
     expect(result.revision).toEqual({ stage: 'Season', progress: '100 / 1230' });
-    expect(result.rowsCompared).toBe(2);
+    expect(result.rowsCompared).toBe(20);
   });
 
   it('accepts a valid structured revision for a seeded table', () => {
-    const seeded = [['1 BOS Host 60-22 —', '2 NYK Away 55-27 5']];
+    const seeded = fullTables();
     const result = compareStandings([read(1, rev('Playoffs', 'First Round'), seeded), read(2, rev('Playoffs', 'First Round'), seeded)], { seat: 2, name: 'S2' });
     expect(result.ok).toBe(true);
     expect(result.revision).toEqual({ stage: 'Playoffs', progress: 'First Round' });
@@ -262,7 +264,7 @@ describe('displayed revision validity (R21-A)', () => {
 });
 
 describe('numeric seat identity and real rows (R22)', () => {
-  const table = [['1 BOS Host 60-22 —', '2 NYK Away 55-27 5']];
+  const table = fullTables();
   const seat = (number: number, name: string) => ({ seat: number, name });
 
   it('rejects the same seat number under two names', () => {
@@ -305,6 +307,6 @@ describe('numeric seat identity and real rows (R22)', () => {
       seat(2, 'Ben'),
     );
     expect(result.ok).toBe(true);
-    expect(result.rowsCompared).toBe(2);
+    expect(result.rowsCompared).toBe(20);
   });
 });

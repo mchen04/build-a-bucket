@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { gateReadiness, recapElimination, refreshCoverage, revisionLabel } from './standings-check.mjs';
+import { FULL_ROWS, completeStandings, gateReadiness, recapElimination, refreshCoverage, revisionLabel } from './standings-check.mjs';
 import { reloadCaptureBase } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -148,6 +148,7 @@ export function checkReloadEvidence({ reload, attempts, files, players, reloadSe
   if (JSON.stringify(attempts.revision) !== JSON.stringify(reload.revision)) failures.push('reload attempts revision mismatch');
   if (JSON.stringify(attempts.seats) !== JSON.stringify(reload.seats)) failures.push('reload attempts seats mismatch');
   if (attempts.rowsCompared !== reload.rowsCompared) failures.push('reload attempts rowsCompared mismatch');
+  if (reload.rowsCompared !== FULL_ROWS) failures.push(`reload.rowsCompared ${reload.rowsCompared} != ${FULL_ROWS}`);
   if (!Array.isArray(attempts.samples) || attempts.samples.length < 1 || attempts.samples.length > 60) failures.push('reload attempts count out of bound');
   else {
     let previous = -1;
@@ -183,7 +184,7 @@ export function checkReloadEvidence({ reload, attempts, files, players, reloadSe
       if (!entry) failures.push(`reload last sample is missing seat ${number}:${name}`);
       else {
         if (entry.revision !== revisionLabel(reload.revision)) failures.push(`reload last sample seat ${number} revision mismatch`);
-        if (!(entry.rows > 0)) failures.push(`reload last sample seat ${number} rows is not positive`);
+        if (!(entry.rows >= FULL_ROWS)) failures.push(`reload last sample seat ${number} shows ${entry.rows} rows, fewer than ${FULL_ROWS}`);
       }
     }
   }
@@ -326,7 +327,7 @@ function checkRun(run, dir) {
     } else {
       if (reload?.classification !== 'stable-match') failures.push(`reload classification is '${reload?.classification}'`);
       if (!reload || reload.ran !== true) failures.push('reload.ran is not true');
-      if (!reload || !isPositiveInt(reload.rowsCompared)) failures.push('reload.rowsCompared is not a positive integer');
+      if (!reload || reload.rowsCompared !== FULL_ROWS) failures.push(`reload.rowsCompared is not ${FULL_ROWS}`);
       if (!reload || !validRevision(reload.revision)) failures.push('reload.revision is not valid');
       if (!reload || reload.coverage !== 'ok') failures.push(`reload.coverage is '${reload?.coverage}'`);
       if (reload?.refreshedSeat?.seat !== run.reloadSeat) failures.push(`reload.refreshedSeat ${reload?.refreshedSeat?.seat} != ${run.reloadSeat}`);
@@ -354,6 +355,7 @@ function checkRun(run, dir) {
           const rows = tables.reduce((sum, table) => sum + (Array.isArray(table) ? table.length : 0), 0);
           if (rows !== reload?.rowsCompared) failures.push(`after-reload rows ${rows} != rowsCompared ${reload?.rowsCompared}`);
           if (tables.some((table) => !Array.isArray(table) || table.some((row) => String(row).trim().length === 0))) failures.push('after-reload standings have a blank row');
+          if (!completeStandings(tables)) failures.push('after-reload standings are not two complete ten-row conferences');
         }
       }
     }

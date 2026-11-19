@@ -80,6 +80,14 @@ export function distinctSeatLabels(seats) {
   return new Set([...seatIdentities(seats)].map(([number, names]) => `${number}:${[...names][0]}`));
 }
 
+export const CONFERENCES = 2;
+export const CONFERENCE_ROWS = 10;
+export const FULL_ROWS = CONFERENCES * CONFERENCE_ROWS;
+
+export function completeStandings(tables) {
+  return Array.isArray(tables) && tables.length === CONFERENCES && tables.every((rows) => Array.isArray(rows) && rows.length === CONFERENCE_ROWS && rows.every((row) => typeof row === 'string' && row.trim().length > 0));
+}
+
 export function canonicalTables(tables) {
   if (!Array.isArray(tables) || tables.length === 0) return [];
   return tables.map((rows) => (Array.isArray(rows) ? rows.slice(0, 10).map(normalizeRow) : []));
@@ -262,7 +270,7 @@ export async function awaitReloadProof({ readAll, isRecap, refreshedSeat, wait, 
     const result = compareStandings(reads, refreshedSeat);
     if (result.ok) return { classification: 'stable-match', revision: result.revision, seats: result.seats, rowsCompared: result.rowsCompared, standings: result.standings, attempts: samples };
     if (result.reason.startsWith('standings differ')) return { classification: 'unequal', reason: result.reason, revision: null, seats: [], rowsCompared: 0, standings: null, attempts: samples };
-    if (result.reason.startsWith('empty standings') || result.reason.startsWith('blank standings') || result.reason.startsWith('conflicting names')) {
+    if (result.reason.startsWith('empty standings') || result.reason.startsWith('blank standings') || result.reason.startsWith('incomplete standings') || result.reason.startsWith('conflicting names')) {
       return { classification: 'invalid-display', reason: result.reason, revision: null, seats: [], rowsCompared: 0, standings: null, attempts: samples };
     }
     await wait();
@@ -300,13 +308,13 @@ export function compareStandings(reads, refreshedSeat) {
     if (tables.some((value) => value.some((rows) => rows.some((row) => row === '')))) {
       return { ok: false, reason: `blank standings row at revision ${revisionLabel(revision)}` };
     }
+    if (!tables.every(completeStandings)) {
+      return { ok: false, reason: `incomplete standings at revision ${revisionLabel(revision)}` };
+    }
     if (!tables.every((value) => JSON.stringify(value) === JSON.stringify(tables[0]))) {
       return { ok: false, reason: `standings differ at revision ${revisionLabel(revision)}` };
     }
     const rowsCompared = tables[0].reduce((sum, rows) => sum + rows.length, 0);
-    if (!Number.isInteger(rowsCompared) || rowsCompared <= 0) {
-      return { ok: false, reason: `no rows compared at revision ${revisionLabel(revision)}` };
-    }
     return {
       ok: true,
       revision,
@@ -343,6 +351,7 @@ export function refreshCoverage(reloadRequested, reload) {
   if (!refreshedNumber) return { ok: false, reason: 'reload recorded no refreshed seat' };
   if (!identities.has(refreshedNumber)) return { ok: false, reason: 'reload did not include the refreshed seat' };
   if (!Number.isInteger(reload.rowsCompared) || reload.rowsCompared <= 0) return { ok: false, reason: 'reload compared no valid rows' };
+  if (reload.rowsCompared !== FULL_ROWS) return { ok: false, reason: `reload compared ${reload.rowsCompared} rows, not two complete ten-row conferences` };
   if (reload?.navigation?.observed !== true) return { ok: false, reason: 'reload navigation not observed' };
   if (reload?.session?.present !== true) return { ok: false, reason: 'session not persisted after reload' };
   if (!reload?.attempts) return { ok: false, reason: 'reload attempts file missing' };

@@ -6,6 +6,7 @@ import { awaitReloadProof, refreshCoverage } from '../.claude/skills/verify-buil
 import type { FixtureRunner, FixtureTarget } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import { createRunner } from '../.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs';
 import { hashSecret } from '../src/shared/mp/codes.js';
+import { fullTables } from './standings-rows';
 
 const catalog = JSON.parse(readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/fixtures/league-fixtures.json'), 'utf8'));
 const entry = catalog.entries[0];
@@ -264,7 +265,7 @@ describe('fixture storage state', () => {
 });
 
 describe('fixture session persistence', () => {
-  const read = (seat: number, name: string) => ({ seat: { seat, name }, revision: { stage: 'Playoffs', progress: 'First Round' }, tables: [['1 A 1-0'], ['1 B 1-0']] });
+  const read = (seat: number, name: string) => ({ seat: { seat, name }, revision: { stage: 'Playoffs', progress: 'First Round' }, tables: fullTables() });
   const readAll = async () => [read(1, 'Ava'), read(2, 'Ben')];
   const proof = (session: { present: boolean }) => awaitReloadProof({ session, readAll, isRecap: async () => false, refreshedSeat: { seat: 2, name: 'Ben' }, wait: async () => {}, attempts: 1 });
 
