@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { applyLeagueFixture, defaultConnect, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
+import { applyLeagueFixture, classifyFixture, defaultConnect, fixtureOptions, fixtureRunFrom, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import type { FixtureRunner, FixtureTarget } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import { createRunner } from '../.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs';
 import { hashSecret } from '../src/shared/mp/codes.js';
@@ -115,6 +115,79 @@ describe('league fixture guard binds the target', () => {
     const { targets, connect } = connectStub();
     await applyLeagueFixture({ entry, run: validRun, connect, secrets });
     expect(targets).toEqual([{ socketDir: '/owned/socket', port: 55434, database: 'bab' }]);
+  });
+});
+
+describe('fixture run from state', () => {
+  const state = { mode: 'dev', localDb: { database: 'bab', pgPort: 55434 }, supervisor: { pid: 100 } };
+  const init = { database: 'bab', dataDir: '/owned/data', sockDir: '/owned/socket' };
+  const supervisor = { pid: 100, services: [{ name: 'postgres', pid: 200 }] };
+
+  it('maps the run record', () => {
+    expect(fixtureRunFrom({ state, init, supervisor })).toEqual({
+      devLocal: true,
+      neon: false,
+      prod: false,
+      supervisorPid: 100,
+      postgresPid: 200,
+      socketDir: '/owned/socket',
+      port: 55434,
+      database: 'bab',
+      socket: '/owned/socket/.s.PGSQL.55434',
+      postmasterPidPath: '/owned/data/postmaster.pid',
+    });
+  });
+
+  it('refuses a foreign supervisor pid', () => {
+    expect(() => fixtureRunFrom({ state, init, supervisor: { ...supervisor, pid: 101 } })).toThrow();
+  });
+
+  it('refuses a database mismatch', () => {
+    expect(() => fixtureRunFrom({ state, init: { ...init, database: 'other' }, supervisor })).toThrow();
+  });
+
+  it('yields a neon run the guard refuses', () => {
+    const run = fixtureRunFrom({ state: { ...state, localDb: null }, init, supervisor });
+    expect(run.neon).toBe(true);
+    expect(() => guardOwnedRun({ run, readFile: () => '', pidAlive: () => true })).toThrow();
+  });
+
+  it('yields a prod run the guard refuses', () => {
+    const run = fixtureRunFrom({ state: { ...state, mode: 'prod' }, init, supervisor });
+    expect(run.prod).toBe(true);
+    expect(() => guardOwnedRun({ run, readFile: () => '', pidAlive: () => true })).toThrow();
+  });
+});
+
+describe('fixture options', () => {
+  it('accepts the entry options', () => {
+    expect(fixtureOptions(entry)).toEqual({ players: entry.players, mode: entry.mode, era: entry.era });
+  });
+
+  it('refuses a players mismatch', () => {
+    expect(() => fixtureOptions(entry, { players: entry.players + 1 })).toThrow();
+  });
+
+  it('refuses a mode mismatch', () => {
+    expect(() => fixtureOptions(entry, { mode: entry.mode === 'normal' ? 'squad' : 'normal' })).toThrow();
+  });
+
+  it('refuses an era mismatch', () => {
+    expect(() => fixtureOptions(entry, { era: entry.era === 'current' ? 'alltime' : 'current' })).toThrow();
+  });
+});
+
+describe('fixture class', () => {
+  it('classifies a gate as qualifying', () => {
+    expect(classifyFixture({ gateSeen: true, gateReadySeats: [1], allEliminatedObserved: false, recap: false })).toEqual({ observedClass: 'qualifying', qualifyingSeats: [1] });
+  });
+
+  it('classifies no gate and all eliminated by recap', () => {
+    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminatedObserved: true, recap: true })).toEqual({ observedClass: 'all-eliminated', qualifyingSeats: [] });
+  });
+
+  it('classifies no gate before recap as unknown', () => {
+    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminatedObserved: true, recap: false })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
   });
 });
 

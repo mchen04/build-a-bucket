@@ -21,8 +21,17 @@ export type FixtureEntry = {
   players: number;
   code: string;
   secret: string;
+  qualifyingSeats: number[];
   participants: { id: string; seat: number; name: string; team: string; build: { kind: string }; summary: unknown }[];
 };
+
+export type FixtureState = {
+  mode?: string;
+  localDb?: { database?: string; pgPort?: number } | null;
+  supervisor?: { pid?: number } | null;
+};
+export type FixtureInit = { database: string; dataDir: string; sockDir: string };
+export type FixtureSupervisor = { pid: number; services?: { name: string; pid: number }[] };
 
 export type FixtureTarget = { socketDir: string; port: number; database: string };
 export type FixtureRunner = {
@@ -33,6 +42,9 @@ export type FixtureRunner = {
 };
 
 export function hashSecret(secret: string): string;
+export function fixtureRunFrom(args: { state: FixtureState; init: FixtureInit; supervisor: FixtureSupervisor }): FixtureRun;
+export function fixtureOptions(entry: FixtureEntry, options?: { players?: number; mode?: string; era?: string }): { players: number; mode: string; era: string };
+export function classifyFixture(args: { gateSeen: boolean; gateReadySeats: number[]; allEliminatedObserved: boolean; recap: boolean }): { observedClass: 'qualifying' | 'all-eliminated' | 'unknown'; qualifyingSeats: number[] };
 export function defaultConnect(target: FixtureTarget): Promise<FixtureRunner>;
 export function guardOwnedRun(args: { run: FixtureRun | null; base?: string; readFile?: (path: string, encoding: string) => string; pidAlive?: (pid: number) => boolean }): FixtureTarget;
 export function applyLeagueFixture(args: {

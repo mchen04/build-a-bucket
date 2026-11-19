@@ -12,6 +12,7 @@ import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
 import { buildSupervisorSpec } from './supervisor-spec.mjs';
 import { removeOwnedDirs } from './owned-dirs.mjs';
+import { applyLeagueFixture, classifyFixture, fixtureOptions, fixtureRunFrom } from './league-fixture.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -39,6 +40,14 @@ function currentRun() {
   return { dir, state: JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')) };
 }
 function saveState(dir, state) { fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify(state, null, 2)); }
+
+function loadFixture(id) {
+  const fixturesPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'league-fixtures.json');
+  const catalog = JSON.parse(fs.readFileSync(fixturesPath, 'utf8'));
+  const entry = catalog.entries.find((candidate) => candidate.id === id);
+  if (!entry) throw new Error(`unknown fixture ${id}`);
+  return entry;
+}
 function evidenceDir(dir, sub = '') { const d = path.join(dir, 'evidence', sub); fs.mkdirSync(d, { recursive: true }); return d; }
 function baseUrl() { return o.base ?? currentRun().state.base; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -296,10 +305,13 @@ async function loadGuardPool() {
 async function leagueRun() {
   const pw = require('@playwright/test');
   const { dir, state } = currentRun();
-  const players = Math.max(2, Math.min(8, Number(o.players ?? 2)));
-  const mode = String(o.mode ?? 'normal');
+  const fixtureId = o.fixture === undefined ? null : String(o.fixture);
+  const fixture = fixtureId ? loadFixture(fixtureId) : null;
+  const options = fixture ? fixtureOptions(fixture, { players: o.players === undefined ? undefined : Number(o.players), mode: o.mode === undefined ? undefined : String(o.mode), era: o.era === undefined ? undefined : String(o.era) }) : null;
+  const players = options ? options.players : Math.max(2, Math.min(8, Number(o.players ?? 2)));
+  const mode = options ? options.mode : String(o.mode ?? 'normal');
   if (!['normal', 'salary', 'squad'].includes(mode)) throw new Error(`unknown mode ${mode}`);
-  const era = String(o.era ?? 'current');
+  const era = options ? options.era : String(o.era ?? 'current');
   if (!['current', 'alltime'].includes(era)) throw new Error(`unknown era ${era}`);
   const device = deviceFor(o.device ?? 'iphone');
   const { browserName, ...ctxOpts } = device;
@@ -308,6 +320,8 @@ async function leagueRun() {
     : { width: 390, height: 844 };
   const reloadSeat = o.reload === undefined ? null : Number(o.reload);
   const reload = { ran: false, revision: null, seats: [], rowsCompared: 0, refreshedSeat: null, allEliminated: false, allEliminatedObserved: false };
+  let gateSeen = false;
+  let gateReadySeats = [];
   const awaySeat = o.away === undefined ? null : Number(o.away);
   const hostLeave = Boolean(o['host-leave']);
   for (const [flag, value] of [['--reload', reloadSeat], ['--away', awaySeat]]) {
@@ -646,6 +660,18 @@ async function leagueRun() {
       new window.MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
       read();
     });
+  const startFromPreview = async (hostSeat, activeSeats, recordMarks) => {
+    await hostSeat.page.getByTestId('preview-ready').waitFor();
+    for (const seat of activeSeats) {
+      const ready = seat.page.getByTestId('preview-ready');
+      if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
+    }
+    const startNow = hostSeat.page.getByTestId('start-season-now');
+    if (await startNow.isVisible().catch(() => false)) await startNow.click().catch(() => {});
+    await hostSeat.page.getByTestId('league-stage').waitFor();
+    if (recordMarks) mark('season-start');
+    reload.armed = true;
+  };
   const buildAndStart = async (hostSeat, activeSeats, recordMarks, chooseSettings) => {
     if (chooseSettings) {
       if (mode !== 'normal') await hostSeat.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
@@ -706,41 +732,52 @@ async function leagueRun() {
     }
     const lock = hostSeat.page.getByTestId('lock-teams');
     if (await lock.isVisible().catch(() => false)) await lock.click().catch(() => {});
-    await hostSeat.page.getByTestId('preview-ready').waitFor();
-    for (const seat of activeSeats) {
-      const ready = seat.page.getByTestId('preview-ready');
-      if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
-    }
-    const startNow = hostSeat.page.getByTestId('start-season-now');
-    if (await startNow.isVisible().catch(() => false)) await startNow.click().catch(() => {});
-    await hostSeat.page.getByTestId('league-stage').waitFor();
-    if (recordMarks) mark('season-start');
-    reload.armed = true;
+    await startFromPreview(hostSeat, activeSeats, recordMarks);
   };
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
   let code = null;
   let summaryWritten = false;
   try {
     let host = seats[0];
-    await host.page.goto(base);
-    await host.page.getByTestId('mp-name').waitFor({ timeout: 90000 });
-    await host.page.getByTestId('mp-name').fill(host.name);
-    await host.page.getByTestId('create-lobby').click();
-    await host.page.getByTestId('lobby-code').waitFor();
-    code = (await host.page.getByTestId('lobby-code').innerText()).trim();
-    const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
-    if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
-    await snap(host, 'created');
-    for (const seat of seats.slice(1)) {
-      await seat.page.goto(link);
-      await seat.page.getByTestId('invite-code').waitFor({ timeout: 90000 });
-      await snap(seat, 'invite');
-      await seat.page.getByTestId('invite-name').fill(seat.name);
-      await seat.page.getByTestId('invite-join').click();
-      await seat.page.getByTestId('lobby-code').waitFor({ timeout: 90000 });
-      await snap(seat, 'joined');
+    if (fixture) {
+      const secrets = fixture.participants.map(() => randomBytes(16).toString('hex'));
+      const run = fixtureRunFrom({
+        state: JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')),
+        init: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor-init.json'), 'utf8')),
+        supervisor: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor.json'), 'utf8')),
+      });
+      await applyLeagueFixture({ entry: fixture, run, secrets });
+      code = fixture.code;
+      if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
+      for (let index = 0; index < seats.length; index++) {
+        const seat = seats[index];
+        await seat.context.addInitScript(({ code, secret, name }) => {
+          localStorage.setItem('bab:mp:v1', JSON.stringify({ v: 1, code, secret, name }));
+        }, { code, secret: secrets[index], name: seat.name });
+        await seat.page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
+      }
+      await startFromPreview(host, seats, true);
+    } else {
+      await host.page.goto(base);
+      await host.page.getByTestId('mp-name').waitFor({ timeout: 90000 });
+      await host.page.getByTestId('mp-name').fill(host.name);
+      await host.page.getByTestId('create-lobby').click();
+      await host.page.getByTestId('lobby-code').waitFor();
+      code = (await host.page.getByTestId('lobby-code').innerText()).trim();
+      const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
+      if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
+      await snap(host, 'created');
+      for (const seat of seats.slice(1)) {
+        await seat.page.goto(link);
+        await seat.page.getByTestId('invite-code').waitFor({ timeout: 90000 });
+        await snap(seat, 'invite');
+        await seat.page.getByTestId('invite-name').fill(seat.name);
+        await seat.page.getByTestId('invite-join').click();
+        await seat.page.getByTestId('lobby-code').waitFor({ timeout: 90000 });
+        await snap(seat, 'joined');
+      }
+      await buildAndStart(host, seats, true, true);
     }
-    await buildAndStart(host, seats, true, true);
     let checkpoint = 0;
     let chaosDone = false;
     let lastLabel = '';
@@ -760,6 +797,12 @@ async function leagueRun() {
         break;
       }
       if (await visible(host, 'playoff-gate')) {
+        gateSeen = true;
+        gateReadySeats = [];
+        for (const seat of active()) {
+          const button = seat.page.getByTestId('playoff-gate').getByRole('button', { name: 'Ready', exact: true });
+          if (await button.isVisible().catch(() => false)) gateReadySeats.push(seat.seat);
+        }
         const record = await verifyStage(`gate-${checkpoint}`, null);
         stages.push(record);
         if (!marks.some((entry) => entry.label === 'season-end')) mark('season-end');
@@ -1070,11 +1113,23 @@ async function leagueRun() {
       evidence: ev,
     });
     summary.reload = reloadRecord(reloadSeat !== null, reload);
+    if (fixture) {
+      const expectedClass = fixture.qualifyingSeats.length > 0 ? 'qualifying' : 'all-eliminated';
+      const classified = classifyFixture({ gateSeen, gateReadySeats, allEliminatedObserved: reload.allEliminatedObserved, recap: marks.some((entry) => entry.label === 'recap') });
+      summary.fixture = { id: fixture.id, expectedClass, observedClass: classified.observedClass, qualifyingSeats: classified.qualifyingSeats };
+      if (classified.observedClass !== expectedClass || JSON.stringify(classified.qualifyingSeats) !== JSON.stringify(fixture.qualifyingSeats)) {
+        throw new Error(`fixture ${fixture.id} observed ${classified.observedClass} ${JSON.stringify(classified.qualifyingSeats)}, expected ${expectedClass} ${JSON.stringify(fixture.qualifyingSeats)}`);
+      }
+    }
     summary.lifecycle = lifecycle;
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
     summaryWritten = true;
     console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reload: summary.reload, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
-    if (summary.reload.coverage !== 'ok') throw new Error(`refresh coverage missing: ${summary.reload.coverage}`);
+    const allEliminatedNoBoundary = fixture != null && fixture.qualifyingSeats.length === 0 && reloadSeat !== null && summary.reload.classification === 'no-held-boundary' && marks.some((entry) => entry.label === 'recap') && playAgain;
+    if (fixture != null && fixture.qualifyingSeats.length === 0 && reloadSeat !== null && summary.reload.classification !== 'no-held-boundary') {
+      throw new Error(`all-eliminated fixture reload classification is ${summary.reload.classification}`);
+    }
+    if (summary.reload.coverage !== 'ok' && !allEliminatedNoBoundary) throw new Error(`refresh coverage missing: ${summary.reload.coverage}`);
   } catch (error) {
     for (const seat of active()) await snapFailure(seat);
     if (!summaryWritten) {

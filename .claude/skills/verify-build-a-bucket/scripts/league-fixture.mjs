@@ -25,6 +25,40 @@ function uuidFrom(value) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
+export function fixtureRunFrom({ state, init, supervisor }) {
+  if (!state || !init || !supervisor) throw new Error('fixture run needs state, init and supervisor');
+  if (supervisor.pid !== state.supervisor?.pid) throw new Error('supervisor pid does not match the run');
+  if (state.localDb != null && init.database !== state.localDb.database) throw new Error('database does not match the run');
+  const postgres = supervisor.services?.find((service) => service.name === 'postgres');
+  const port = state.localDb?.pgPort;
+  return {
+    devLocal: state.mode === 'dev' && state.localDb != null,
+    neon: state.localDb == null,
+    prod: state.mode === 'prod',
+    supervisorPid: state.supervisor?.pid,
+    postgresPid: postgres?.pid,
+    socketDir: init.sockDir,
+    port,
+    database: init.database,
+    socket: path.join(init.sockDir, `.s.PGSQL.${port}`),
+    postmasterPidPath: path.join(init.dataDir, 'postmaster.pid'),
+  };
+}
+
+export function fixtureOptions(entry, { players, mode, era } = {}) {
+  const resolved = { players: players ?? entry.players, mode: mode ?? entry.mode, era: era ?? entry.era };
+  if (resolved.players !== entry.players || resolved.mode !== entry.mode || resolved.era !== entry.era) {
+    throw new Error(`fixture ${entry.id} expects ${entry.players} ${entry.mode} ${entry.era}`);
+  }
+  return resolved;
+}
+
+export function classifyFixture({ gateSeen, gateReadySeats, allEliminatedObserved, recap }) {
+  if (gateSeen) return { observedClass: 'qualifying', qualifyingSeats: [...gateReadySeats] };
+  if (allEliminatedObserved && recap) return { observedClass: 'all-eliminated', qualifyingSeats: [] };
+  return { observedClass: 'unknown', qualifyingSeats: [] };
+}
+
 export function guardOwnedRun({ run, base, readFile = fs.readFileSync, pidAlive = defaultPidAlive }) {
   if (base) throw new Error('fixture refuses --base');
   if (!run || run.neon === true || run.prod === true || run.devLocal !== true) throw new Error('fixture requires a dev-local run');
