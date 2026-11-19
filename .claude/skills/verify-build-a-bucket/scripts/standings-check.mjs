@@ -100,6 +100,74 @@ export function allEliminated({ out, activity }) {
   );
 }
 
+const FINISHES = ['Champion', 'Finals loss', 'Conference finals', 'Semis', 'First round', 'Play-in exit', 'Missed playoffs'];
+const OUT_AT_ENTRY = new Set(['Play-in exit', 'Missed playoffs']);
+const AUTO_START = 'The playoffs started automatically';
+const HELD_START = ['The playoffs started automatically after waiting for', 'Everyone was ready, so the playoffs started', ' started the playoffs'];
+
+function section(text, start, end) {
+  const from = text.indexOf(start);
+  if (from < 0 || text.indexOf(start, from + 1) >= 0) return null;
+  const to = text.indexOf(end, from + start.length);
+  return to < 0 ? null : text.slice(from + start.length, to);
+}
+
+export function parseRecapCapture(aria) {
+  if (typeof aria !== 'string' || aria.length === 0) return null;
+  const table = section(aria, 'SEAT PLAYER STATUS ', ' Your team');
+  const final = section(aria, 'Final recap ', ' Head to head');
+  const activity = section(aria, 'League activity ', ' Final recap');
+  const headings = aria.match(/heading "[^"]+ are champions"/g);
+  if (table === null || final === null || activity === null || !headings || headings.length !== 1) return null;
+  const finish = FINISHES.join('|');
+  const rows = [...table.matchAll(new RegExp(`(\\d+) (.+?)((?: (?:YOU|HOST))*) (${finish}) · (\\d+-\\d+)`, 'g'))];
+  if (rows.length === 0 || rows.map((m) => m[0]).join(' ') !== table) return null;
+  const finals = [...final.matchAll(new RegExp(`(\\S.*?) (\\d+-\\d+) ([A-Z]{2,4}) (${finish})`, 'g'))];
+  if (finals.length === 0 || finals.map((m) => m[0]).join(' ') !== final) return null;
+  return {
+    seats: rows.map((m) => ({ seat: Number(m[1]), name: m[2], you: m[3].includes('YOU'), finish: m[4], record: m[5] })),
+    recap: finals.map((m) => ({ name: m[1], record: m[2], team: m[3], finish: m[4] })),
+    champion: headings[0],
+    activity,
+  };
+}
+
+export function recapElimination({ players, captures, playoffSample = null, gateSeen = false }) {
+  const fail = (reason) => ({ allEliminated: false, reason, record: null });
+  if (!Number.isInteger(players) || players < 1) return fail('players is invalid');
+  if (gateSeen) return fail('a held playoff gate was seen');
+  if (!Array.isArray(captures) || captures.length !== players) return fail('recap captures do not cover every planned seat');
+  const bySeat = new Map();
+  for (const capture of captures) {
+    if (!Number.isInteger(capture?.seat) || capture.seat < 1 || capture.seat > players || bySeat.has(capture.seat)) return fail('recap captures have a missing, duplicate or unknown seat');
+    const parsed = parseRecapCapture(capture.aria);
+    if (!parsed) return fail(`seat ${capture.seat} recap capture is malformed`);
+    bySeat.set(capture.seat, parsed);
+  }
+  const shared = (parsed) => JSON.stringify({ seats: parsed.seats.map(({ seat, name, finish, record }) => ({ seat, name, finish, record })), recap: parsed.recap, champion: parsed.champion });
+  const first = bySeat.get(1);
+  const expected = JSON.stringify(Array.from({ length: players }, (_, index) => index + 1));
+  for (const [seat, parsed] of bySeat) {
+    if (JSON.stringify(parsed.seats.map((row) => row.seat)) !== expected) return fail(`seat ${seat} recap does not list every seat once`);
+    const own = parsed.seats.filter((row) => row.you);
+    if (own.length !== 1 || own[0].seat !== seat) return fail(`seat ${seat} recap is not that seat's own view`);
+    if (shared(parsed) !== shared(first)) return fail(`seat ${seat} recap disagrees with seat 1`);
+    if (!parsed.activity.includes(AUTO_START) || HELD_START.some((text) => parsed.activity.includes(text))) return fail(`seat ${seat} recap lacks the plain automatic playoff start`);
+  }
+  const names = first.seats.map((row) => row.name);
+  if (new Set(names).size !== players || first.recap.length !== players) return fail('final recap does not match the seats');
+  for (const row of first.seats) {
+    const final = first.recap.find((entry) => entry.name === row.name);
+    if (!final || final.finish !== row.finish || final.record !== row.record) return fail(`seat ${row.seat} status and final recap disagree`);
+    if (!OUT_AT_ENTRY.has(row.finish)) return fail(`seat ${row.seat} finished '${row.finish}', a playoff finish`);
+  }
+  if (playoffSample !== null) {
+    const allTrue = (values) => Array.isArray(values) && values.length === players && values.every((value) => value === true);
+    if (!allTrue(playoffSample?.out) || !allTrue(playoffSample?.autoStart)) return fail('the live playoff sample contradicts all-eliminated');
+  }
+  return { allEliminated: true, reason: null, record: { source: 'recap', champion: first.champion, seats: first.seats.map(({ seat, name, finish, record }) => ({ seat, name, finish, record })), playoffSample } };
+}
+
 export function shouldAwaitStandings({ navigation, session }) {
   return navigation?.observed === true && session?.present === true;
 }

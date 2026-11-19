@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { refreshCoverage, revisionLabel } from './standings-check.mjs';
+import { recapElimination, refreshCoverage, revisionLabel } from './standings-check.mjs';
 import { reloadCaptureBase } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -293,14 +293,20 @@ function checkRun(run, dir) {
       failures.push(...checkNoBoundaryContract({ reload, attempts, stages }));
       if (!(Array.isArray(summary.marks) ? summary.marks : []).some((mark) => mark?.label === 'recap')) failures.push('recap not reached');
       if (!Array.isArray(summary.fixture?.qualifyingSeats) || summary.fixture.qualifyingSeats.length !== 0) failures.push('summary.fixture.qualifyingSeats is not empty');
-      const elimination = summary.fixture?.elimination;
-      if (!elimination || typeof elimination !== 'object') failures.push('summary.fixture.elimination is missing');
-      else {
-        if (!Array.isArray(elimination.out) || elimination.out.length !== run.players || elimination.out.some((value) => value !== true)) failures.push('summary.fixture.elimination.out is not all true');
-        if (!Array.isArray(elimination.autoStart) || elimination.autoStart.length !== run.players || elimination.autoStart.some((value) => value !== true)) failures.push('summary.fixture.elimination.autoStart is not all true');
-      }
       const evidenceDir = path.dirname(summaries[0]);
       const files = new Map(fs.readdirSync(evidenceDir).map((name) => [name, fs.statSync(path.join(evidenceDir, name)).size]));
+      const captures = [];
+      for (let seat = 1; seat <= run.players; seat++) {
+        const names = [...files.keys()].filter((name) => new RegExp(`^${seat}-[^/]+-recap\\.aria\\.txt$`).test(name));
+        if (names.length !== 1) failures.push(`recap capture missing for seat ${seat}`);
+        else captures.push({ seat, aria: fs.readFileSync(path.join(evidenceDir, names[0]), 'utf8') });
+      }
+      if (captures.length === run.players) {
+        const gateSeen = (Array.isArray(summary.gateWaits) ? summary.gateWaits : []).some((entry) => entry?.stage === 'Playoff gate');
+        const derived = recapElimination({ players: run.players, captures, playoffSample: reload?.playoffSample ?? null, gateSeen });
+        if (!derived.allEliminated) failures.push(`recap evidence does not prove all-eliminated: ${derived.reason}`);
+        else if (JSON.stringify(summary.fixture?.elimination) !== JSON.stringify(derived.record)) failures.push('summary.fixture.elimination does not match the saved recap captures');
+      }
       const hasCapture = (seat, phase, suffix) => [...files].some(([name, size]) => name.startsWith(`reload-${phase}-${seat}-`) && name.endsWith(suffix) && size > 0);
       for (const suffix of ['.png', '.aria.txt']) {
         if (!hasCapture(run.reloadSeat, 'before', suffix)) failures.push(`reload before capture for seat ${run.reloadSeat} is missing or empty`);

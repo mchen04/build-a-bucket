@@ -28,6 +28,10 @@ export type ReloadRecord = {
   coverage?: string;
   [key: string]: unknown;
 };
+export type RecapSeat = { seat: number; name: string; you: boolean; finish: string; record: string };
+export type RecapFinal = { name: string; record: string; team: string; finish: string };
+export type RecapCapture = { seats: RecapSeat[]; recap: RecapFinal[]; champion: string; activity: string };
+export type RecapElimination = { allEliminated: boolean; reason: string | null; record: { source: 'recap'; champion: string; seats: { seat: number; name: string; finish: string; record: string }[]; playoffSample: unknown } | null };
 export type FailureSummary = {
   ok: boolean;
   error: string;
@@ -44,6 +48,8 @@ export function seatIdentities(seats: unknown): Map<number, Set<string>>;
 export function distinctSeatLabels(seats: unknown): Set<string>;
 export function canonicalTables(tables: unknown): string[][];
 export function allEliminated(args: { out: unknown; activity: unknown }): boolean;
+export function parseRecapCapture(aria: string): RecapCapture | null;
+export function recapElimination(args: { players: number; captures: { seat: number; aria: string }[]; playoffSample?: { out: boolean[]; autoStart: boolean[] } | null; gateSeen?: boolean }): RecapElimination;
 export function newReloadState(): ReloadRecord;
 export function shouldAwaitStandings(args: { navigation?: { observed?: boolean } | null; session?: { present?: boolean } | null }): boolean;
 export function awaitReloadProof(args: {

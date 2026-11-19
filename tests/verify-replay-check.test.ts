@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -654,17 +654,51 @@ describe('replay checker', () => {
     expect(result.refreshProofs).toBe(12);
   });
 
-  it('fails an elimination out false', async () => {
+  it('fails an elimination finish mismatch', async () => {
     const dir = await control();
-    editElimSummary(dir, (value) => { value.fixture.elimination.out[0] = false; });
+    editElimSummary(dir, (value) => { value.fixture.elimination.seats[0].finish = 'First round'; });
     const result = check(dir);
     expect(result.ok).toBe(false);
     expect(result.refreshProofs).toBe(12);
   });
 
-  it('fails a short autoStart', async () => {
+  it('fails a deleted recap capture', async () => {
     const dir = await control();
-    editElimSummary(dir, (value) => { value.fixture.elimination.autoStart.pop(); });
+    const evidence = path.dirname(elimSummaryPath(dir));
+    const name = readdirSync(evidence).find((file) => /^3-.*-recap\.aria\.txt$/.test(file));
+    expect(name).toBeDefined();
+    rmSync(path.join(evidence, name as string));
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.rows.flatMap((row) => row.failures)).toContain('recap capture missing for seat 3');
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails a saved recap that shows a playoff finish', async () => {
+    const dir = await control();
+    const evidence = path.dirname(elimSummaryPath(dir));
+    for (const file of readdirSync(evidence).filter((name) => /^\d+-.*-recap\.aria\.txt$/.test(name))) {
+      const aria = readFileSync(path.join(evidence, file), 'utf8');
+      writeFileSync(path.join(evidence, file), aria.replace(/4 P4( YOU)? Play-in exit · /, (_match, you) => `4 P4${you ?? ''} First round · `).replace(/P4 (\d+-\d+) CHA Play-in exit/, 'P4 $1 CHA First round'));
+    }
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.rows.flatMap((row) => row.failures).some((failure) => failure.includes("seat 4 finished 'First round'"))).toBe(true);
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails the old out and autoStart elimination record', async () => {
+    const dir = await control();
+    editElimSummary(dir, (value) => { value.fixture.elimination = { out: [true, true, true, true], autoStart: [true, true, true, true] }; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.rows.flatMap((row) => row.failures)).toContain('summary.fixture.elimination does not match the saved recap captures');
+    expect(result.refreshProofs).toBe(12);
+  });
+
+  it('fails a short elimination seats', async () => {
+    const dir = await control();
+    editElimSummary(dir, (value) => { value.fixture.elimination.seats.pop(); });
     const result = check(dir);
     expect(result.ok).toBe(false);
     expect(result.refreshProofs).toBe(12);

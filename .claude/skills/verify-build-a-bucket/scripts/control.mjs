@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { allEliminated, awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, newReloadState, readLeagueStandings, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
+import { awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, newReloadState, readLeagueStandings, recapElimination, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
 import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
@@ -905,12 +905,10 @@ async function leagueRun() {
       if (label !== lastLabel) {
         const record = await verifyStage(`stage-${checkpoint}`, null);
         stages.push(record);
-        if (record.phase === 'Playoffs' && (reloadSeat !== null || fixture) && !reload.allEliminatedObserved) {
-          reload.allEliminatedObserved = true;
+        if (record.phase === 'Playoffs' && (reloadSeat !== null || fixture) && reload.playoffSample == null) {
           const out = await Promise.all(active().map((entry) => entry.page.getByText('You are out').first().isVisible().catch(() => false)));
           const activity = await Promise.all(active().map(logText));
-          reload.eliminationEvidence = { out, autoStart: activity.map((text) => String(text).includes('The playoffs started automatically')) };
-          reload.allEliminated = allEliminated({ out, activity });
+          reload.playoffSample = { out, autoStart: activity.map((text) => String(text).includes('The playoffs started automatically')) };
         }
         const roundLabel = clean(record.roundName ?? record.stageName ?? '').toUpperCase();
         if ((record.phase === 'Awards' || record.phase === 'Play-In' || record.phase === 'Playoffs') && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
@@ -956,6 +954,13 @@ async function leagueRun() {
     if (!marks.some((entry) => entry.label === 'recap')) throw new Error('league did not reach the recap');
     const champion = stages[stages.length - 1].champion;
     for (const seat of active()) await snap(seat, 'recap');
+    if (reloadSeat !== null || fixture) {
+      const captures = active().map((seat) => ({ seat: seat.seat, aria: fs.readFileSync(path.join(ev, `${seat.seat}-${seat.name}-recap.aria.txt`), 'utf8') }));
+      const result = recapElimination({ players, captures, playoffSample: reload.playoffSample ?? null, gateSeen });
+      reload.allEliminatedObserved = true;
+      reload.allEliminated = result.allEliminated;
+      reload.eliminationEvidence = result.record ?? { source: 'recap', reason: result.reason };
+    }
     const recapLogs = await Promise.all(active().map(logText));
     if (new Set(recapLogs).size > 1) throw new Error('activity logs differ at the recap');
     seriesScores.clear();

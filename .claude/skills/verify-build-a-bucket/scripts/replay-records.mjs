@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { awaitReloadProof, newReloadState, reloadRecord, revisionLabel } from './standings-check.mjs';
+import { awaitReloadProof, newReloadState, recapElimination, reloadRecord, revisionLabel } from './standings-check.mjs';
 import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -126,6 +126,23 @@ function writeText(file, value) {
   fs.writeFileSync(file, value);
 }
 
+export function recapAria({ players, seat, finishes, start = 'The playoffs started automatically', champion = 'DET' }) {
+  const teams = ['ATL', 'BOS', 'BKN', 'CHA', 'CHI', 'DET', 'MIA', 'NYK'];
+  const rows = Array.from({ length: players }, (_, index) => {
+    const number = index + 1;
+    const tags = number === seat ? (seat === 1 ? 'YOU HOST' : 'YOU') : (number === 1 ? 'HOST' : '');
+    return `${number} P${number}${tags ? ` ${tags}` : ''} ${finishes[index]} · ${40 + number}-${42 - number}`;
+  });
+  const finals = Array.from({ length: players }, (_, index) => `P${index + 1} ${40 + index + 1}-${42 - index - 1} ${teams[index]} ${finishes[index]}`);
+  return [
+    '- button "Back": ‹',
+    `- text: "Lobby KRP2HL Recap SEAT PLAYER STATUS ${rows.join(' ')} Your team ${teams[seat - 1]} YOU ${40 + seat}-${42 - seat} · #${seat} ${finishes[seat - 1]}"`,
+    `- heading "${champion} are champions" [level=1]`,
+    '- paragraph: A computer team took it',
+    `- text: "League activity ${champion} won the championship ${start} P1 missed the playoffs with ATL Final recap ${finals.join(' ')} Head to head P3 vs P2 1-3"`,
+  ].join('\n');
+}
+
 export async function buildControlFixture({ out, plan, head, pid = 123, port = 4391, pgPort = 55434, e2ePort = 4392, suitePgPort = 55435 }) {
   writeJson(path.join(out, 'plan.json'), plan);
   writeJson(path.join(out, 'meta.json'), buildMetaRecord({ head, out, babVerifyHome: path.join(out, 'bab-home'), port, e2ePort, suitePgPort }));
@@ -172,9 +189,12 @@ export async function buildControlFixture({ out, plan, head, pid = 123, port = 4
       if (run.expectedClass === 'all-eliminated') {
         const reload = newReloadState();
         reload.armed = true;
+        const finishes = ['Play-in exit', 'Missed playoffs', 'Missed playoffs', 'Play-in exit'];
+        const captures = Array.from({ length: run.players }, (_, index) => ({ seat: index + 1, aria: recapAria({ players: run.players, seat: index + 1, finishes }) }));
+        for (const capture of captures) writeText(path.join(evidenceDir, `${capture.seat}-P${capture.seat}-recap.aria.txt`), capture.aria);
+        const result = recapElimination({ players: run.players, captures, playoffSample: null, gateSeen: false });
+        reload.allEliminated = result.allEliminated;
         reload.allEliminatedObserved = true;
-        reload.allEliminated = true;
-        reload.eliminationEvidence = { out: Array(run.players).fill(true), autoStart: Array(run.players).fill(true) };
         const proof = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: { seat: run.reloadSeat, name: `P${run.reloadSeat}` }, wait: async () => {}, attempts: 1 });
         const seat = { seat: run.reloadSeat, name: `P${run.reloadSeat}` };
         const other = run.reloadSeat === 1 ? { seat: 2, name: 'P2' } : { seat: 1, name: 'P1' };
@@ -185,7 +205,7 @@ export async function buildControlFixture({ out, plan, head, pid = 123, port = 4
         };
         await recordNoBoundary({ seat, other, snapReload, proof, ev: evidenceDir, reload });
         summary.reload = reloadRecord(true, reload);
-        summary.fixture.elimination = reload.eliminationEvidence;
+        summary.fixture.elimination = result.record;
       } else {
         const seats = seatLabels(run.players);
         const revision = summary.reload.revision;
