@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { allEliminated, awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, readLeagueStandings, reloadRecord } from './standings-check.mjs';
+import { allEliminated, awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, readLeagueStandings, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
 import { recordNoBoundary } from './reload-boundary.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
@@ -841,8 +841,10 @@ async function leagueRun() {
             }
           }, code);
           reload.session = session;
-          await waitStage(seat);
-          await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
+          if (shouldAwaitStandings({ navigation: reload.navigation, session })) {
+            await waitStage(seat);
+            await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
+          }
           const proof = await awaitReloadProof({
             readAll: async () => Promise.all(active().map(async (entry) => ({ seat: entry, ...(await entry.page.evaluate(readLeagueStandings)) }))),
             isRecap: () => visible(seat, 'recap'),

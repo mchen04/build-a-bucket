@@ -100,6 +100,10 @@ export function allEliminated({ out, activity }) {
   );
 }
 
+export function shouldAwaitStandings({ navigation, session }) {
+  return navigation?.observed === true && session?.present === true;
+}
+
 export async function awaitReloadProof({ readAll, isRecap, refreshedSeat, wait, attempts = 40, gate = true, navigation = null, session = null }) {
   if (!gate) return { classification: 'no-held-boundary', reason: 'no held playoff gate', revision: null, seats: [], rowsCompared: 0, standings: null, attempts: [] };
   if (navigation && navigation.observed !== true) {

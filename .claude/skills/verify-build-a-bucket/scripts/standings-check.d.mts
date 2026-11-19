@@ -44,6 +44,7 @@ export function seatIdentities(seats: unknown): Map<number, Set<string>>;
 export function distinctSeatLabels(seats: unknown): Set<string>;
 export function canonicalTables(tables: unknown): string[][];
 export function allEliminated(args: { out: unknown; activity: unknown }): boolean;
+export function shouldAwaitStandings(args: { navigation?: { observed?: boolean } | null; session?: { present?: boolean } | null }): boolean;
 export function awaitReloadProof(args: {
   readAll: () => Promise<Read[]>;
   isRecap: () => Promise<boolean>;

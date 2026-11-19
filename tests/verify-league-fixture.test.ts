@@ -297,6 +297,15 @@ describe('fixture session persistence', () => {
     expect(source.split('bab:mp:v1').length - 1).toBe(1);
   });
 
+  it('gates the reload waits on shouldAwaitStandings', () => {
+    const source = readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/scripts/control.mjs'), 'utf8');
+    const gate = source.indexOf('shouldAwaitStandings(');
+    const wait = source.indexOf('waitStage(seat)', gate);
+    expect(gate).toBeGreaterThan(-1);
+    expect(wait).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(wait);
+  });
+
   it('fails refresh coverage without a persisted session', () => {
     const value = { classification: 'stable-match', ran: true, revision: { stage: 'Season', progress: '1 / 10' }, seats: ['1:Ava', '2:Ben'], rowsCompared: 20, refreshedSeat: { seat: 2, name: 'Ben' }, navigation: { observed: true }, attempts: 'reload-attempts.json', session: { present: false } };
     expect(refreshCoverage(true, value).ok).toBe(false);

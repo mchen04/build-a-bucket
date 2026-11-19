@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { allEliminated, assertRefreshCoverage, awaitReloadProof, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, refreshCoverage, reloadRecord } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
+import { allEliminated, assertRefreshCoverage, awaitReloadProof, compareStandings, createLeagueEvidenceDir, leagueFailureSummary, refreshCoverage, reloadRecord, shouldAwaitStandings } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
 
 function read(seat: number, revision: unknown, tables: string[][]) {
   return { seat: { seat, name: `S${seat}` }, revision, tables };
@@ -141,6 +141,14 @@ describe('reload proof boundary', () => {
     const result = await awaitReloadProof({ session: { present: false }, readAll: async () => reads(rev('Playoffs', 'First Round')), isRecap: async () => false, refreshedSeat: { seat: 2, name: 'S2' }, wait: async () => {}, attempts: 3 });
     expect(result.classification).toBe('invalid-display');
     expect(result.reason).toBe('session not persisted after reload');
+  });
+
+  it('awaits standings only when navigation and session both hold', () => {
+    expect(shouldAwaitStandings({ navigation: { observed: true }, session: { present: true } })).toBe(true);
+    expect(shouldAwaitStandings({ navigation: { observed: true }, session: { present: false } })).toBe(false);
+    expect(shouldAwaitStandings({ navigation: { observed: true }, session: null })).toBe(false);
+    expect(shouldAwaitStandings({ navigation: { observed: false }, session: { present: true } })).toBe(false);
+    expect(shouldAwaitStandings({ navigation: null, session: { present: true } })).toBe(false);
   });
 
   it('detects the all-eliminated signature', () => {
