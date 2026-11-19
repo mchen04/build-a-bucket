@@ -556,33 +556,49 @@ describe('supervisor CLI', () => {
   it('stops Postgres and names it when init fails after spawn', async () => {
     const dir = tempDir();
     const postgres = new FakeChild(200);
-    let appSpawns = 0;
-    let calls = 0;
+    const spawned: string[] = [];
+    let readinessChecks = 0;
+    let schemaLoads = 0;
     const spec = specFor(dir, { pgPort: 55434, database: 'bab_local' }, postgres);
-    spec.postgresInit.psql = () => {
-      throw new Error('init failed');
-    };
     const specPath = path.join(dir, 'spec.json');
     writeFileSync(specPath, JSON.stringify(spec));
     const surface = new EventEmitter();
     const supervisor = await runSupervisorCli([dir, path.join(dir, 'control.json'), path.join(dir, 'receipt.json'), path.join(dir, 'ack.json'), specPath], {
-      spawn: () => {
-        calls += 1;
-        if (calls === 1) return postgres;
-        appSpawns += 1;
-        return new FakeChild(100);
+      spawn: (command: string) => {
+        spawned.push(command);
+        return spawned.length === 1 ? postgres : new FakeChild(100);
       },
       clock: clock({ timeout: true }),
       controls: controls(),
       events: surface,
       exit: () => {},
+      postgresTools: {
+        initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+          writeFileSync(path.join(dataDir, 'postmaster.pid'), `${postgres.pid}\n`);
+          writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+        },
+        psql: () => {
+          readinessChecks += 1;
+          throw new Error('init failed');
+        },
+        schemaLoad: () => {
+          schemaLoads += 1;
+        },
+      },
     });
-    expect(appSpawns).toBe(0);
+    expect(spawned).toHaveLength(1);
+    expect(path.basename(spawned[0]!)).toBe('postgres');
+    expect(readinessChecks).toBe(120);
+    expect(schemaLoads).toBe(0);
     expect(postgres.signals).toEqual(['SIGINT']);
+    const init = JSON.parse(readFileSync(path.join(dir, 'supervisor-init.json'), 'utf8'));
+    expect(init).toMatchObject({ state: 'failed', reason: 'owned postgres did not become ready' });
     const receipt = JSON.parse(readFileSync(path.join(dir, 'receipt.json'), 'utf8'));
     expect(receipt.ok).toBe(false);
-    expect(receipt.services.some((service: { name: string }) => service.name === 'postgres')).toBe(true);
+    expect(receipt.reason).toBe('owned postgres did not become ready');
+    expect(receipt.services).toEqual([expect.objectContaining({ name: 'postgres', pid: 200, state: 'clean' })]);
     await supervisor.stop();
+    expect(postgres.signals).toEqual(['SIGINT']);
     expect(surface.listenerCount('uncaughtException')).toBe(0);
     expect(surface.listenerCount('unhandledRejection')).toBe(0);
   });
