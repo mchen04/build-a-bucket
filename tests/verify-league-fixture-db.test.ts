@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { afterAll, expect, it } from 'vitest';
 import { dbSuite } from './local-db-gate';
+import { deleteOwned, ownedEntry } from './fixture-identity';
 import { db } from '../src/server/db';
 import { readyAction as readyHandler } from '../src/server/actions';
 import { applyLeagueFixture } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
@@ -12,7 +12,7 @@ import { generateSecret, newActionId } from '../src/shared/mp/codes';
 import type { LeagueResult } from '../src/shared/engine/league';
 
 const BASE = 'http://localhost:4173/api';
-const created: string[] = [];
+const owned: string[] = [];
 
 function authed(secret: string, path: string, body: unknown): Request {
   return new Request(`${BASE}/${path}`, {
@@ -22,10 +22,7 @@ function authed(secret: string, path: string, body: unknown): Request {
   });
 }
 
-afterAll(async () => {
-  if (!created.length) return;
-  await db().query('delete from lobbies where code = any($1::text[])', [created]);
-});
+afterAll(() => deleteOwned(owned));
 
 dbSuite()('league fixtures on the real server', () => {
   const socketDir = process.env.BAB_PG_SOCKET_DIR ?? '';
@@ -47,10 +44,10 @@ dbSuite()('league fixtures on the real server', () => {
   for (const id of ['normal-2p-q1', 'squad-4p-elim']) {
     it(`gives ${id} its declared class`, async () => {
       const catalog = JSON.parse(readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/fixtures/league-fixtures.json'), 'utf8'));
-      const entry = catalog.entries.find((candidate: { id: string }) => candidate.id === id);
+      const entry = ownedEntry(catalog.entries.find((candidate: { id: string }) => candidate.id === id));
       const secrets = entry.participants.map(() => generateSecret());
+      owned.push(entry.code);
       await applyLeagueFixture({ entry, run, connect, secrets });
-      created.push(entry.code);
       for (let index = 0; index < entry.participants.length; index++) {
         const response = await readyHandler(authed(secrets[index], `lobby/${entry.code}/ready`, { actionId: newActionId(), stage: 0 }));
         expect(response.status).toBe(200);
@@ -65,11 +62,11 @@ dbSuite()('league fixtures on the real server', () => {
   it('applies through the default runner and the child exits', async () => {
     const catalog = JSON.parse(readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/fixtures/league-fixtures.json'), 'utf8'));
     const source = catalog.entries.find((candidate: { id: string }) => candidate.id === 'normal-2p-q1');
-    const code = Array.from({ length: 6 }, () => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)]).join('');
-    const entry = { ...source, id: `${source.id}-child-${code}`, code, participants: source.participants.map((participant: Record<string, unknown>) => ({ ...participant, id: randomUUID() })) };
+    const entry = ownedEntry(source);
+    const code = entry.code;
     const moduleUrl = new URL('../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs', import.meta.url).href;
     const childCode = `import { applyLeagueFixture } from ${JSON.stringify(moduleUrl)}; const args = JSON.parse(process.env.BAB_FIXTURE_ARGS); args.run.pidAlive = () => true; args.run.readFile = () => ['1', '', '', String(args.run.port), args.run.socketDir].join('\\n'); await applyLeagueFixture(args); console.log('applied');`;
-    created.push(code);
+    owned.push(code);
     const child = spawn(process.execPath, ['--input-type=module', '-e', childCode], { env: { ...process.env, BAB_FIXTURE_ARGS: JSON.stringify({ entry, run, secrets: entry.participants.map(() => generateSecret()) }) } });
     let output = '';
     let errors = '';
