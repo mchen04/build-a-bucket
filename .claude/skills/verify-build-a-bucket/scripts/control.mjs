@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allEliminated, awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, readLeagueStandings, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
-import { recordNoBoundary } from './reload-boundary.mjs';
+import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
 import { buildSupervisorSpec } from './supervisor-spec.mjs';
@@ -399,8 +399,9 @@ async function leagueRun() {
     fs.writeFileSync(path.join(ev, `${seat.seat}-${seat.name}-${label}.aria.txt`), await seat.page.locator('body').ariaSnapshot());
   };
   const snapReload = async (seat, phase) => {
-    await seat.page.screenshot({ path: path.join(ev, `reload-${phase}-${seat.seat}-${seat.name}.png`) });
-    fs.writeFileSync(path.join(ev, `reload-${phase}-${seat.seat}-${seat.name}.aria.txt`), await seat.page.locator('body').ariaSnapshot());
+    const base = reloadCaptureBase(phase, seat);
+    await seat.page.screenshot({ path: path.join(ev, `${base}.png`) });
+    fs.writeFileSync(path.join(ev, `${base}.aria.txt`), await seat.page.locator('body').ariaSnapshot());
   };
   const snapFailure = async (seat) => {
     await seat.page.screenshot({ path: path.join(ev, `failure-${seat.seat}-${seat.name}.png`) }).catch(() => {});
@@ -870,8 +871,7 @@ async function leagueRun() {
           reload.rowsCompared = proof.rowsCompared;
           await snapReload(seat, 'after');
           if (other) await snapReload(other, 'after');
-          fs.writeFileSync(path.join(ev, 'reload-attempts.json'), JSON.stringify({ classification: proof.classification, reason: proof.reason ?? null, revision: proof.revision, seats: proof.seats, rowsCompared: proof.rowsCompared, samples: proof.attempts }, null, 2));
-          reload.attempts = 'reload-attempts.json';
+          reload.attempts = writeReloadAttempts(ev, { classification: proof.classification, reason: proof.reason, revision: proof.revision, seats: proof.seats, rowsCompared: proof.rowsCompared, samples: proof.attempts });
           if (proof.classification === 'stable-match') {
             stages.push({ label: 'after-reload', phase: await phaseOf(seat), revision: proof.revision, seats: proof.seats, standings: proof.standings });
             await snap(seat, 'after-reload');

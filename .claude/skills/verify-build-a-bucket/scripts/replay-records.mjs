@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { revisionLabel } from './standings-check.mjs';
+import { reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -166,9 +168,25 @@ export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, p
     const evidenceDir = path.join(runDir, 'evidence', 'league-2026-01-01T00-00-00-000Z-abc');
     const summary = buildControlSummary(run);
     if (run.reloadSeat !== null) {
-      const attemptsPath = path.join(evidenceDir, 'reload-attempts.json');
-      summary.reload.attempts = 'reload-attempts.json';
-      writeJson(attemptsPath, { classification: 'stable-match', reason: null, revision: summary.reload.revision, seats: summary.reload.seats, rowsCompared: summary.reload.rowsCompared, samples: [{ attempt: 0, ms: 0, recap: false, seats: [] }] });
+      fs.mkdirSync(evidenceDir, { recursive: true });
+      const seats = seatLabels(run.players);
+      const revision = summary.reload.revision;
+      const samples = [
+        { attempt: 0, ms: 0, recap: false, seats: [] },
+        { attempt: 1, ms: 250, recap: false, seats: seats.map((label) => { const [seat, name] = label.split(':'); return { seat: Number(seat), name, revision: revisionLabel(revision), rows: 20 }; }) },
+      ];
+      summary.reload.attempts = writeReloadAttempts(evidenceDir, { classification: 'stable-match', reason: null, revision, seats: summary.reload.seats, rowsCompared: summary.reload.rowsCompared, samples });
+      if (summary.reload.classification === 'stable-match') {
+        const refreshed = summary.reload.refreshedSeat;
+        const other = refreshed.seat === 1 ? { seat: 2, name: 'P2' } : { seat: 1, name: 'P1' };
+        for (const seat of [refreshed, other]) {
+          for (const phase of ['before', 'after']) {
+            const base = reloadCaptureBase(phase, seat);
+            writeText(path.join(evidenceDir, `${base}.png`), 'png');
+            writeText(path.join(evidenceDir, `${base}.aria.txt`), '- main');
+          }
+        }
+      }
     }
     writeJson(path.join(evidenceDir, 'summary.json'), summary);
   }

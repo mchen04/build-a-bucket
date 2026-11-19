@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { revisionLabel } from './standings-check.mjs';
+import { reloadCaptureBase } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -138,6 +140,68 @@ function checkErrorEntries(entries, players, key) {
   return failures;
 }
 
+export function checkReloadEvidence({ reload, attempts, files, players, reloadSeat }) {
+  const failures = [];
+  if (!attempts || typeof attempts !== 'object') return ['reload attempts file malformed'];
+  if (attempts.classification !== 'stable-match') failures.push(`reload attempts classification is '${attempts.classification}'`);
+  if (attempts.classification !== reload.classification) failures.push('reload attempts classification mismatch');
+  if (JSON.stringify(attempts.revision) !== JSON.stringify(reload.revision)) failures.push('reload attempts revision mismatch');
+  if (JSON.stringify(attempts.seats) !== JSON.stringify(reload.seats)) failures.push('reload attempts seats mismatch');
+  if (attempts.rowsCompared !== reload.rowsCompared) failures.push('reload attempts rowsCompared mismatch');
+  if (!Array.isArray(attempts.samples) || attempts.samples.length < 1 || attempts.samples.length > 60) failures.push('reload attempts count out of bound');
+  else {
+    let previous = -1;
+    for (let index = 0; index < attempts.samples.length; index++) {
+      const sample = attempts.samples[index];
+      if (sample?.attempt !== index) failures.push(`reload sample ${index} attempt is not ${index}`);
+      if (typeof sample?.ms !== 'number' || !Number.isFinite(sample.ms) || sample.ms < 0) failures.push(`reload sample ${index} ms is not a finite non-negative number`);
+      else if (sample.ms < previous) failures.push(`reload sample ${index} ms decreased`);
+      else previous = sample.ms;
+      if (typeof sample?.recap !== 'boolean') failures.push(`reload sample ${index} recap is not boolean`);
+      if (!Array.isArray(sample?.seats)) failures.push(`reload sample ${index} seats is not an array`);
+      else {
+        const seen = new Set();
+        for (const entry of sample.seats) {
+          if (!Number.isInteger(entry?.seat) || entry.seat < 1 || entry.seat > players) failures.push(`reload sample ${index} seat ${entry?.seat} is out of range`);
+          if (typeof entry?.name !== 'string' || entry.name.length === 0) failures.push(`reload sample ${index} seat ${entry?.seat} name is empty`);
+          if (typeof entry?.revision !== 'string') failures.push(`reload sample ${index} seat ${entry?.seat} revision is not a string`);
+          if (!Number.isInteger(entry?.rows) || entry.rows < 0) failures.push(`reload sample ${index} seat ${entry?.seat} rows is not a non-negative integer`);
+          if (seen.has(entry?.seat)) failures.push(`reload sample ${index} seat ${entry?.seat} is duplicated`);
+          seen.add(entry?.seat);
+        }
+      }
+    }
+    const last = attempts.samples[attempts.samples.length - 1];
+    if (last?.recap !== false) failures.push('reload last sample recap is not false');
+    const lastSeats = Array.isArray(last?.seats) ? last.seats : [];
+    const expected = seatNumbers(reload.seats);
+    if (expected.size < 2) failures.push(`reload.seats has ${expected.size} distinct seats`);
+    if (!expected.has(reloadSeat)) failures.push(`reload.seats does not include seat ${reloadSeat}`);
+    for (const [number, names] of expected) {
+      const name = [...names][0];
+      const entry = lastSeats.find((seat) => seat?.seat === number && seat?.name === name);
+      if (!entry) failures.push(`reload last sample is missing seat ${number}:${name}`);
+      else {
+        if (entry.revision !== revisionLabel(reload.revision)) failures.push(`reload last sample seat ${number} revision mismatch`);
+        if (!(entry.rows > 0)) failures.push(`reload last sample seat ${number} rows is not positive`);
+      }
+    }
+  }
+  const refreshed = reload?.refreshedSeat;
+  const others = [...seatNumbers(reload.seats)].map(([number, names]) => ({ seat: number, name: [...names][0] })).filter((seat) => seat.seat !== refreshed?.seat);
+  const captures = [refreshed, others[0]].filter(Boolean);
+  for (const seat of captures) {
+    for (const phase of ['before', 'after']) {
+      const base = reloadCaptureBase(phase, seat);
+      for (const suffix of ['.png', '.aria.txt']) {
+        const size = files.get(`${base}${suffix}`);
+        if (!(size > 0)) failures.push(`reload capture ${base}${suffix} is missing or empty`);
+      }
+    }
+  }
+  return failures;
+}
+
 function checkRun(run, dir) {
   const failures = [];
   const meta = readJson(path.join(dir, 'run.json'));
@@ -217,12 +281,9 @@ function checkRun(run, dir) {
       if (typeof reload?.attempts !== 'string' || reload.attempts !== 'reload-attempts.json') failures.push(`reload attempts path is '${reload?.attempts}'`);
       else {
         const attempts = readJson(path.join(path.dirname(summaries[0]), reload.attempts));
-        if (!attempts) failures.push('reload attempts file malformed');
-        else {
-          if (attempts.classification !== reload.classification) failures.push('reload attempts classification mismatch');
-          if (JSON.stringify(attempts.revision) !== JSON.stringify(reload.revision)) failures.push('reload attempts revision mismatch');
-          if (!Array.isArray(attempts.samples) || attempts.samples.length > 60) failures.push('reload attempts count out of bound');
-        }
+        const evidenceDir = path.dirname(summaries[0]);
+        const files = new Map(fs.readdirSync(evidenceDir).map((name) => [name, fs.statSync(path.join(evidenceDir, name)).size]));
+        failures.push(...checkReloadEvidence({ reload, attempts, files, players: run.players, reloadSeat: run.reloadSeat }));
       }
       const after = stages.find((stage) => stage?.label === 'after-reload');
       if (!after) failures.push('summary has no after-reload stage');

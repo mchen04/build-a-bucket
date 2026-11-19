@@ -388,6 +388,25 @@ describe('open fixture run', () => {
     await expect(openFixtureRun({ base: 'http://127.0.0.1:4173', dir: '/run', fixture, readJson, apply, launch, makeSecret: () => 's' })).rejects.toThrow();
     expect(calls).toEqual([]);
   });
+
+  it.each([
+    ['foreign base', { ...state, base: 'http://example.com:4173/' }, spec],
+    ['https', { ...state, base: 'https://127.0.0.1:4173/' }, spec],
+    ['base port', { ...state, base: 'http://127.0.0.1:4174/' }, spec],
+    ['spec port', state, { services: [{ kind: 'app', args: ['--port', '4174', '--strictPort'] }] }],
+    ['no app', state, { services: [] }],
+    ['no strictPort', state, { services: [{ kind: 'app', args: ['--port', '4173'] }] }],
+    ['prod', { ...state, mode: 'prod' }, spec],
+  ])('refuses %s with zero calls', async (_name, badState, badSpec) => {
+    const calls: string[] = [];
+    const apply = async () => { calls.push('apply'); };
+    const launch = async () => { calls.push('launch'); return {}; };
+    const makeSecret = () => { calls.push('makeSecret'); return 's'; };
+    const badFiles: Record<string, unknown> = { ...files, 'run.json': badState, 'supervisor-spec.json': badSpec };
+    const badReadJson = (file: string) => badFiles[path.basename(file)];
+    await expect(openFixtureRun({ base: undefined, dir: '/run', fixture, readJson: badReadJson, apply, launch, makeSecret })).rejects.toThrow();
+    expect(calls).toEqual([]);
+  });
 });
 
 describe('fixture launch source', () => {

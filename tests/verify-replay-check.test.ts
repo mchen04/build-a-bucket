@@ -495,6 +495,122 @@ describe('replay checker', () => {
     expect(check(dir).ok).toBe(false);
   });
 
+  const attemptsPath = (dir: string) => path.join(path.dirname(summaryPath(dir, 'run-a')), 'reload-attempts.json');
+  const editAttempts = (dir: string, edit: (value: any) => void) => { const file = attemptsPath(dir); const value = read(file); edit(value); write(file, value); };
+  const capturePath = (dir: string, name: string) => path.join(path.dirname(summaryPath(dir, 'run-a')), name);
+
+  it('fails empty samples', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples = []; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails 61 samples', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples = Array.from({ length: 61 }, (_, index) => ({ attempt: index, ms: index, recap: false, seats: [] })); });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails a last sample recap', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples[value.samples.length - 1].recap = true; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails a last-sample seat 99', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples[value.samples.length - 1].seats.push({ seat: 99, name: 'P99', revision: 'Season: 1 / 10', rows: 20 }); });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails a missing refreshed seat', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples[value.samples.length - 1].seats = value.samples[value.samples.length - 1].seats.filter((seat: { seat: number }) => seat.seat !== 2); });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails rows 0 for seat 1', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples[value.samples.length - 1].seats.find((seat: { seat: number }) => seat.seat === 1).rows = 0; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails a last-sample revision', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples[value.samples.length - 1].seats[0].revision = 'Season:2 / 10'; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails attempts seats', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.seats = ['1:P1']; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails attempts classification', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.classification = 'unequal'; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails non-sequential attempts', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples[1].attempt = 2; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails a string ms', () => {
+    const dir = control();
+    editAttempts(dir, (value) => { value.samples[1].ms = '0'; });
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails a missing before png', () => {
+    const dir = control();
+    rmSync(capturePath(dir, 'reload-before-2-P2.png'));
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails an empty after aria', () => {
+    const dir = control();
+    writeFileSync(capturePath(dir, 'reload-after-1-P1.aria.txt'), '');
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
+  it('fails no other seat captures', () => {
+    const dir = control();
+    for (const name of ['reload-before-1-P1.png', 'reload-before-1-P1.aria.txt', 'reload-after-1-P1.png', 'reload-after-1-P1.aria.txt']) rmSync(capturePath(dir, name));
+    const result = check(dir);
+    expect(result.ok).toBe(false);
+    expect(result.refreshProofs).toBe(11);
+  });
+
   it('fails a fixture row without summary.fixture', () => {
     const dir = control();
     const file = summaryPath(dir, 'run-q02');
