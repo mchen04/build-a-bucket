@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { revisionLabel } from './standings-check.mjs';
+import { refreshCoverage, revisionLabel } from './standings-check.mjs';
 import { reloadCaptureBase } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -202,6 +202,34 @@ export function checkReloadEvidence({ reload, attempts, files, players, reloadSe
   return failures;
 }
 
+export function checkNoBoundaryContract({ reload, attempts, stages }) {
+  const failures = [];
+  if (reload?.classification !== 'no-held-boundary') failures.push(`reload classification is '${reload?.classification}'`);
+  if (attempts?.classification !== 'no-held-boundary') failures.push(`attempts classification is '${attempts?.classification}'`);
+  if (reload?.reason !== 'no held playoff gate') failures.push(`reload reason is '${reload?.reason}'`);
+  if (attempts?.reason !== reload?.reason) failures.push('attempts reason does not match reload reason');
+  if (reload?.ran !== false) failures.push('reload.ran is not false');
+  if (reload?.armed !== true) failures.push('reload.armed is not true');
+  if (reload?.revision !== null) failures.push('reload.revision is not null');
+  if (attempts?.revision !== null) failures.push('attempts.revision is not null');
+  if (!Array.isArray(reload?.seats) || reload.seats.length !== 0) failures.push('reload.seats is not empty');
+  if (!Array.isArray(attempts?.seats) || attempts.seats.length !== 0) failures.push('attempts.seats is not empty');
+  if (reload?.rowsCompared !== 0) failures.push('reload.rowsCompared is not 0');
+  if (attempts?.rowsCompared !== 0) failures.push('attempts.rowsCompared is not 0');
+  if (reload?.refreshedSeat !== null) failures.push('reload.refreshedSeat is not null');
+  if (reload?.navigation !== undefined) failures.push('reload.navigation is present');
+  if (reload?.session !== undefined) failures.push('reload.session is present');
+  if (!Array.isArray(reload?.samples) || reload.samples.length !== 0) failures.push('reload.samples is not empty');
+  if (!Array.isArray(attempts?.samples) || attempts.samples.length !== 0) failures.push('attempts.samples is not empty');
+  const coverage = refreshCoverage(true, reload);
+  if (reload?.coverage !== coverage.reason) failures.push(`reload.coverage is '${reload?.coverage}', expected '${coverage.reason}'`);
+  if (coverage.reason !== 'reload classification is no-held-boundary') failures.push(`coverage reason is '${coverage.reason}'`);
+  if (reload?.allEliminated !== true) failures.push('reload.allEliminated is not true');
+  if (reload?.allEliminatedObserved !== true) failures.push('reload.allEliminatedObserved is not true');
+  if ((Array.isArray(stages) ? stages : []).some((stage) => stage?.label === 'after-reload')) failures.push('after-reload stage is present');
+  return failures;
+}
+
 function checkRun(run, dir) {
   const failures = [];
   const meta = readJson(path.join(dir, 'run.json'));
@@ -261,23 +289,10 @@ function checkRun(run, dir) {
   if (run.reloadSeat !== null) {
     const reload = summary.reload;
     if (run.expectedClass === 'all-eliminated') {
-      if (reload?.classification !== 'no-held-boundary') failures.push(`reload classification is '${reload?.classification}'`);
-      if (!reload || reload.ran !== false) failures.push('reload.ran is not false');
+      const attempts = reload?.attempts === 'reload-attempts.json' ? readJson(path.join(path.dirname(summaries[0]), reload.attempts)) : null;
+      failures.push(...checkNoBoundaryContract({ reload, attempts, stages }));
       if (!(Array.isArray(summary.marks) ? summary.marks : []).some((mark) => mark?.label === 'recap')) failures.push('recap not reached');
       if (!Array.isArray(summary.fixture?.qualifyingSeats) || summary.fixture.qualifyingSeats.length !== 0) failures.push('summary.fixture.qualifyingSeats is not empty');
-      if (reload?.attempts !== 'reload-attempts.json') failures.push(`reload attempts path is '${reload?.attempts}'`);
-      else {
-        const attempts = readJson(path.join(path.dirname(summaries[0]), reload.attempts));
-        if (!attempts) failures.push('reload attempts file malformed');
-        else {
-          if (attempts.classification !== 'no-held-boundary') failures.push(`reload attempts classification is '${attempts.classification}'`);
-          if (attempts.revision !== null) failures.push('reload attempts revision is not null');
-          if (!Array.isArray(attempts.seats) || attempts.seats.length !== 0) failures.push('reload attempts seats is not empty');
-          if (attempts.rowsCompared !== 0) failures.push('reload attempts rowsCompared is not 0');
-          if (!Array.isArray(attempts.samples) || attempts.samples.length > 60) failures.push('reload attempts count out of bound');
-        }
-      }
-      if (reload?.allEliminated !== true) failures.push('reload allEliminated is not true');
       const elimination = summary.fixture?.elimination;
       if (!elimination || typeof elimination !== 'object') failures.push('summary.fixture.elimination is missing');
       else {

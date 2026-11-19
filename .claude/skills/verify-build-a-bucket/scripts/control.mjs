@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { allEliminated, awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, readLeagueStandings, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
+import { allEliminated, awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, newReloadState, readLeagueStandings, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
 import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
@@ -319,7 +319,7 @@ async function leagueRun() {
     ? { width: Number(String(o.viewport).split('x')[0]), height: Number(String(o.viewport).split('x')[1]) }
     : { width: 390, height: 844 };
   const reloadSeat = o.reload === undefined ? null : Number(o.reload);
-  const reload = { ran: false, revision: null, seats: [], rowsCompared: 0, refreshedSeat: null, allEliminated: false, allEliminatedObserved: false };
+  const reload = newReloadState();
   let gateSeen = false;
   let gateReadySeats = [];
   const awaySeat = o.away === undefined ? null : Number(o.away);

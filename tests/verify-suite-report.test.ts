@@ -31,10 +31,10 @@ afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function control(source = plan) {
+async function control(source = plan) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'r31-'));
   temps.push(dir);
-  buildControlFixture({ out: dir, plan: source, head });
+  await buildControlFixture({ out: dir, plan: source, head });
   return dir;
 }
 
@@ -65,13 +65,13 @@ function tests05(report: any) {
 }
 
 describe('suite report gate', () => {
-  it('passes a positive report', () => {
-    expect(check(control()).ok).toBe(true);
+  it('passes a positive report', async () => {
+    expect(check(await control()).ok).toBe(true);
   });
 
   for (const file of ['tests/league-api.test.ts', 'tests/league-stage-defects.test.ts', 'tests/migration.test.ts']) {
-    it(`fails a skipped ${file}`, () => {
-      const dir = control();
+    it(`fails a skipped ${file}`, async () => {
+      const dir = await control();
       edit04(dir, (report) => {
         const entry = report.testResults.find((item: { name: string }) => item.name === file);
         entry.assertionResults[0].status = 'skipped';
@@ -79,16 +79,16 @@ describe('suite report gate', () => {
       expect(check(dir).ok).toBe(false);
     });
 
-    it(`fails an absent ${file}`, () => {
-      const dir = control();
+    it(`fails an absent ${file}`, async () => {
+      const dir = await control();
       edit04(dir, (report) => {
         report.testResults = report.testResults.filter((item: { name: string }) => item.name !== file);
       });
       expect(check(dir).ok).toBe(false);
     });
 
-    it(`fails a short ${file}`, () => {
-      const dir = control();
+    it(`fails a short ${file}`, async () => {
+      const dir = await control();
       edit04(dir, (report) => {
         const entry = report.testResults.find((item: { name: string }) => item.name === file);
         entry.assertionResults.pop();
@@ -97,16 +97,16 @@ describe('suite report gate', () => {
     });
   }
 
-  it('fails when every result is emptied', () => {
-    const dir = control();
+  it('fails when every result is emptied', async () => {
+    const dir = await control();
     edit05(dir, (report) => {
       for (const test of tests05(report)) test.results = [];
     });
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails when one project is duplicated and the other absent', () => {
-    const dir = control();
+  it('fails when one project is duplicated and the other absent', async () => {
+    const dir = await control();
     edit05(dir, (report) => {
       for (const suite of report.suites) {
         for (const spec of suite.specs) {
@@ -118,16 +118,16 @@ describe('suite report gate', () => {
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails when rootDir points at another checkout', () => {
-    const dir = control();
+  it('fails when rootDir points at another checkout', async () => {
+    const dir = await control();
     edit05(dir, (report) => {
       report.config.rootDir = '/tmp/other/e2e';
     });
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails an expected failure', () => {
-    const dir = control();
+  it('fails an expected failure', async () => {
+    const dir = await control();
     edit05(dir, (report) => {
       const test = tests05(report)[0];
       test.expectedStatus = 'failed';
@@ -137,24 +137,24 @@ describe('suite report gate', () => {
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails a missing results array', () => {
-    const dir = control();
+  it('fails a missing results array', async () => {
+    const dir = await control();
     edit05(dir, (report) => {
       delete tests05(report)[0].results;
     });
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails a skipped test', () => {
-    const dir = control();
+  it('fails a skipped test', async () => {
+    const dir = await control();
     edit05(dir, (report) => {
       tests05(report)[0].status = 'skipped';
     });
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails one project partial', () => {
-    const dir = control();
+  it('fails one project partial', async () => {
+    const dir = await control();
     edit05(dir, (report) => {
       const spec = report.suites[0].specs[0];
       spec.tests = spec.tests.filter((test: any) => test.projectName !== 'mobile-webkit');
@@ -162,23 +162,23 @@ describe('suite report gate', () => {
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails a missing file', () => {
-    const dir = control();
+  it('fails a missing file', async () => {
+    const dir = await control();
     edit05(dir, (report) => {
       report.suites = report.suites.filter((suite: any) => !suite.specs.some((spec: any) => spec.file === 'lobby.spec.ts'));
     });
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails a missing report', () => {
-    const dir = control();
+  it('fails a missing report', async () => {
+    const dir = await control();
     rmSync(reportPath(dir, '04-test-local-db'));
     expect(check(dir).ok).toBe(false);
   });
 
-  it('fails a plan without required', () => {
+  it('fails a plan without required', async () => {
     const without: any = { ...plan, suite: plan.suite.map((step) => (step.id === '04-test-local-db' ? { ...step, required: undefined } : step)) };
-    const dir = control(without);
+    const dir = await control(without);
     expect(check(dir).ok).toBe(false);
   });
 });

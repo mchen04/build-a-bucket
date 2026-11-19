@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { revisionLabel } from './standings-check.mjs';
-import { reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
+import { awaitReloadProof, newReloadState, reloadRecord, revisionLabel } from './standings-check.mjs';
+import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -88,7 +88,7 @@ export function buildControlSummary(run) {
   const revision = { stage: 'Season', progress: '1 / 10' };
   const seats = seatLabels(run.players);
   const stages = [];
-  if (run.reloadSeat !== null) stages.push({ label: 'after-reload', phase: 'Season', revision, seats, standings: standingsRows() });
+  if (run.reloadSeat !== null && run.expectedClass !== 'all-eliminated') stages.push({ label: 'after-reload', phase: 'Season', revision, seats, standings: standingsRows() });
   if (run.awaySeat !== null) stages.push({ label: 'away', seat: run.awaySeat, name: `P${run.awaySeat}` });
   if (run.hostLeave === true) stages.push({ label: 'host-left', seat: 1, name: 'P1' });
   stages.push({ label: 'recap', phase: 'Recap', champion: 'OKC are champions' });
@@ -126,7 +126,7 @@ function writeText(file, value) {
   fs.writeFileSync(file, value);
 }
 
-export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, pgPort = 55434, e2ePort = 4392, suitePgPort = 55435 }) {
+export async function buildControlFixture({ out, plan, head, pid = 123, port = 4391, pgPort = 55434, e2ePort = 4392, suitePgPort = 55435 }) {
   writeJson(path.join(out, 'plan.json'), plan);
   writeJson(path.join(out, 'meta.json'), buildMetaRecord({ head, out, babVerifyHome: path.join(out, 'bab-home'), port, e2ePort, suitePgPort }));
   writeJson(path.join(out, 'tracked.json'), buildTrackedRecord({ pid, port, pgPort }));
@@ -170,18 +170,22 @@ export function buildControlFixture({ out, plan, head, pid = 123, port = 4391, p
     if (run.reloadSeat !== null) {
       fs.mkdirSync(evidenceDir, { recursive: true });
       if (run.expectedClass === 'all-eliminated') {
-        summary.reload.attempts = writeReloadAttempts(evidenceDir, { classification: 'no-held-boundary', reason: 'no held playoff gate', revision: null, seats: [], rowsCompared: 0, samples: [] });
-        summary.reload.allEliminated = true;
-        summary.fixture.elimination = { out: Array(run.players).fill(true), autoStart: Array(run.players).fill(true) };
-        const refreshed = { seat: run.reloadSeat, name: `P${run.reloadSeat}` };
+        const reload = newReloadState();
+        reload.armed = true;
+        reload.allEliminatedObserved = true;
+        reload.allEliminated = true;
+        reload.eliminationEvidence = { out: Array(run.players).fill(true), autoStart: Array(run.players).fill(true) };
+        const proof = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: { seat: run.reloadSeat, name: `P${run.reloadSeat}` }, wait: async () => {}, attempts: 1 });
+        const seat = { seat: run.reloadSeat, name: `P${run.reloadSeat}` };
         const other = run.reloadSeat === 1 ? { seat: 2, name: 'P2' } : { seat: 1, name: 'P1' };
-        for (const seat of [refreshed, other]) {
-          for (const phase of ['before', 'none']) {
-            const base = reloadCaptureBase(phase, seat);
-            writeText(path.join(evidenceDir, `${base}.png`), 'png');
-            writeText(path.join(evidenceDir, `${base}.aria.txt`), '- main');
-          }
-        }
+        const snapReload = async (target, phase) => {
+          const base = reloadCaptureBase(phase, target);
+          writeText(path.join(evidenceDir, `${base}.png`), 'png');
+          writeText(path.join(evidenceDir, `${base}.aria.txt`), '- main');
+        };
+        await recordNoBoundary({ seat, other, snapReload, proof, ev: evidenceDir, reload });
+        summary.reload = reloadRecord(true, reload);
+        summary.fixture.elimination = reload.eliminationEvidence;
       } else {
         const seats = seatLabels(run.players);
         const revision = summary.reload.revision;

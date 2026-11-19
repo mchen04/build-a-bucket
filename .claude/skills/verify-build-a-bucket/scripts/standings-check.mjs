@@ -203,6 +203,10 @@ export function createLeagueEvidenceDir(evidenceRoot, stamp = new Date().toISOSt
   return dir;
 }
 
+export function newReloadState() {
+  return { ran: false, revision: null, seats: [], rowsCompared: 0, refreshedSeat: null, allEliminated: false, allEliminatedObserved: false };
+}
+
 export function refreshCoverage(reloadRequested, reload) {
   if (!reloadRequested) return { ok: true, reason: null };
   if (reload?.classification !== 'stable-match') return { ok: false, reason: `reload classification is ${reload?.classification ?? 'missing'}` };
