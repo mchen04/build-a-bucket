@@ -52,15 +52,16 @@ export async function applyLeagueFixture({ entry, run, connect = defaultConnect,
   const runner = await connect(target);
   const hashes = secrets.map((secret) => hashSecret(secret));
   const lobbyId = uuidFrom(`${entry.id}:lobby`);
+  const createAction = uuidFrom(`${entry.id}:create`);
   const queries = [
     {
-      text: 'insert into lobbies (id, code, phase, settings, mode, era, version, season_secret, host_participant, locked_at) values ($1::uuid, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::uuid, now())',
-      params: [lobbyId, entry.code, 'preview', JSON.stringify({ mode: entry.mode, era: entry.era }), entry.mode, entry.era, 1, entry.secret, entry.participants[0].id],
+      text: 'insert into lobbies (id, code, phase, settings, mode, era, version, season_secret, host_participant, create_action, locked_at) values ($1::uuid, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::uuid, $10::uuid, now())',
+      params: [lobbyId, entry.code, 'preview', JSON.stringify({ mode: entry.mode, era: entry.era }), entry.mode, entry.era, 1, entry.secret, entry.participants[0].id, createAction],
     },
     ...entry.participants.flatMap((participant) => [
       {
         text: 'insert into participants (id, lobby_id, token_hash, name, seat, status, build, build_kind, build_summary, preview_ready, ready_stage, team) values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12)',
-        params: [participant.id, lobbyId, hashes[participant.seat - 1], participant.name, participant.seat, 'ready', JSON.stringify(participant.build), participant.build.kind, JSON.stringify(participant.summary), false, -1, participant.team],
+        params: [participant.id, lobbyId, hashes[participant.seat - 1], participant.name, participant.seat, 'ready', JSON.stringify(participant.build), participant.build.kind, JSON.stringify(participant.summary), false, -1, null],
       },
       {
         text: 'insert into lobby_teams (lobby_id, participant_id, team, reroll_used) values ($1::uuid, $2::uuid, $3, $4)',
