@@ -1,0 +1,179 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+
+function defaultPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function hashSecret(secret) {
+  return createHash('sha256').update(secret).digest('hex');
+}
+
+export async function defaultConnect(target) {
+  const { createRunner } = await import('./meter/local-pg.mjs');
+  return createRunner(target);
+}
+
+function uuidFrom(value) {
+  const hex = createHash('sha256').update(value).digest('hex').slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+export function fixtureRunFrom({ state, init, supervisor }) {
+  if (!state || !init || !supervisor) throw new Error('fixture run needs state, init and supervisor');
+  if (supervisor.pid !== state.supervisor?.pid) throw new Error('supervisor pid does not match the run');
+  if (state.localDb != null && init.database !== state.localDb.database) throw new Error('database does not match the run');
+  const postgres = supervisor.postgres;
+  if (!postgres || typeof postgres !== 'object') throw new Error('supervisor does not record its postgres');
+  if (!Number.isInteger(postgres.pid) || postgres.pid <= 0) throw new Error('supervisor postgres pid is invalid');
+  if (init.state !== 'initialized') throw new Error('postgres was not initialized');
+  if (postgres.database !== init.database || postgres.dataDir !== init.dataDir || postgres.sockDir !== init.sockDir) throw new Error('supervisor postgres does not match init');
+  if (state.localDb == null || postgres.port !== state.localDb.pgPort || postgres.database !== state.localDb.database) throw new Error('supervisor postgres does not match the run');
+  const port = postgres.port;
+  return {
+    devLocal: state.mode === 'dev' && state.localDb != null,
+    neon: state.localDb == null,
+    prod: state.mode === 'prod',
+    supervisorPid: state.supervisor?.pid,
+    postgresPid: postgres.pid,
+    socketDir: init.sockDir,
+    port,
+    database: init.database,
+    socket: path.join(init.sockDir, `.s.PGSQL.${port}`),
+    postmasterPidPath: path.join(init.dataDir, 'postmaster.pid'),
+  };
+}
+
+export function fixtureOptions(entry, { players, mode, era } = {}) {
+  if (entry.expectedClass !== 'qualifying' && entry.expectedClass !== 'all-eliminated') throw new Error(`fixture ${entry.id} has no valid expectedClass`);
+  if ((entry.expectedClass === 'qualifying') !== (entry.qualifyingSeats.length > 0)) throw new Error(`fixture ${entry.id} expectedClass disagrees with qualifyingSeats`);
+  const resolved = { players: players ?? entry.players, mode: mode ?? entry.mode, era: era ?? entry.era };
+  if (resolved.players !== entry.players || resolved.mode !== entry.mode || resolved.era !== entry.era) {
+    throw new Error(`fixture ${entry.id} expects ${entry.players} ${entry.mode} ${entry.era}`);
+  }
+  return resolved;
+}
+
+export function fixtureVerdict({ entry, classified }) {
+  const record = { id: entry.id, expectedClass: entry.expectedClass, observedClass: classified.observedClass, qualifyingSeats: classified.qualifyingSeats };
+  if (classified.observedClass !== entry.expectedClass) return { record, error: `fixture ${entry.id} observed ${classified.observedClass}, expected ${entry.expectedClass}` };
+  if (JSON.stringify(classified.qualifyingSeats) !== JSON.stringify(entry.qualifyingSeats)) return { record, error: `fixture ${entry.id} observed seats ${JSON.stringify(classified.qualifyingSeats)}, expected ${JSON.stringify(entry.qualifyingSeats)}` };
+  return { record, error: null };
+}
+
+export function fixtureStorageState({ base, code, secret, name }) {
+  const url = new URL(base);
+  if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('fixture session needs the owned local origin');
+  return { cookies: [], origins: [{ origin: url.origin, localStorage: [{ name: 'bab:mp:v1', value: JSON.stringify({ v: 1, code, secret, name }) }] }] };
+}
+
+export function fixtureAppOrigin({ state, spec }) {
+  if (state.mode !== 'dev') throw new Error('fixture app origin needs a dev run');
+  let url;
+  try {
+    url = new URL(state.base);
+  } catch {
+    throw new Error('fixture app origin needs a valid base');
+  }
+  if (url.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error('fixture app origin needs the owned local origin');
+  if (!Number.isInteger(state.port) || state.port <= 0) throw new Error('fixture app origin needs a positive port');
+  if (url.port !== String(state.port)) throw new Error('fixture app origin port does not match the run');
+  if (url.pathname !== '/' || url.search !== '' || url.hash !== '') throw new Error('fixture app origin must be a bare origin');
+  const apps = (spec.services ?? []).filter((service) => service.kind === 'app');
+  if (apps.length !== 1) throw new Error('fixture app origin needs exactly one app service');
+  const args = apps[0].args ?? [];
+  const portIndex = args.indexOf('--port');
+  if (portIndex < 0 || args[portIndex + 1] !== String(state.port)) throw new Error('fixture app service port does not match the run');
+  if (!args.includes('--strictPort')) throw new Error('fixture app service needs --strictPort');
+  return url.origin;
+}
+
+export async function openFixtureRun({ base, dir, fixture, readJson, apply = applyLeagueFixture, launch, makeSecret }) {
+  if (base) throw new Error('fixture refuses --base');
+  const state = readJson(path.join(dir, 'run.json'));
+  const init = readJson(path.join(dir, 'supervisor-init.json'));
+  const supervisor = readJson(path.join(dir, 'supervisor.json'));
+  const spec = readJson(path.join(dir, 'supervisor-spec.json'));
+  const origin = fixtureAppOrigin({ state, spec });
+  const secrets = fixture.participants.map(() => makeSecret());
+  await apply({ entry: fixture, run: { ...fixtureRunFrom({ state, init, supervisor }), base }, secrets });
+  const browser = await launch();
+  return { origin, secrets, browser };
+}
+
+export function classifyFixture({ gateSeen, gate, allEliminated, recap }) {
+  if (gateSeen) return gate?.coherent === true ? { observedClass: 'qualifying', qualifyingSeats: [...gate.readySeats] } : { observedClass: 'unknown', qualifyingSeats: [] };
+  if (allEliminated === true && recap) return { observedClass: 'all-eliminated', qualifyingSeats: [] };
+  return { observedClass: 'unknown', qualifyingSeats: [] };
+}
+
+export function guardOwnedRun({ run, base, readFile = fs.readFileSync, pidAlive = defaultPidAlive }) {
+  if (base) throw new Error('fixture refuses --base');
+  if (!run || run.neon === true || run.prod === true || run.devLocal !== true) throw new Error('fixture requires a dev-local run');
+  if (!run.supervisorPid || !pidAlive(run.supervisorPid)) throw new Error('fixture requires a live supervisor');
+  if (!run.postgresPid || !pidAlive(run.postgresPid)) throw new Error('fixture requires a live postgres');
+  if (typeof run.socketDir !== 'string' || !path.isAbsolute(run.socketDir)) throw new Error('fixture requires an absolute socket dir');
+  if (!Number.isInteger(run.port) || run.port <= 0) throw new Error('fixture requires a positive integer port');
+  if (typeof run.database !== 'string' || run.database.length === 0) throw new Error('fixture requires a non-empty database');
+  if (typeof run.socket !== 'string') throw new Error('fixture requires a socket path');
+  if (typeof run.postmasterPidPath !== 'string') throw new Error('fixture requires a postmaster.pid path');
+  const socket = path.resolve(run.socket);
+  const dir = path.resolve(run.socketDir);
+  if (socket !== path.join(dir, `.s.PGSQL.${run.port}`)) throw new Error('socket does not match the owned socket dir and port');
+  const lines = String(readFile(run.postmasterPidPath, 'utf8')).split('\n');
+  if (lines[0]?.trim() !== String(run.postgresPid)) throw new Error('postmaster.pid does not match the recorded postgres pid');
+  if (lines[3]?.trim() !== String(run.port)) throw new Error('postmaster.pid port does not match the recorded port');
+  if (lines[4]?.trim() !== run.socketDir) throw new Error('postmaster.pid socket dir does not match the recorded socket dir');
+  return { socketDir: run.socketDir, port: run.port, database: run.database };
+}
+
+export async function applyLeagueFixture({ entry, run, connect = defaultConnect, secrets }) {
+  if (!entry || !Array.isArray(entry.participants) || entry.participants.length !== entry.players) throw new Error('fixture entry is incomplete');
+  if (!Array.isArray(secrets) || secrets.length !== entry.players) throw new Error('fixture needs one secret per seat');
+  const target = guardOwnedRun({ run, base: run?.base, readFile: run?.readFile, pidAlive: run?.pidAlive });
+  const runner = await connect(target);
+  const hashes = secrets.map((secret) => hashSecret(secret));
+  const lobbyId = uuidFrom(`${entry.id}:lobby`);
+  const createAction = uuidFrom(`${entry.id}:create`);
+  const queries = [
+    {
+      text: 'insert into lobbies (id, code, phase, settings, mode, era, version, season_secret, host_participant, create_action, locked_at) values ($1::uuid, $2, $3, $4::jsonb, $5, $6, $7, $8, $9::uuid, $10::uuid, now())',
+      params: [lobbyId, entry.code, 'preview', JSON.stringify({ mode: entry.mode, era: entry.era }), entry.mode, entry.era, 1, entry.secret, entry.participants[0].id, createAction],
+    },
+    ...entry.participants.flatMap((participant) => [
+      {
+        text: 'insert into participants (id, lobby_id, token_hash, name, seat, status, build, build_kind, build_summary, preview_ready, ready_stage, team) values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12)',
+        params: [participant.id, lobbyId, hashes[participant.seat - 1], participant.name, participant.seat, 'ready', JSON.stringify(participant.build), participant.build.kind, JSON.stringify(participant.summary), false, -1, null],
+      },
+      {
+        text: 'insert into lobby_teams (lobby_id, participant_id, team, reroll_used) values ($1::uuid, $2::uuid, $3, $4)',
+        params: [lobbyId, participant.id, participant.team, false],
+      },
+    ]),
+  ];
+  let result = null;
+  let failure = null;
+  try {
+    await runner.transaction(queries);
+    result = { lobbyId, code: entry.code, participantIds: entry.participants.map((participant) => participant.id), target };
+  } catch (error) {
+    failure = error;
+  }
+  let cleanupError = null;
+  try {
+    if (typeof runner.close !== 'function') throw new Error('fixture runner has no close');
+    await runner.close();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (failure && cleanupError) throw new AggregateError([failure, cleanupError], `fixture failed (${failure.message}) and cleanup failed (${cleanupError.message})`);
+  if (failure) throw failure;
+  if (cleanupError) throw new Error(`fixture committed but cleanup failed: ${cleanupError.message}`);
+  return result;
+}

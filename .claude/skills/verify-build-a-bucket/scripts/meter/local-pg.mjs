@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 
 const HOST = process.env.BAB_PG_HOST ?? '127.0.0.1';
 const PORT = Number(process.env.BAB_PG_PORT ?? 55432);
+const SOCKET_DIR = process.env.BAB_PG_SOCKET_DIR ?? '';
 const USER = process.env.BAB_PG_USER ?? 'postgres';
 const DATABASE = process.env.BAB_PG_DATABASE ?? 'bab_perf';
 const LOG = process.env.BAB_DB_METER_LOG ?? '';
@@ -86,7 +88,8 @@ function parseError(payload) {
 }
 
 class Connection {
-  constructor() {
+  constructor(target) {
+    this.target = target;
     this.sock = null;
     this.buffer = Buffer.alloc(0);
     this.fields = [];
@@ -98,7 +101,10 @@ class Connection {
   }
 
   async open() {
-    const sock = net.connect({ host: HOST, port: PORT });
+    const socketDir = this.target?.socketDir ?? SOCKET_DIR;
+    const port = this.target?.port ?? PORT;
+    const database = this.target?.database ?? DATABASE;
+    const sock = socketDir ? net.connect({ path: path.join(socketDir, `.s.PGSQL.${port}`) }) : net.connect({ host: HOST, port });
     this.sock = sock;
     await new Promise((resolve, reject) => {
       sock.once('connect', resolve);
@@ -117,7 +123,7 @@ class Connection {
       this.ready = null;
       waiter?.(this.broken);
     });
-    const payload = Buffer.from(`user\0${USER}\0database\0${DATABASE}\0\0`, 'utf8');
+    const payload = Buffer.from(`user\0${USER}\0database\0${database}\0\0`, 'utf8');
     const message = Buffer.alloc(8 + payload.length);
     message.writeInt32BE(8 + payload.length, 0);
     message.writeInt32BE(196608, 4);
@@ -238,24 +244,50 @@ class Connection {
       this.broken = this.broken ?? new Error('close failed');
     }
   }
+
+  terminate(timeoutMs = 2000) {
+    const sock = this.sock;
+    if (!sock || sock.destroyed) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = globalThis.setTimeout(() => {
+        sock.destroy();
+        resolve();
+      }, timeoutMs);
+      timer.unref();
+      sock.once('close', () => {
+        globalThis.clearTimeout(timer);
+        resolve();
+      });
+      try {
+        sock.end(Buffer.from([0x58, 0, 0, 0, 4]));
+      } catch {
+        sock.destroy();
+      }
+    });
+  }
 }
 
 class Pool {
-  constructor(max) {
+  constructor(max, target) {
     this.max = max;
+    this.target = target;
     this.idle = [];
     this.count = 0;
     this.waiting = [];
+    this.all = new Set();
+    this.closed = false;
   }
 
   async acquire() {
+    if (this.closed) throw new Error('runner is closed');
     const free = this.idle.pop();
     if (free && !free.broken) return free;
     if (this.count < this.max) {
       this.count += 1;
-      const connection = new Connection();
+      const connection = new Connection(this.target);
       try {
         await connection.open();
+        this.all.add(connection);
         return connection;
       } catch (error) {
         this.count -= 1;
@@ -269,6 +301,7 @@ class Pool {
   release(connection) {
     if (connection.broken) {
       this.count -= 1;
+      this.all.delete(connection);
       const next = this.waiting.shift();
       if (next) next();
       return;
@@ -280,11 +313,22 @@ class Pool {
     }
     this.idle.push(connection);
   }
+
+  async close() {
+    this.closed = true;
+    const connections = [...this.all];
+    this.all.clear();
+    this.idle = [];
+    for (const resolve of this.waiting.splice(0)) resolve(undefined);
+    await Promise.all(connections.map((connection) => connection.terminate()));
+  }
 }
 
-export async function createRunner() {
-  const pool = new Pool(MAX_CONNECTIONS);
+export async function createRunner(target) {
+  const resolved = target ? { socketDir: target.socketDir, port: target.port, database: target.database } : { socketDir: SOCKET_DIR, port: PORT, database: DATABASE };
+  const pool = new Pool(MAX_CONNECTIONS, resolved);
   return {
+    target: resolved,
     async query(text, params = []) {
       const sql = params.length ? interpolate(text, params) : text;
       const connection = await pool.acquire();
@@ -333,6 +377,9 @@ export async function createRunner() {
       } finally {
         pool.release(connection);
       }
+    },
+    async close() {
+      await pool.close();
     },
   };
 }

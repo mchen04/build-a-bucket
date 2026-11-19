@@ -6,10 +6,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { awaitReloadProof, createLeagueEvidenceDir, leagueFailureSummary, gateReadiness, newReloadState, playoffSampleFrom, readLeagueStandings, readSeatView, recapElimination, sampleReadComplete, reloadRecord, shouldAwaitStandings } from './standings-check.mjs';
+import { recordNoBoundary, reloadCaptureBase, writeReloadAttempts } from './reload-boundary.mjs';
+import { buildLeagueSummary } from './replay-records.mjs';
+import { requestStop } from './supervisor.mjs';
+import { buildSupervisorSpec } from './supervisor-spec.mjs';
+import { removeOwnedDirs } from './owned-dirs.mjs';
+import { classifyFixture, fixtureOptions, fixtureStorageState, fixtureVerdict, openFixtureRun } from './league-fixture.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
-const localDb = await import(path.join(repo, 'scripts/local-db.mjs'));
 const home = process.env.BAB_VERIFY_HOME ?? path.join(os.homedir(), '.cache', 'verify-build-a-bucket');
 const [cmd, ...rest] = process.argv.slice(2);
 
@@ -34,6 +40,14 @@ function currentRun() {
   return { dir, state: JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')) };
 }
 function saveState(dir, state) { fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify(state, null, 2)); }
+
+function loadFixture(id) {
+  const fixturesPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'league-fixtures.json');
+  const catalog = JSON.parse(fs.readFileSync(fixturesPath, 'utf8'));
+  const entry = catalog.entries.find((candidate) => candidate.id === id);
+  if (!entry) throw new Error(`unknown fixture ${id}`);
+  return entry;
+}
 function evidenceDir(dir, sub = '') { const d = path.join(dir, 'evidence', sub); fs.mkdirSync(d, { recursive: true }); return d; }
 function baseUrl() { return o.base ?? currentRun().state.base; }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -42,7 +56,6 @@ const median = (arr) => pct(arr, 50);
 function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
 function portOwner(port) { try { return execFileSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).map(Number); } catch { return []; } }
 function descendants(pid) { try { const kids = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).map(Number); return kids.flatMap((k) => [k, ...descendants(k)]); } catch { return []; } }
-
 async function probe(base) {
   const out = { base };
   try { const r = await fetch(base + '/', { signal: AbortSignal.timeout(10000) }); const t = await r.text(); out.app = r.status; out.appIdentity = /<title>[^<]*<\/title>/.exec(t)?.[0] ?? null; } catch (e) { out.app = String(e.message); }
@@ -59,23 +72,17 @@ async function launch() {
   fs.mkdirSync(evidenceDir(dir), { recursive: true });
   const mode = o.prod ? 'prod' : 'dev';
   const local = mode === 'dev' && !o.neon;
-  const localHandle = local
-    ? await localDb.startLocalDb({
-        root: repo,
-        dataDir: path.join(dir, 'pgdata'),
-        pgPort: Number(o['pg-port'] ?? 55500 + Math.floor(Math.random() * 400)),
-      })
-    : null;
-  const env = localHandle ? { ...process.env, ...localDb.localDbEnv(localHandle) } : process.env;
-  let child;
+  const prepared = local ? { pgPort: Number(o['pg-port'] ?? 55500 + Math.floor(Math.random() * 400)), database: 'bab_local' } : null;
   const log = fs.openSync(path.join(dir, 'server.log'), 'a');
-  if (mode === 'prod') {
-    execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: ['ignore', log, log] });
-    child = spawn(path.join(repo, 'node_modules/.bin/vite'), ['preview', '--port', String(port), '--strictPort'], { cwd: repo, detached: true, stdio: ['ignore', log, log] });
-  } else {
-    child = spawn(process.execPath, ['scripts/dev-server.ts', '--port', String(port), '--strictPort'], { cwd: repo, detached: true, stdio: ['ignore', log, log], env });
-  }
-  child.unref();
+  if (mode === 'prod') execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: ['ignore', log, log] });
+  const spec = buildSupervisorSpec({ mode, port, dir, repo, prepared });
+  const specPath = path.join(dir, 'supervisor-spec.json');
+  const controlPath = path.join(dir, 'supervisor-control.json');
+  const receiptPath = path.join(dir, 'supervisor-receipt.json');
+  const ackPath = path.join(dir, 'supervisor-ack.json');
+  fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));
+  const supervisor = spawn(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'supervisor.mjs'), dir, controlPath, receiptPath, ackPath, specPath], { detached: true, stdio: 'ignore' });
+  supervisor.unref();
   const base = `http://localhost:${port}`;
   const head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
   const state = {
@@ -83,19 +90,12 @@ async function launch() {
     dir,
     mode,
     port,
-    pid: child.pid,
+    pid: supervisor.pid,
     base,
     head,
     lobbies: [],
-    localDb: localHandle
-      ? {
-          dataDir: localHandle.dataDir,
-          pgPort: localHandle.pgPort,
-          database: localHandle.database,
-          url: localHandle.url,
-          runnerPath: localHandle.runnerPath,
-        }
-      : null,
+    localDb: prepared ? { ...prepared, remove: true } : null,
+    supervisor: { pid: supervisor.pid, controlPath, receiptPath },
     startedAt: new Date().toISOString(),
   };
   saveState(dir, state);
@@ -110,8 +110,12 @@ async function launch() {
   }
   console.log(JSON.stringify({ run: dir, ...state, probe: last }, null, 2));
   if (!(mode === 'prod' ? last.app === 200 : last.ready)) {
-    if (localHandle) await localDb.stopLocalDb(localHandle);
+    const receipt = await requestStop({ controlPath, receiptPath, timeoutMs: 60000 });
+    state.cleanup = receipt;
+    saveState(dir, state);
     process.exitCode = 1;
+  } else {
+    fs.writeFileSync(ackPath, 'ack\n');
   }
 }
 
@@ -301,10 +305,13 @@ async function loadGuardPool() {
 async function leagueRun() {
   const pw = require('@playwright/test');
   const { dir, state } = currentRun();
-  const players = Math.max(2, Math.min(8, Number(o.players ?? 2)));
-  const mode = String(o.mode ?? 'normal');
+  const fixtureId = o.fixture === undefined ? null : String(o.fixture);
+  const fixture = fixtureId ? loadFixture(fixtureId) : null;
+  const options = fixture ? fixtureOptions(fixture, { players: o.players === undefined ? undefined : Number(o.players), mode: o.mode === undefined ? undefined : String(o.mode), era: o.era === undefined ? undefined : String(o.era) }) : null;
+  const players = options ? options.players : Math.max(2, Math.min(8, Number(o.players ?? 2)));
+  const mode = options ? options.mode : String(o.mode ?? 'normal');
   if (!['normal', 'salary', 'squad'].includes(mode)) throw new Error(`unknown mode ${mode}`);
-  const era = String(o.era ?? 'current');
+  const era = options ? options.era : String(o.era ?? 'current');
   if (!['current', 'alltime'].includes(era)) throw new Error(`unknown era ${era}`);
   const device = deviceFor(o.device ?? 'iphone');
   const { browserName, ...ctxOpts } = device;
@@ -312,6 +319,9 @@ async function leagueRun() {
     ? { width: Number(String(o.viewport).split('x')[0]), height: Number(String(o.viewport).split('x')[1]) }
     : { width: 390, height: 844 };
   const reloadSeat = o.reload === undefined ? null : Number(o.reload);
+  const reload = newReloadState();
+  let gateSeen = false;
+  let gateRecord = null;
   const awaySeat = o.away === undefined ? null : Number(o.away);
   const hostLeave = Boolean(o['host-leave']);
   for (const [flag, value] of [['--reload', reloadSeat], ['--away', awaySeat]]) {
@@ -319,10 +329,30 @@ async function leagueRun() {
   }
   if (awaySeat !== null && hostLeave) throw new Error('--away and --host-leave are separate scenarios');
   const base = o.base ?? state.base;
-  const browser = await pw[browserName].launch({ headless: true });
-  const ev = evidenceDir(dir, 'league');
+  let fixtureSecrets = null;
+  let fixtureOrigin = null;
+  let browser = null;
+  if (fixture) {
+    const opened = await openFixtureRun({
+      base: o.base,
+      dir,
+      fixture,
+      readJson: (file) => JSON.parse(fs.readFileSync(file, 'utf8')),
+      launch: () => pw[browserName].launch({ headless: true }),
+      makeSecret: () => randomBytes(16).toString('hex'),
+    });
+    fixtureSecrets = opened.secrets;
+    fixtureOrigin = opened.origin;
+    browser = opened.browser;
+    if (!state.lobbies.includes(fixture.code)) { state.lobbies.push(fixture.code); saveState(dir, state); }
+  } else {
+    browser = await pw[browserName].launch({ headless: true });
+  }
+  const ev = createLeagueEvidenceDir(path.join(dir, 'evidence'));
   const names = ['Ava', 'Ben', 'Cara', 'Dev', 'Eli', 'Fay', 'Gus', 'Hana'];
   const seats = [];
+  const lifecycle = [];
+  browser.on('disconnected', () => lifecycle.push({ event: 'browser-disconnected', at: new Date().toISOString() }));
   const apiSamples = new Map();
   const requestStarts = new WeakMap();
   const apiKey = (method, url) => {
@@ -330,10 +360,13 @@ async function leagueRun() {
     return `${method} ${pathname}`;
   };
   for (let index = 0; index < players; index++) {
-    const context = await browser.newContext({ ...ctxOpts, viewport });
+    const context = await browser.newContext({ ...ctxOpts, viewport, ...(fixture ? { storageState: fixtureStorageState({ base: fixtureOrigin, code: fixture.code, secret: fixtureSecrets[index], name: names[index] }) } : {}) });
     const page = await context.newPage();
     const errors = [];
     const http = [];
+    page.on('crash', () => lifecycle.push({ seat: index + 1, name: names[index], event: 'page-crash', at: new Date().toISOString() }));
+    page.on('close', () => lifecycle.push({ seat: index + 1, name: names[index], event: 'page-close', at: new Date().toISOString() }));
+    context.on('close', () => lifecycle.push({ seat: index + 1, name: names[index], event: 'context-close', at: new Date().toISOString() }));
     page.on('pageerror', (error) => errors.push(String(error).slice(0, 200)));
     page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text().slice(0, 200)); });
     page.on('response', (response) => {
@@ -365,6 +398,14 @@ async function leagueRun() {
     await seat.page.screenshot({ path: path.join(ev, `${seat.seat}-${seat.name}-${label}.png`) });
     fs.writeFileSync(path.join(ev, `${seat.seat}-${seat.name}-${label}.aria.txt`), await seat.page.locator('body').ariaSnapshot());
   };
+  const snapReload = async (seat, phase) => {
+    const base = reloadCaptureBase(phase, seat);
+    await seat.page.screenshot({ path: path.join(ev, `${base}.png`) });
+    fs.writeFileSync(path.join(ev, `${base}.aria.txt`), await seat.page.locator('body').ariaSnapshot());
+  };
+  const snapFailure = async (seat) => {
+    await seat.page.screenshot({ path: path.join(ev, `failure-${seat.seat}-${seat.name}.png`) }).catch(() => {});
+  };
   const visible = async (seat, testId) => seat.page.getByTestId(testId).isVisible().catch(() => false);
   const anyVisible = async (testId) => {
     for (const seat of active()) if (await visible(seat, testId)) return true;
@@ -386,21 +427,6 @@ async function leagueRun() {
         [...table.querySelectorAll('.table-row:not(.head)')].map((row) => (row.innerText || '').replace(/YOU/g, '').replace(/\s+/g, ' ').trim()),
       ),
     );
-  const readStandingsRevision = async (seat) =>
-    seat.page.evaluate(() => {
-      const stage = document.querySelector('[data-testid="league-stage"]');
-      const lines = (stage?.innerText ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
-      const revision = `${lines[0] ?? ''}:${lines[1] ?? ''}`;
-      const tables = [...document.querySelectorAll('[data-testid="standings"] .table')].map((table) =>
-        [...table.querySelectorAll('.table-row:not(.head)')]
-          .map((row) => (row.innerText || '').replace(/YOU/g, '').replace(/\s+/g, ' ').trim())
-          .filter((row) => {
-            const seed = /^(\d+)\s/.exec(row);
-            return seed !== null && Number(seed[1]) <= 10;
-          }),
-      );
-      return { revision, tables };
-    });
   const parseRow = (text) => {
     const head = /^(\d+|—)\s+([A-Z]{2,3})\b/.exec(text);
     if (!head) return null;
@@ -653,6 +679,18 @@ async function leagueRun() {
       new window.MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
       read();
     });
+  const startFromPreview = async (hostSeat, activeSeats, recordMarks) => {
+    await hostSeat.page.getByTestId('preview-ready').waitFor();
+    for (const seat of activeSeats) {
+      const ready = seat.page.getByTestId('preview-ready');
+      if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
+    }
+    const startNow = hostSeat.page.getByTestId('start-season-now');
+    if (await startNow.isVisible().catch(() => false)) await startNow.click().catch(() => {});
+    await hostSeat.page.getByTestId('league-stage').waitFor();
+    if (recordMarks) mark('season-start');
+    reload.armed = true;
+  };
   const buildAndStart = async (hostSeat, activeSeats, recordMarks, chooseSettings) => {
     if (chooseSettings) {
       if (mode !== 'normal') await hostSeat.page.getByRole('button', { name: mode === 'salary' ? 'Salary' : 'Squad', exact: true }).click();
@@ -713,38 +751,37 @@ async function leagueRun() {
     }
     const lock = hostSeat.page.getByTestId('lock-teams');
     if (await lock.isVisible().catch(() => false)) await lock.click().catch(() => {});
-    await hostSeat.page.getByTestId('preview-ready').waitFor();
-    for (const seat of activeSeats) {
-      const ready = seat.page.getByTestId('preview-ready');
-      if (await ready.isEnabled().catch(() => false)) await ready.click().catch(() => {});
-    }
-    const startNow = hostSeat.page.getByTestId('start-season-now');
-    if (await startNow.isVisible().catch(() => false)) await startNow.click().catch(() => {});
-    await hostSeat.page.getByTestId('league-stage').waitFor();
-    if (recordMarks) mark('season-start');
+    await startFromPreview(hostSeat, activeSeats, recordMarks);
   };
   const chaos = { reload: reloadSeat, away: awaySeat, hostLeave };
+  let code = fixture ? fixture.code : null;
+  let summaryWritten = false;
   try {
     let host = seats[0];
-    await host.page.goto(base);
-    await host.page.getByTestId('mp-name').waitFor({ timeout: 90000 });
-    await host.page.getByTestId('mp-name').fill(host.name);
-    await host.page.getByTestId('create-lobby').click();
-    await host.page.getByTestId('lobby-code').waitFor();
-    const code = (await host.page.getByTestId('lobby-code').innerText()).trim();
-    const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
-    if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
-    await snap(host, 'created');
-    for (const seat of seats.slice(1)) {
-      await seat.page.goto(link);
-      await seat.page.getByTestId('invite-code').waitFor({ timeout: 90000 });
-      await snap(seat, 'invite');
-      await seat.page.getByTestId('invite-name').fill(seat.name);
-      await seat.page.getByTestId('invite-join').click();
-      await seat.page.getByTestId('lobby-code').waitFor({ timeout: 90000 });
-      await snap(seat, 'joined');
+    if (fixture) {
+      for (const seat of seats) await seat.page.goto(`${fixtureOrigin}/`, { waitUntil: 'domcontentloaded' });
+      await startFromPreview(host, seats, true);
+    } else {
+      await host.page.goto(base);
+      await host.page.getByTestId('mp-name').waitFor({ timeout: 90000 });
+      await host.page.getByTestId('mp-name').fill(host.name);
+      await host.page.getByTestId('create-lobby').click();
+      await host.page.getByTestId('lobby-code').waitFor();
+      code = (await host.page.getByTestId('lobby-code').innerText()).trim();
+      const link = (await host.page.getByTestId('lobby-invite-link').innerText()).trim();
+      if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
+      await snap(host, 'created');
+      for (const seat of seats.slice(1)) {
+        await seat.page.goto(link);
+        await seat.page.getByTestId('invite-code').waitFor({ timeout: 90000 });
+        await snap(seat, 'invite');
+        await seat.page.getByTestId('invite-name').fill(seat.name);
+        await seat.page.getByTestId('invite-join').click();
+        await seat.page.getByTestId('lobby-code').waitFor({ timeout: 90000 });
+        await snap(seat, 'joined');
+      }
+      await buildAndStart(host, seats, true, true);
     }
-    await buildAndStart(host, seats, true, true);
     let checkpoint = 0;
     let chaosDone = false;
     let lastLabel = '';
@@ -755,9 +792,35 @@ async function leagueRun() {
         const record = await verifyStage(`recap-${checkpoint}`, null);
         stages.push(record);
         mark('recap');
+        if (reloadSeat !== null && !reload.ran) {
+          const seat = seats[reloadSeat - 1];
+          const other = active().find((entry) => entry.seat !== seat.seat);
+          const proof = await awaitReloadProof({ gate: false, readAll: async () => [], isRecap: async () => true, refreshedSeat: seat, wait: async () => {}, attempts: 1 });
+          await recordNoBoundary({ seat, other, snapReload, proof, ev, reload });
+        }
         break;
       }
       if (await visible(host, 'playoff-gate')) {
+        if (!gateSeen) {
+          gateSeen = true;
+          if (fixture) {
+            const started = Date.now();
+            const trail = [];
+            let read = [];
+            let verdict = null;
+            for (let attempt = 0; attempt < 40; attempt++) {
+              read = await Promise.all(active().map(async (seat) => {
+                const view = await seat.page.evaluate(readSeatView).catch(() => null);
+                return { seat: seat.seat, phase: view?.phase ?? '', gate: view?.gate ?? null };
+              }));
+              verdict = gateReadiness({ players, hostSeat: host.seat, reads: read });
+              trail.push({ attempt, ms: Date.now() - started, coherent: verdict.coherent, reason: verdict.reason });
+              if (verdict.coherent) break;
+              await host.page.waitForTimeout(250);
+            }
+            gateRecord = { ...verdict, hostSeat: host.seat, read, trail };
+          }
+        }
         const record = await verifyStage(`gate-${checkpoint}`, null);
         stages.push(record);
         if (!marks.some((entry) => entry.label === 'season-end')) mark('season-end');
@@ -774,6 +837,58 @@ async function leagueRun() {
         const gateLogs = await Promise.all(active().map(logText));
         if (new Set(gateLogs).size > 1) throw new Error('activity logs differ at the playoff gate');
         for (const seat of active()) await installSeriesObserver(seat);
+        if (reloadSeat !== null && !reload.ran) {
+          const seat = seats[reloadSeat - 1];
+          const other = active().find((entry) => entry.seat !== seat.seat);
+          reload.refreshedSeat = { seat: seat.seat, name: seat.name };
+          await snapReload(seat, 'before');
+          if (other) await snapReload(other, 'before');
+          await seat.page.evaluate(() => {
+            window.__reloadMarker = 'before';
+          });
+          await seat.page.reload({ waitUntil: 'load' });
+          const navigation = await seat.page.evaluate(() => {
+            const entry = performance.getEntriesByType('navigation')[0];
+            return { marker: window.__reloadMarker ?? null, type: entry?.type ?? null };
+          });
+          reload.navigation = { observed: navigation.marker === null && navigation.type === 'reload', type: navigation.type, marker: navigation.marker };
+          const session = await seat.page.evaluate((expected) => {
+            try {
+              const s = JSON.parse(localStorage.getItem('bab:mp:v1') ?? 'null');
+              return { present: s?.v === 1 && s?.code === expected && typeof s?.secret === 'string' && s.secret.length > 0 };
+            } catch {
+              return { present: false };
+            }
+          }, code);
+          reload.session = session;
+          if (shouldAwaitStandings({ navigation: reload.navigation, session })) {
+            await waitStage(seat);
+            await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
+          }
+          const proof = await awaitReloadProof({
+            readAll: async () => Promise.all(active().map(async (entry) => ({ seat: entry, ...(await entry.page.evaluate(readLeagueStandings)) }))),
+            isRecap: () => visible(seat, 'recap'),
+            refreshedSeat: seat,
+            wait: () => host.page.waitForTimeout(250),
+            attempts: 40,
+            navigation: reload.navigation,
+            session,
+          });
+          reload.classification = proof.classification;
+          reload.reason = proof.reason ?? null;
+          reload.samples = proof.attempts;
+          reload.ran = proof.classification === 'stable-match';
+          reload.revision = proof.revision;
+          reload.seats = proof.seats;
+          reload.rowsCompared = proof.rowsCompared;
+          await snapReload(seat, 'after');
+          if (other) await snapReload(other, 'after');
+          reload.attempts = writeReloadAttempts(ev, { classification: proof.classification, reason: proof.reason, revision: proof.revision, seats: proof.seats, rowsCompared: proof.rowsCompared, samples: proof.attempts });
+          if (proof.classification === 'stable-match') {
+            stages.push({ label: 'after-reload', phase: await phaseOf(seat), revision: proof.revision, seats: proof.seats, standings: proof.standings });
+            await snap(seat, 'after-reload');
+          }
+        }
         const gateAt = Date.now();
         const readyAt = new Map();
         for (const seat of active()) if (await clickReady(seat)) readyAt.set(seat.seat, Date.now());
@@ -802,6 +917,19 @@ async function leagueRun() {
       if (label !== lastLabel) {
         const record = await verifyStage(`stage-${checkpoint}`, null);
         stages.push(record);
+        if (record.phase === 'Playoffs' && (reloadSeat !== null || fixture) && reload.playoffSample == null) {
+          let reads = [];
+          const trail = [];
+          for (let attempt = 0; attempt < 20; attempt++) {
+            reads = await Promise.all(active().map(async (entry, index) => (sampleReadComplete(reads[index]) ? reads[index] : { seat: entry.seat, ...((await entry.page.evaluate(readSeatView).catch(() => null)) ?? {}) })));
+            const incomplete = reads.filter((read) => !sampleReadComplete(read)).map((read) => read.seat);
+            trail.push({ attempt, incomplete });
+            if (!incomplete.length) break;
+            await host.page.waitForTimeout(250);
+          }
+          reload.playoffSample = playoffSampleFrom({ reads });
+          reload.playoffSampleTrail = trail;
+        }
         const roundLabel = clean(record.roundName ?? record.stageName ?? '').toUpperCase();
         if ((record.phase === 'Awards' || record.phase === 'Play-In' || record.phase === 'Playoffs') && !marks.some((entry) => entry.label === 'season-end')) mark('season-end');
         if (record.phase === 'Playoffs' && roundLabel === 'FIRST ROUND' && !marks.some((entry) => entry.label === 'playoff-gate')) mark('playoff-gate');
@@ -824,37 +952,6 @@ async function leagueRun() {
         }
         if (!chaosDone && checkpoint === 0) {
           chaosDone = true;
-          if (reloadSeat !== null) {
-            const seat = seats[reloadSeat - 1];
-            await seat.page.reload({ waitUntil: 'load' });
-            await waitStage(seat);
-            await seat.page.getByTestId('standings').waitFor({ state: 'visible', timeout: 30000 });
-            let common = null;
-            for (let attempt = 0; attempt < 40; attempt++) {
-              const reads = await Promise.all(active().map(async (entry) => ({ seat: entry, ...(await readStandingsRevision(entry)) })));
-              const byRevision = new Map();
-              for (const read of reads) {
-                if (!byRevision.has(read.revision)) byRevision.set(read.revision, []);
-                byRevision.get(read.revision).push(read);
-              }
-              for (const [revision, group] of byRevision) {
-                if (group.length < 2) continue;
-                const mine = group.find((entry) => entry.seat === seat);
-                if (!mine) continue;
-                const top = group.map((entry) => entry.tables.map((conference) => conference.map((rows) => rows.slice(0, 10))));
-                if (top.every((value) => JSON.stringify(value) === JSON.stringify(top[0]))) {
-                  common = { revision, standings: top[0], seats: group.map((entry) => `${entry.seat.seat}:${entry.seat.name}`) };
-                  break;
-                }
-                throw new Error(`standings differ at revision ${revision}: ${JSON.stringify(top)}`);
-              }
-              if (common) break;
-              await host.page.waitForTimeout(250);
-            }
-            if (!common) throw new Error('no common standings revision after reload');
-            stages.push({ label: 'after-reload', phase: await phaseOf(seat), revision: common.revision, seats: common.seats, standings: common.standings });
-            await snap(seat, 'after-reload');
-          }
           if (awaySeat !== null) {
             const seat = seats[awaySeat - 1];
             await seat.context.close();
@@ -877,6 +974,13 @@ async function leagueRun() {
     if (!marks.some((entry) => entry.label === 'recap')) throw new Error('league did not reach the recap');
     const champion = stages[stages.length - 1].champion;
     for (const seat of active()) await snap(seat, 'recap');
+    if (reloadSeat !== null || fixture) {
+      const captures = active().map((seat) => ({ seat: seat.seat, aria: fs.readFileSync(path.join(ev, `${seat.seat}-${seat.name}-recap.aria.txt`), 'utf8') }));
+      const result = recapElimination({ players, captures, playoffSample: reload.playoffSample ?? null, gateSeen });
+      reload.allEliminatedObserved = true;
+      reload.allEliminated = result.allEliminated;
+      reload.eliminationEvidence = result.record ?? { source: 'recap', reason: result.reason };
+    }
     const recapLogs = await Promise.all(active().map(logText));
     if (new Set(recapLogs).size > 1) throw new Error('activity logs differ at the recap');
     seriesScores.clear();
@@ -1023,7 +1127,7 @@ async function leagueRun() {
         status: sample.status,
       }))
       .sort((a, b) => a.endpoint.localeCompare(b.endpoint));
-    const summary = {
+    const summary = buildLeagueSummary({
       code,
       players,
       mode,
@@ -1031,6 +1135,7 @@ async function leagueRun() {
       device: o.device ?? 'iphone',
       viewport,
       chaos,
+      reload,
       stages,
       phaseTimings,
       phaseDurations,
@@ -1049,9 +1154,35 @@ async function leagueRun() {
       errors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, errors: seat.errors })),
       httpErrors: seats.map((seat) => ({ seat: seat.seat, name: seat.name, responses: seat.http })),
       evidence: ev,
-    };
+    });
+    summary.reload = reloadRecord(reloadSeat !== null, reload);
+    let fixtureError = null;
+    if (fixture) {
+      const classified = classifyFixture({ gateSeen, gate: gateRecord, allEliminated: reload.allEliminated, recap: marks.some((entry) => entry.label === 'recap') });
+      const verdict = fixtureVerdict({ entry: fixture, classified });
+      summary.fixture = verdict.record;
+      summary.fixture.elimination = reload.eliminationEvidence ?? null;
+      summary.fixture.gate = gateRecord;
+      fixtureError = verdict.error;
+    }
+    summary.lifecycle = lifecycle;
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
-    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    summaryWritten = true;
+    console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reload: summary.reload, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    if (fixtureError) throw new Error(fixtureError);
+    const allEliminatedNoBoundary = fixture != null && fixture.qualifyingSeats.length === 0 && reloadSeat !== null && summary.reload.classification === 'no-held-boundary' && marks.some((entry) => entry.label === 'recap') && playAgain;
+    if (fixture != null && fixture.qualifyingSeats.length === 0 && reloadSeat !== null && summary.reload.classification !== 'no-held-boundary') {
+      throw new Error(`all-eliminated fixture reload classification is ${summary.reload.classification}`);
+    }
+    if (summary.reload.coverage !== 'ok' && !allEliminatedNoBoundary) throw new Error(`refresh coverage missing: ${summary.reload.coverage}`);
+  } catch (error) {
+    for (const seat of active()) await snapFailure(seat);
+    if (!summaryWritten) {
+      const failure = leagueFailureSummary({ error, code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reloadRequested: reloadSeat !== null, reload, evidence: ev, at: new Date().toISOString() });
+      failure.lifecycle = lifecycle;
+      fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(failure, null, 2));
+    }
+    throw error;
   } finally {
     await browser.close();
   }
@@ -1295,21 +1426,34 @@ async function coldLoad() {
 }
 
 async function cleanup() {
-  const { dir, state } = currentRun();
-  const killed = [];
-  for (const pid of [...descendants(state.pid).reverse(), state.pid]) { if (pidAlive(pid)) { try { process.kill(pid, 'SIGTERM'); killed.push(pid); } catch {} } }
-  await sleep(1500);
-  for (const pid of killed) if (pidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+  const dir = o.run ? path.resolve(o.run) : currentRun().dir;
+  let state = null;
+  try {
+    state = JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8'));
+  } catch {
+    state = null;
+  }
+  if (!state) {
+    console.log(JSON.stringify({ supervisor: { ok: false, services: [], reason: 'no launch state' }, appGroup: 'not-launched', postgres: { state: 'not-launched' }, evidence: path.join(dir, 'evidence') }, null, 2));
+    process.exitCode = 1;
+    return;
+  }
+  const receipt = state.supervisor
+    ? await requestStop({ controlPath: state.supervisor.controlPath, receiptPath: state.supervisor.receiptPath, timeoutMs: 60000 })
+    : { ok: false, services: [], reason: 'no supervisor recorded' };
   let removed = [];
   if (!state.localDb && state.lobbies.length && state.mode === 'dev') {
     const outText = execFileSync(process.execPath, [path.join(path.dirname(fileURLToPath(import.meta.url)), 'drop-lobbies.ts'), ...state.lobbies], { cwd: repo, encoding: 'utf8' });
     removed = JSON.parse(outText);
   }
-  if (state.localDb) await localDb.stopLocalDb({ ...state.localDb, remove: true });
+  removeOwnedDirs(dir, receipt.ok);
   fs.rmSync(path.join(home, 'current'), { force: true });
   for (const f of fs.readdirSync(dir)) if (f.startsWith('session-')) fs.rmSync(path.join(dir, f));
   const evidence = path.join(dir, 'evidence');
-  console.log(JSON.stringify({ stopped: killed, portFree: portOwner(state.port).length === 0, lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
+  const appGroup = receipt.ok ? 'clean' : 'uncertain';
+  const postgres = receipt.services?.find((service) => service.name === 'postgres') ?? { state: 'uncertain', reason: 'no postgres receipt' };
+  console.log(JSON.stringify({ supervisor: receipt, appGroup, postgres, lobbiesRemoved: removed, evidence, evidenceFiles: fs.readdirSync(evidence, { recursive: true }).length }, null, 2));
+  if (!receipt.ok) process.exitCode = 1;
 }
 
 async function perf() {

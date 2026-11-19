@@ -1,0 +1,132 @@
+{
+  "source": "replay-r21/r39-full-e70e204/runs/squad-4p-reload2-07",
+  "players": 4,
+  "reloadSeat": 2,
+  "reload": {
+    "classification": "stable-match",
+    "ran": true,
+    "revision": {
+      "stage": "FIRST ROUND",
+      "progress": "Game 1 next"
+    },
+    "seats": [
+      "1:Ava",
+      "2:Ben",
+      "3:Cara",
+      "4:Dev"
+    ],
+    "rowsCompared": 20,
+    "refreshedSeat": {
+      "seat": 2,
+      "name": "Ben"
+    },
+    "navigation": {
+      "observed": true,
+      "type": "reload",
+      "marker": null
+    },
+    "session": {
+      "present": true
+    },
+    "attempts": "reload-attempts.json",
+    "coverage": "ok"
+  },
+  "afterReload": {
+    "label": "after-reload",
+    "phase": "Playoffs",
+    "revision": {
+      "stage": "FIRST ROUND",
+      "progress": "Game 1 next"
+    },
+    "seats": [
+      "1:Ava",
+      "2:Ben",
+      "3:Cara",
+      "4:Dev"
+    ],
+    "standings": [
+      [
+        "1 DET 60-22 —",
+        "2 CLE 49-33 11",
+        "3 TOR 49-33 11",
+        "4 BOS P2 48-34 12",
+        "5 NYK 47-35 13",
+        "6 MIA 45-37 15",
+        "7 ORL 45-37 15",
+        "8 PHI 45-37 15",
+        "9 ATL P1 39-43 21",
+        "10 CHA P4 37-45 23"
+      ],
+      [
+        "1 OKC 61-21 —",
+        "2 SAS 61-21 —",
+        "3 DEN 60-22 1",
+        "4 HOU 56-26 5",
+        "5 PHX 55-27 6",
+        "6 MIN 45-37 16",
+        "7 LAL 42-40 19",
+        "8 LAC 41-41 20",
+        "9 POR 41-41 20",
+        "10 GSW 39-43 22"
+      ]
+    ]
+  },
+  "files": {
+    "reload-after-1-Ava.aria.txt": 1771,
+    "reload-after-1-Ava.png": 525099,
+    "reload-after-2-Ben.aria.txt": 1858,
+    "reload-after-2-Ben.png": 530262,
+    "reload-before-1-Ava.aria.txt": 1771,
+    "reload-before-1-Ava.png": 525099,
+    "reload-before-2-Ben.aria.txt": 1858,
+    "reload-before-2-Ben.png": 530262
+  },
+  "attempts": {
+    "classification": "stable-match",
+    "reason": null,
+    "revision": {
+      "stage": "FIRST ROUND",
+      "progress": "Game 1 next"
+    },
+    "seats": [
+      "1:Ava",
+      "2:Ben",
+      "3:Cara",
+      "4:Dev"
+    ],
+    "rowsCompared": 20,
+    "samples": [
+      {
+        "attempt": 0,
+        "ms": 2,
+        "recap": false,
+        "seats": [
+          {
+            "seat": 1,
+            "name": "Ava",
+            "revision": "FIRST ROUND:Game 1 next",
+            "rows": 20
+          },
+          {
+            "seat": 2,
+            "name": "Ben",
+            "revision": "FIRST ROUND:Game 1 next",
+            "rows": 20
+          },
+          {
+            "seat": 3,
+            "name": "Cara",
+            "revision": "FIRST ROUND:Game 1 next",
+            "rows": 21
+          },
+          {
+            "seat": 4,
+            "name": "Dev",
+            "revision": "FIRST ROUND:Game 1 next",
+            "rows": 20
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "marks": [
+    {
+      "label": "season-start",
+      "at": 1795064739780
+    },
+    {
+      "label": "season-end",
+      "at": 1795064744485
+    },
+    {
+      "label": "play-in",
+      "at": 1795064744486
+    },
+    {
+      "label": "round:FIRST ROUND",
+      "at": 1795064745363
+    },
+    {
+      "label": "round:CONFERENCE SEMIFINALS",
+      "at": 1795064745363
+    },
+    {
+      "label": "round:CONFERENCE FINALS",
+      "at": 1795064745363
+    },
+    {
+      "label": "round:NBA FINALS",
+      "at": 1795064745363
+    },
+    {
+      "label": "recap",
+      "at": 1795064745363
+    }
+  ],
+  "stages": [
+    {
+      "label": "stage-0",
+      "phase": "Play-In"
+    },
+    {
+      "label": "stage-1",
+      "phase": "Recap"
+    },
+    {
+      "label": "recap-2",
+      "phase": "Recap"
+    }
+  ],
+  "reload": {
+    "ran": false,
+    "revision": null,
+    "seats": [],
+    "rowsCompared": 0,
+    "refreshedSeat": null,
+    "allEliminated": false,
+    "allEliminatedObserved": false,
+    "armed": true,
+    "classification": "no-held-boundary",
+    "reason": "no held playoff gate",
+    "samples": [],
+    "attempts": "reload-attempts.json",
+    "coverage": "reload classification is no-held-boundary"
+  },
+  "fixture": {
+    "id": "squad-4p-elim",
+    "expectedClass": "all-eliminated",
+    "observedClass": "unknown",
+    "qualifyingSeats": [],
+    "elimination": null
+  },
+  "gateWaits": []
+}

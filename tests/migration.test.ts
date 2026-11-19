@@ -1,11 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import { loadLocalEnv, statementsFrom } from '../scripts/lib.ts';
+import { dbSuite } from './local-db-gate';
 import { db } from '../src/server/db';
 
 loadLocalEnv();
-const describeDb = /^postgres(ql)?:\/\/[^@]*@(127\.0\.0\.1|localhost)[:/]/.test(process.env.DATABASE_URL ?? '') ? describe : describe.skip;
+const describeDb = dbSuite();
 
 const NEW_CODES = [
   'NEWLOBBY',

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, expect, it } from 'vitest';
 import { POST as createHandler } from '../api/lobby/index';
 import { GET as viewHandler } from '../api/lobby/[code]/index';
 import {
@@ -9,6 +9,7 @@ import {
   startAction as startHandler,
 } from '../src/server/actions';
 import { loadLocalEnv } from '../scripts/lib.ts';
+import { dbSuite } from './local-db-gate';
 import { db } from '../src/server/db';
 import { readLeagueView } from '../src/server/leagueSlice';
 import { LEAGUE_TEAMS, type LeagueResult } from '../src/shared/engine/league';
@@ -23,7 +24,7 @@ const BASE = 'http://localhost:4173/api';
 const created: string[] = [];
 
 loadLocalEnv();
-const describeDb = /^postgres(ql)?:\/\/[^@]*@(127\.0\.0\.1|localhost)[:/]/.test(process.env.DATABASE_URL ?? '') ? describe : describe.skip;
+const describeDb = dbSuite();
 
 afterAll(async () => {
   if (!created.length) return;

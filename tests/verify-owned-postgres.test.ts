@@ -1,0 +1,167 @@
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { checkSocketPath, createOwnedPostgres } from '../.claude/skills/verify-build-a-bucket/scripts/owned-postgres.mjs';
+
+class FakeChild {
+  pid: number;
+  exitCode: number | null = null;
+  signalCode: string | null = null;
+  signals: string[] = [];
+  constructor(pid: number) {
+    this.pid = pid;
+  }
+  kill(signal: string) {
+    this.signals.push(signal);
+    this.exitCode = 0;
+    return true;
+  }
+  once() {
+    return this;
+  }
+  on() {
+    return this;
+  }
+}
+
+const temps: string[] = [];
+const previousTmp = process.env.TMPDIR;
+const ownedTmp = mkdtempSync(path.join(os.tmpdir(), 'bab-test-'));
+process.env.TMPDIR = ownedTmp;
+afterEach(() => {
+  for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+afterAll(() => {
+  if (previousTmp === undefined) delete process.env.TMPDIR;
+  else process.env.TMPDIR = previousTmp;
+  rmSync(ownedTmp, { recursive: true, force: true });
+});
+
+function tempDir() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'r27-'));
+  temps.push(dir);
+  return dir;
+}
+
+function initFor(child: FakeChild) {
+  return ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+    writeFileSync(path.join(dataDir, 'postmaster.pid'), `${child.pid}\n`);
+    writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+  };
+}
+
+describe('owned postgres', () => {
+  it('creates the database and loads the schema over the owned socket', async () => {
+    const root = tempDir();
+    const child = new FakeChild(500);
+    const sql: string[] = [];
+    const owned = await createOwnedPostgres({
+      root,
+      port: 55434,
+      database: 'bab_local',
+      schema: '/schema.sql',
+      spawn: () => child,
+      initdb: initFor(child),
+      psql: (text: string) => {
+        sql.push(text);
+        return '1';
+      },
+      schemaLoad: () => {
+        sql.push('schema');
+      },
+      clock: { setTimeout: (fn: () => void) => fn() },
+    });
+    expect(sql).toEqual(['select 1', 'create database bab_local', 'schema']);
+    expect(owned.env.BAB_PG_SOCKET_DIR).toBe(owned.sockDir);
+    expect(owned.env.DATABASE_URL).toContain('host=');
+  });
+
+  it('issues no SQL when the owned child has already exited', async () => {
+    const root = tempDir();
+    const child = new FakeChild(500);
+    child.exitCode = 1;
+    const sql: string[] = [];
+    await expect(
+      createOwnedPostgres({
+        root,
+        port: 55434,
+        database: 'bab_local',
+        schema: '/schema.sql',
+        spawn: () => child,
+        initdb: initFor(child),
+        psql: (text: string) => {
+          sql.push(text);
+          return '1';
+        },
+        schemaLoad: () => {
+          sql.push('schema');
+        },
+        clock: { setTimeout: (fn: () => void) => fn() },
+      }),
+    ).rejects.toThrow('postgres exited before readiness');
+    expect(sql).toEqual([]);
+  });
+
+  it('issues no SQL when postmaster.pid does not match', async () => {
+    const root = tempDir();
+    const child = new FakeChild(500);
+    const sql: string[] = [];
+    await expect(
+      createOwnedPostgres({
+        root,
+        port: 55434,
+        database: 'bab_local',
+        schema: '/schema.sql',
+        spawn: () => child,
+        initdb: ({ dataDir, sockDir, port }: { dataDir: string; sockDir: string; port: number }) => {
+          writeFileSync(path.join(dataDir, 'postmaster.pid'), '999\n');
+          writeFileSync(path.join(sockDir, `.s.PGSQL.${port}`), '');
+        },
+        psql: (text: string) => {
+          sql.push(text);
+          return '1';
+        },
+        schemaLoad: () => {
+          sql.push('schema');
+        },
+        clock: { setTimeout: (fn: () => void) => fn() },
+      }),
+    ).rejects.toThrow('did not become ready');
+    expect(sql).toEqual([]);
+  });
+
+  it('rejects a socket path over 103 bytes before spawning', () => {
+    expect(() => checkSocketPath('/' + 'a'.repeat(120), 55434)).toThrow('socket path too long');
+  });
+});
+
+describe('owned postgres locale', () => {
+  it('passes LC_ALL and LANG to the owned postgres tools', async () => {
+    const dir = tempDir();
+    const bin = tempDir();
+    const postgresEnv = path.join(dir, 'postgres-env.txt');
+    const initdbEnv = path.join(dir, 'initdb-env.txt');
+    const psqlEnv = path.join(dir, 'psql-env.txt');
+    writeFileSync(
+      path.join(bin, 'postgres'),
+      `#!/bin/sh\nprintf '%s\\n' "$LC_ALL" > "${postgresEnv}"\nprintf '%s\\n' "$LANG" >> "${postgresEnv}"\ndata=""; sock=""; port=""\nwhile [ $# -gt 0 ]; do case "$1" in -D) data="$2"; shift 2;; -k) sock="$2"; shift 2;; -p) port="$2"; shift 2;; *) shift;; esac; done\nprintf '%s\\n' "$$" > "$data/postmaster.pid"\n: > "$sock/.s.PGSQL.$port"\nsleep 0.2\nexit 0\n`,
+    );
+    writeFileSync(path.join(bin, 'initdb'), `#!/bin/sh\nprintf '%s\\n' "$LC_ALL" > "${initdbEnv}"\nprintf '%s\\n' "$LANG" >> "${initdbEnv}"\nexit 0\n`);
+    writeFileSync(path.join(bin, 'psql'), `#!/bin/sh\nprintf '%s\\n' "$LC_ALL" > "${psqlEnv}"\nprintf '%s\\n' "$LANG" >> "${psqlEnv}"\nprintf '1\\n'\nexit 0\n`);
+    chmodSync(path.join(bin, 'postgres'), 0o755);
+    chmodSync(path.join(bin, 'initdb'), 0o755);
+    chmodSync(path.join(bin, 'psql'), 0o755);
+    const previous = process.env.BAB_PG_BIN;
+    process.env.BAB_PG_BIN = bin;
+    try {
+      await createOwnedPostgres({ root: dir, port: 55434, database: 'bab_local', schema: path.join(dir, 'schema.sql'), clock: { setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 20)) } });
+    } finally {
+      if (previous === undefined) delete process.env.BAB_PG_BIN;
+      else process.env.BAB_PG_BIN = previous;
+    }
+    for (const file of [postgresEnv, initdbEnv, psqlEnv]) {
+      expect(readFileSync(file, 'utf8').trim().split('\n')).toEqual(['C', 'C']);
+    }
+  });
+});

@@ -60,7 +60,8 @@ Only the playoff gate takes input: qualified seats tap Ready and the host taps S
 every playoff round run on their own.
 
 It ends at the recap, compares the champion text across seats, then does Play Again: every retained seat readies, the
-host opens the builds, and the second game's `open-builder` must appear. `evidence/league/summary.json` holds the code,
+host opens the builds, and the second game's `open-builder` must appear. Each run writes its own
+`evidence/league-<ISO>-<suffix>/summary.json` (never a shared `evidence/league/` file) holding the code,
 mode, era, each stage's visible standings and each seat's record/seed, the champion, Play Again and any page or
 console errors. It also records the wall-clock `phaseDurations` (build complete, season start, season end, each
 playoff round, recap), each seat's `actions` after the builds by control name, its `gateWaits` at the playoff gate
@@ -70,13 +71,33 @@ qualifies and the gate is skipped.
 
 Chaos options, applied at the first sampled stage:
 
-- `--reload 2` reloads seat 2 mid-season, waits for the lobby to come back, and re-compares the standings.
+- `--reload 2` arms at season start and fires only at the held playoff gate, after every active seat shows the gate
+  and before any Ready/Start tap. It reloads seat 2, proves the navigation was a real reload (a marker set before is
+  gone and the navigation entry is `reload`), and re-reads the standings from every active seat in one atomic
+  in-page read. The displayed revision is structured `{ stage, progress }`, read from the dedicated
+  `league-stage-name` and `league-stage-progress` elements; each field is that element's trimmed visible text, and a
+  missing, hidden or blank element gives an empty field, never another element's text. It is valid only when both
+  parts are present and non-empty, so a missing, empty or partial revision never joins a comparison and recap
+  without a displayed stage is not a revision. Seat identity is the positive integer seat number: the same number
+  under two names is a conflict and fails, and the refreshed seat's number must be among the compared seats. It
+  passes only when at least two distinct seat numbers report the same valid revision, the refreshed seat is one of
+  them, the first ten rows of each conference match on full row text, and no canonical row is blank. Every outcome
+  is classified (`stable-match`, `unequal`, `no-held-boundary`, `invalid-display`, `recap-before-proof`,
+  `no-common-revision`) and keeps `reload-before-*` and `reload-after-*` (or `reload-none-*` when no reload ran)
+  captures for the refreshed seat and another seat plus a bounded, sanitized `reload-attempts.json`; a league that
+  reaches recap with every active seat out and
+  no gate records `no-held-boundary`, never reloads, and still finishes to recap and Play Again. A missing or failed
+  comparison still writes `summary.json` with `reload.coverage` naming the reason, then exits non-zero.
+
+Predeclared setups (`--fixture ID`) write the entry preview rows in one transaction only after the owned-run guard passes, seed each seat `bab:mp:v1` session, and continue from preview Ready; no standings, rounds, stages or gates are written or forced. `summary.fixture` records the catalog `expectedClass` and the browsers `observedClass`/`qualifyingSeats`; a mismatch fails and is never rerolled, qualifying rows pass only with `stable-match`, and the all-eliminated row passes only with `no-held-boundary`, recap and Play Again and is never a refresh pass. All-eliminated is observed from each seat's own recap capture: every seat finishes Play-in exit or Missed playoffs (a later playoff loss reads First round or deeper), the plain automatic playoff start is in every log, the captures agree, and no playoff gate was held; `summary.fixture.elimination` must equal what the checker re-derives from the saved recap files. Rows without `--fixture` play the whole unmodified journey and must record no fixture.
 - `--away 2` closes seat 2's browser context; the host must still start the playoffs and the remaining seats must agree.
 - `--host-leave` taps Leave lobby on the host; another seat must receive Start playoffs and carry the league.
 
-The season reveal is real time. The regular season takes about 5 seconds: rounds with a human game reveal at 0.4 s,
-the rest 50 times faster. A playoff series with a human team reveals one game every 0.12 s; a series between computer
-teams runs 50 times faster. The command has no internal setters or database jumps.
+The season reveal is real time. CPU-only games take about 2.4 ms each, so a CPU-only round is effectively instant.
+Regular-season games with a human take 60 ms each, and each playoff game in a series with a human is its own 700 ms
+step. A finished playoff round that included a human series is held for two steps so every seat sees the deciding
+game and the result before the next round. An 8-player league takes about 10 s of season and 15-35 s of playoffs.
+The command has no internal setters or database jumps.
 
 ## Gotchas
 
