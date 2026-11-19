@@ -12,7 +12,7 @@ import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
 import { buildSupervisorSpec } from './supervisor-spec.mjs';
 import { removeOwnedDirs } from './owned-dirs.mjs';
-import { applyLeagueFixture, classifyFixture, fixtureOptions, fixtureRunFrom, fixtureStorageState, fixtureVerdict } from './league-fixture.mjs';
+import { classifyFixture, fixtureOptions, fixtureStorageState, fixtureVerdict, openFixtureRun } from './league-fixture.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -330,17 +330,24 @@ async function leagueRun() {
   if (awaySeat !== null && hostLeave) throw new Error('--away and --host-leave are separate scenarios');
   const base = o.base ?? state.base;
   let fixtureSecrets = null;
+  let fixtureOrigin = null;
+  let browser = null;
   if (fixture) {
-    fixtureSecrets = fixture.participants.map(() => randomBytes(16).toString('hex'));
-    const run = { ...fixtureRunFrom({
-      state: JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')),
-      init: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor-init.json'), 'utf8')),
-      supervisor: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor.json'), 'utf8')),
-    }), base: o.base };
-    await applyLeagueFixture({ entry: fixture, run, secrets: fixtureSecrets });
+    const opened = await openFixtureRun({
+      base: o.base,
+      dir,
+      fixture,
+      readJson: (file) => JSON.parse(fs.readFileSync(file, 'utf8')),
+      launch: () => pw[browserName].launch({ headless: true }),
+      makeSecret: () => randomBytes(16).toString('hex'),
+    });
+    fixtureSecrets = opened.secrets;
+    fixtureOrigin = opened.origin;
+    browser = opened.browser;
     if (!state.lobbies.includes(fixture.code)) { state.lobbies.push(fixture.code); saveState(dir, state); }
+  } else {
+    browser = await pw[browserName].launch({ headless: true });
   }
-  const browser = await pw[browserName].launch({ headless: true });
   const ev = createLeagueEvidenceDir(path.join(dir, 'evidence'));
   const names = ['Ava', 'Ben', 'Cara', 'Dev', 'Eli', 'Fay', 'Gus', 'Hana'];
   const seats = [];
@@ -353,7 +360,7 @@ async function leagueRun() {
     return `${method} ${pathname}`;
   };
   for (let index = 0; index < players; index++) {
-    const context = await browser.newContext({ ...ctxOpts, viewport, ...(fixture ? { storageState: fixtureStorageState({ base: state.base, code: fixture.code, secret: fixtureSecrets[index], name: names[index] }) } : {}) });
+    const context = await browser.newContext({ ...ctxOpts, viewport, ...(fixture ? { storageState: fixtureStorageState({ base: fixtureOrigin, code: fixture.code, secret: fixtureSecrets[index], name: names[index] }) } : {}) });
     const page = await context.newPage();
     const errors = [];
     const http = [];
@@ -751,7 +758,7 @@ async function leagueRun() {
   try {
     let host = seats[0];
     if (fixture) {
-      for (const seat of seats) await seat.page.goto(`${state.base}/`, { waitUntil: 'domcontentloaded' });
+      for (const seat of seats) await seat.page.goto(`${fixtureOrigin}/`, { waitUntil: 'domcontentloaded' });
       await startFromPreview(host, seats, true);
     } else {
       await host.page.goto(base);
@@ -898,10 +905,11 @@ async function leagueRun() {
       if (label !== lastLabel) {
         const record = await verifyStage(`stage-${checkpoint}`, null);
         stages.push(record);
-        if (record.phase === 'Playoffs' && reloadSeat !== null && !reload.allEliminatedObserved) {
+        if (record.phase === 'Playoffs' && (reloadSeat !== null || fixture) && !reload.allEliminatedObserved) {
           reload.allEliminatedObserved = true;
           const out = await Promise.all(active().map((entry) => entry.page.getByText('You are out').first().isVisible().catch(() => false)));
           const activity = await Promise.all(active().map(logText));
+          reload.eliminationEvidence = { out, autoStart: activity.map((text) => String(text).includes('The playoffs started automatically')) };
           reload.allEliminated = allEliminated({ out, activity });
         }
         const roundLabel = clean(record.roundName ?? record.stageName ?? '').toUpperCase();
@@ -1125,9 +1133,10 @@ async function leagueRun() {
     summary.reload = reloadRecord(reloadSeat !== null, reload);
     let fixtureError = null;
     if (fixture) {
-      const classified = classifyFixture({ gateSeen, gateReadySeats, allEliminatedObserved: reload.allEliminatedObserved, recap: marks.some((entry) => entry.label === 'recap') });
+      const classified = classifyFixture({ gateSeen, gateReadySeats, allEliminated: reload.allEliminated, recap: marks.some((entry) => entry.label === 'recap') });
       const verdict = fixtureVerdict({ entry: fixture, classified });
       summary.fixture = verdict.record;
+      summary.fixture.elimination = reload.eliminationEvidence ?? null;
       fixtureError = verdict.error;
     }
     summary.lifecycle = lifecycle;

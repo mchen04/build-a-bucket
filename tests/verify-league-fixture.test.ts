@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { applyLeagueFixture, classifyFixture, defaultConnect, fixtureOptions, fixtureRunFrom, fixtureStorageState, fixtureVerdict, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
+import { applyLeagueFixture, classifyFixture, defaultConnect, fixtureAppOrigin, fixtureOptions, fixtureRunFrom, fixtureStorageState, fixtureVerdict, guardOwnedRun, openFixtureRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import { awaitReloadProof, refreshCoverage } from '../.claude/skills/verify-build-a-bucket/scripts/standings-check.mjs';
 import type { FixtureRunner, FixtureTarget } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import { createRunner } from '../.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs';
@@ -218,15 +218,27 @@ describe('fixture verdict', () => {
 
 describe('fixture class', () => {
   it('classifies a gate as qualifying', () => {
-    expect(classifyFixture({ gateSeen: true, gateReadySeats: [1], allEliminatedObserved: false, recap: false })).toEqual({ observedClass: 'qualifying', qualifyingSeats: [1] });
+    expect(classifyFixture({ gateSeen: true, gateReadySeats: [1], allEliminated: false, recap: false })).toEqual({ observedClass: 'qualifying', qualifyingSeats: [1] });
   });
 
   it('classifies no gate and all eliminated by recap', () => {
-    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminatedObserved: true, recap: true })).toEqual({ observedClass: 'all-eliminated', qualifyingSeats: [] });
+    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: true, recap: true })).toEqual({ observedClass: 'all-eliminated', qualifyingSeats: [] });
   });
 
   it('classifies no gate before recap as unknown', () => {
-    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminatedObserved: true, recap: false })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
+    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: true, recap: false })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
+  });
+
+  it('rejects all-eliminated without the signature', () => {
+    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: false, recap: true })).toEqual({ observedClass: 'unknown', qualifyingSeats: [] });
+  });
+
+  it('rejects all-eliminated when the gate was seen', () => {
+    expect(classifyFixture({ gateSeen: true, gateReadySeats: [1], allEliminated: true, recap: true })).toEqual({ observedClass: 'qualifying', qualifyingSeats: [1] });
+  });
+
+  it('accepts all-eliminated only with the signature', () => {
+    expect(classifyFixture({ gateSeen: false, gateReadySeats: [], allEliminated: true, recap: true })).toEqual({ observedClass: 'all-eliminated', qualifyingSeats: [] });
   });
 });
 
@@ -310,6 +322,82 @@ describe('fixture session persistence', () => {
     const value = { classification: 'stable-match', ran: true, revision: { stage: 'Season', progress: '1 / 10' }, seats: ['1:Ava', '2:Ben'], rowsCompared: 20, refreshedSeat: { seat: 2, name: 'Ben' }, navigation: { observed: true }, attempts: 'reload-attempts.json', session: { present: false } };
     expect(refreshCoverage(true, value).ok).toBe(false);
     expect(refreshCoverage(true, value).reason).toBe('session not persisted after reload');
+  });
+});
+
+describe('fixture app origin', () => {
+  const state = { mode: 'dev', base: 'http://127.0.0.1:4173/', port: 4173 };
+  const spec = { services: [{ kind: 'app', args: ['--port', '4173', '--strictPort'] }] };
+
+  it('returns the owned origin', () => {
+    expect(fixtureAppOrigin({ state, spec })).toBe('http://127.0.0.1:4173');
+  });
+
+  it('refuses a foreign recorded base', () => {
+    expect(() => fixtureAppOrigin({ state: { ...state, base: 'http://example.com:4173/' }, spec })).toThrow();
+  });
+
+  it('refuses https', () => {
+    expect(() => fixtureAppOrigin({ state: { ...state, base: 'https://127.0.0.1:4173/' }, spec })).toThrow();
+  });
+
+  it('refuses a recorded base port mismatch', () => {
+    expect(() => fixtureAppOrigin({ state: { ...state, base: 'http://127.0.0.1:4174/' }, spec })).toThrow();
+  });
+
+  it('refuses a spec app port mismatch', () => {
+    expect(() => fixtureAppOrigin({ state, spec: { services: [{ kind: 'app', args: ['--port', '4174', '--strictPort'] }] } })).toThrow();
+  });
+
+  it('refuses no app service', () => {
+    expect(() => fixtureAppOrigin({ state, spec: { services: [] } })).toThrow();
+  });
+
+  it('refuses a missing strictPort', () => {
+    expect(() => fixtureAppOrigin({ state, spec: { services: [{ kind: 'app', args: ['--port', '4173'] }] } })).toThrow();
+  });
+
+  it('refuses a prod run', () => {
+    expect(() => fixtureAppOrigin({ state: { ...state, mode: 'prod' }, spec })).toThrow();
+  });
+});
+
+describe('open fixture run', () => {
+  const state = { mode: 'dev', base: 'http://127.0.0.1:4173/', port: 4173, localDb: { database: 'bab', pgPort: 55434 }, supervisor: { pid: 100 } };
+  const init = { database: 'bab', dataDir: '/owned/data', sockDir: '/owned/socket' };
+  const supervisor = { pid: 100, services: [{ name: 'postgres', pid: 200 }] };
+  const spec = { services: [{ kind: 'app', args: ['--port', '4173', '--strictPort'] }] };
+  const files: Record<string, unknown> = { 'run.json': state, 'supervisor-init.json': init, 'supervisor.json': supervisor, 'supervisor-spec.json': spec };
+  const readJson = (file: string) => files[path.basename(file)];
+  const fixture = { id: 'fx', mode: 'normal', era: 'current', players: 1, code: 'ABC123', secret: 's', expectedClass: 'qualifying' as const, qualifyingSeats: [1], participants: [{ id: 'p1', seat: 1, name: 'Ava', team: 'ATL', build: { kind: 'normal' }, summary: {} }] };
+
+  it('applies then launches and returns the origin', async () => {
+    const calls: string[] = [];
+    const apply = async () => { calls.push('apply'); };
+    const launch = async () => { calls.push('launch'); return { browser: true }; };
+    const result = await openFixtureRun({ base: undefined, dir: '/run', fixture, readJson, apply, launch, makeSecret: () => 's' });
+    expect(calls).toEqual(['apply', 'launch']);
+    expect(result.origin).toBe('http://127.0.0.1:4173');
+    expect(result.secrets).toEqual(['s']);
+  });
+
+  it('refuses an explicit base with zero apply and launch', async () => {
+    const calls: string[] = [];
+    const apply = async () => { calls.push('apply'); };
+    const launch = async () => { calls.push('launch'); return {}; };
+    await expect(openFixtureRun({ base: 'http://127.0.0.1:4173', dir: '/run', fixture, readJson, apply, launch, makeSecret: () => 's' })).rejects.toThrow();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('fixture launch source', () => {
+  it('launches the fixture browser only through openFixtureRun', () => {
+    const source = readFileSync(path.join(process.cwd(), '.claude/skills/verify-build-a-bucket/scripts/control.mjs'), 'utf8');
+    const open = source.indexOf('openFixtureRun(');
+    const launch = source.indexOf('pw[browserName].launch(', open);
+    expect(open).toBeGreaterThan(-1);
+    expect(launch).toBeGreaterThan(-1);
+    expect(launch).toBeGreaterThan(open);
   });
 });
 

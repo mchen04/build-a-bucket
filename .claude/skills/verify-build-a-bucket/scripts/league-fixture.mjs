@@ -68,9 +68,43 @@ export function fixtureStorageState({ base, code, secret, name }) {
   return { cookies: [], origins: [{ origin: url.origin, localStorage: [{ name: 'bab:mp:v1', value: JSON.stringify({ v: 1, code, secret, name }) }] }] };
 }
 
-export function classifyFixture({ gateSeen, gateReadySeats, allEliminatedObserved, recap }) {
+export function fixtureAppOrigin({ state, spec }) {
+  if (state.mode !== 'dev') throw new Error('fixture app origin needs a dev run');
+  let url;
+  try {
+    url = new URL(state.base);
+  } catch {
+    throw new Error('fixture app origin needs a valid base');
+  }
+  if (url.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(url.hostname)) throw new Error('fixture app origin needs the owned local origin');
+  if (!Number.isInteger(state.port) || state.port <= 0) throw new Error('fixture app origin needs a positive port');
+  if (url.port !== String(state.port)) throw new Error('fixture app origin port does not match the run');
+  if (url.pathname !== '/' || url.search !== '' || url.hash !== '') throw new Error('fixture app origin must be a bare origin');
+  const apps = (spec.services ?? []).filter((service) => service.kind === 'app');
+  if (apps.length !== 1) throw new Error('fixture app origin needs exactly one app service');
+  const args = apps[0].args ?? [];
+  const portIndex = args.indexOf('--port');
+  if (portIndex < 0 || args[portIndex + 1] !== String(state.port)) throw new Error('fixture app service port does not match the run');
+  if (!args.includes('--strictPort')) throw new Error('fixture app service needs --strictPort');
+  return url.origin;
+}
+
+export async function openFixtureRun({ base, dir, fixture, readJson, apply = applyLeagueFixture, launch, makeSecret }) {
+  if (base) throw new Error('fixture refuses --base');
+  const state = readJson(path.join(dir, 'run.json'));
+  const init = readJson(path.join(dir, 'supervisor-init.json'));
+  const supervisor = readJson(path.join(dir, 'supervisor.json'));
+  const spec = readJson(path.join(dir, 'supervisor-spec.json'));
+  const origin = fixtureAppOrigin({ state, spec });
+  const secrets = fixture.participants.map(() => makeSecret());
+  await apply({ entry: fixture, run: { ...fixtureRunFrom({ state, init, supervisor }), base }, secrets });
+  const browser = await launch();
+  return { origin, secrets, browser };
+}
+
+export function classifyFixture({ gateSeen, gateReadySeats, allEliminated, recap }) {
   if (gateSeen) return { observedClass: 'qualifying', qualifyingSeats: [...gateReadySeats] };
-  if (allEliminatedObserved && recap) return { observedClass: 'all-eliminated', qualifyingSeats: [] };
+  if (allEliminated === true && recap) return { observedClass: 'all-eliminated', qualifyingSeats: [] };
   return { observedClass: 'unknown', qualifyingSeats: [] };
 }
 

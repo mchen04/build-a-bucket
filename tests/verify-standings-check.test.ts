@@ -156,6 +156,11 @@ describe('reload proof boundary', () => {
     expect(allEliminated({ out: [true, false], activity: ['The playoffs started automatically', 'The playoffs started automatically'] })).toBe(false);
     expect(allEliminated({ out: [true, true], activity: ['The playoffs started automatically', 'Waiting'] })).toBe(false);
   });
+
+  it('rejects the all-eliminated signature when one seat or log is missing', () => {
+    expect(allEliminated({ out: [true, false], activity: ['The playoffs started automatically', 'The playoffs started automatically'] })).toBe(false);
+    expect(allEliminated({ out: [true, true], activity: ['The playoffs started automatically', 'Waiting'] })).toBe(false);
+  });
 });
 
 describe('league evidence and refresh coverage', () => {
