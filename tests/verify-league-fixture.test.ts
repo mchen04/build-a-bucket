@@ -20,7 +20,7 @@ const validRun = {
   socketDir: '/owned/socket',
   port: 55434,
   database: 'bab',
-  readFile: () => '200\n/owned/data\n',
+  readFile: () => '200\n/owned/data\n1234567890\n55434\n/owned/socket\n',
   pidAlive: (pid: number) => pid === 100 || pid === 200,
 };
 
@@ -88,6 +88,33 @@ describe('league fixture guard', () => {
 
   it('returns the owned target', () => {
     expect(guardOwnedRun({ run: validRun, readFile: validRun.readFile, pidAlive: validRun.pidAlive })).toEqual({ socketDir: '/owned/socket', port: 55434, database: 'bab' });
+  });
+});
+
+describe('league fixture guard binds the target', () => {
+  const cases: [string, Record<string, unknown>][] = [
+    ['wrong port', { port: 55435 }],
+    ['socket naming a different port', { socket: '/owned/socket/.s.PGSQL.55435' }],
+    ['postmaster port mismatch', { readFile: () => '200\n/owned/data\n1234567890\n55435\n/owned/socket\n' }],
+    ['postmaster socket-dir mismatch', { readFile: () => '200\n/owned/data\n1234567890\n55434\n/other/socket\n' }],
+    ['relative socketDir', { socketDir: 'owned/socket' }],
+    ['empty database', { database: '' }],
+    ['missing database', { database: undefined }],
+    ['NaN port', { port: Number.NaN }],
+    ['missing port', { port: undefined }],
+  ];
+  for (const [name, patch] of cases) {
+    it(`refuses ${name} before connect`, async () => {
+      const { targets, connect } = connectStub();
+      await expect(applyLeagueFixture({ entry, run: { ...validRun, ...patch }, connect, secrets })).rejects.toThrow();
+      expect(targets).toHaveLength(0);
+    });
+  }
+
+  it('connects with exactly the validated target', async () => {
+    const { targets, connect } = connectStub();
+    await applyLeagueFixture({ entry, run: validRun, connect, secrets });
+    expect(targets).toEqual([{ socketDir: '/owned/socket', port: 55434, database: 'bab' }]);
   });
 });
 

@@ -30,11 +30,18 @@ export function guardOwnedRun({ run, base, readFile = fs.readFileSync, pidAlive 
   if (!run || run.neon === true || run.prod === true || run.devLocal !== true) throw new Error('fixture requires a dev-local run');
   if (!run.supervisorPid || !pidAlive(run.supervisorPid)) throw new Error('fixture requires a live supervisor');
   if (!run.postgresPid || !pidAlive(run.postgresPid)) throw new Error('fixture requires a live postgres');
-  const pidLine = String(readFile(run.postmasterPidPath, 'utf8')).split('\n')[0].trim();
-  if (pidLine !== String(run.postgresPid)) throw new Error('postmaster.pid does not match the recorded postgres pid');
+  if (typeof run.socketDir !== 'string' || !path.isAbsolute(run.socketDir)) throw new Error('fixture requires an absolute socket dir');
+  if (!Number.isInteger(run.port) || run.port <= 0) throw new Error('fixture requires a positive integer port');
+  if (typeof run.database !== 'string' || run.database.length === 0) throw new Error('fixture requires a non-empty database');
+  if (typeof run.socket !== 'string') throw new Error('fixture requires a socket path');
+  if (typeof run.postmasterPidPath !== 'string') throw new Error('fixture requires a postmaster.pid path');
   const socket = path.resolve(run.socket);
   const dir = path.resolve(run.socketDir);
-  if (socket !== dir && !socket.startsWith(`${dir}${path.sep}`)) throw new Error('socket is outside the owned socket dir');
+  if (socket !== path.join(dir, `.s.PGSQL.${run.port}`)) throw new Error('socket does not match the owned socket dir and port');
+  const lines = String(readFile(run.postmasterPidPath, 'utf8')).split('\n');
+  if (lines[0]?.trim() !== String(run.postgresPid)) throw new Error('postmaster.pid does not match the recorded postgres pid');
+  if (lines[3]?.trim() !== String(run.port)) throw new Error('postmaster.pid port does not match the recorded port');
+  if (lines[4]?.trim() !== run.socketDir) throw new Error('postmaster.pid socket dir does not match the recorded socket dir');
   return { socketDir: run.socketDir, port: run.port, database: run.database };
 }
 
