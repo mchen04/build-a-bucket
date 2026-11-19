@@ -21,6 +21,7 @@ export type FixtureEntry = {
   players: number;
   code: string;
   secret: string;
+  expectedClass: 'qualifying' | 'all-eliminated';
   qualifyingSeats: number[];
   participants: { id: string; seat: number; name: string; team: string; build: { kind: string }; summary: unknown }[];
 };
@@ -44,6 +45,7 @@ export type FixtureRunner = {
 export function hashSecret(secret: string): string;
 export function fixtureRunFrom(args: { state: FixtureState; init: FixtureInit; supervisor: FixtureSupervisor }): FixtureRun;
 export function fixtureOptions(entry: FixtureEntry, options?: { players?: number; mode?: string; era?: string }): { players: number; mode: string; era: string };
+export function fixtureVerdict(args: { entry: FixtureEntry; classified: { observedClass: 'qualifying' | 'all-eliminated' | 'unknown'; qualifyingSeats: number[] } }): { record: { id: string; expectedClass: string; observedClass: string; qualifyingSeats: number[] }; error: string | null };
 export function classifyFixture(args: { gateSeen: boolean; gateReadySeats: number[]; allEliminatedObserved: boolean; recap: boolean }): { observedClass: 'qualifying' | 'all-eliminated' | 'unknown'; qualifyingSeats: number[] };
 export function defaultConnect(target: FixtureTarget): Promise<FixtureRunner>;
 export function guardOwnedRun(args: { run: FixtureRun | null; base?: string; readFile?: (path: string, encoding: string) => string; pidAlive?: (pid: number) => boolean }): FixtureTarget;

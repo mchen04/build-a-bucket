@@ -46,11 +46,20 @@ export function fixtureRunFrom({ state, init, supervisor }) {
 }
 
 export function fixtureOptions(entry, { players, mode, era } = {}) {
+  if (entry.expectedClass !== 'qualifying' && entry.expectedClass !== 'all-eliminated') throw new Error(`fixture ${entry.id} has no valid expectedClass`);
+  if ((entry.expectedClass === 'qualifying') !== (entry.qualifyingSeats.length > 0)) throw new Error(`fixture ${entry.id} expectedClass disagrees with qualifyingSeats`);
   const resolved = { players: players ?? entry.players, mode: mode ?? entry.mode, era: era ?? entry.era };
   if (resolved.players !== entry.players || resolved.mode !== entry.mode || resolved.era !== entry.era) {
     throw new Error(`fixture ${entry.id} expects ${entry.players} ${entry.mode} ${entry.era}`);
   }
   return resolved;
+}
+
+export function fixtureVerdict({ entry, classified }) {
+  const record = { id: entry.id, expectedClass: entry.expectedClass, observedClass: classified.observedClass, qualifyingSeats: classified.qualifyingSeats };
+  if (classified.observedClass !== entry.expectedClass) return { record, error: `fixture ${entry.id} observed ${classified.observedClass}, expected ${entry.expectedClass}` };
+  if (JSON.stringify(classified.qualifyingSeats) !== JSON.stringify(entry.qualifyingSeats)) return { record, error: `fixture ${entry.id} observed seats ${JSON.stringify(classified.qualifyingSeats)}, expected ${JSON.stringify(entry.qualifyingSeats)}` };
+  return { record, error: null };
 }
 
 export function classifyFixture({ gateSeen, gateReadySeats, allEliminatedObserved, recap }) {

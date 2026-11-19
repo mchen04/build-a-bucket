@@ -12,7 +12,7 @@ import { buildLeagueSummary } from './replay-records.mjs';
 import { requestStop } from './supervisor.mjs';
 import { buildSupervisorSpec } from './supervisor-spec.mjs';
 import { removeOwnedDirs } from './owned-dirs.mjs';
-import { applyLeagueFixture, classifyFixture, fixtureOptions, fixtureRunFrom } from './league-fixture.mjs';
+import { applyLeagueFixture, classifyFixture, fixtureOptions, fixtureRunFrom, fixtureVerdict } from './league-fixture.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const require = createRequire(path.join(repo, 'package.json'));
@@ -329,6 +329,18 @@ async function leagueRun() {
   }
   if (awaySeat !== null && hostLeave) throw new Error('--away and --host-leave are separate scenarios');
   const base = o.base ?? state.base;
+  let fixtureSecrets = null;
+  if (fixture) {
+    fixtureSecrets = fixture.participants.map(() => randomBytes(16).toString('hex'));
+    const run = { ...fixtureRunFrom({
+      state: JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')),
+      init: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor-init.json'), 'utf8')),
+      supervisor: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor.json'), 'utf8')),
+    }), base: o.base };
+    await applyLeagueFixture({ entry: fixture, run, secrets: fixtureSecrets });
+    code = fixture.code;
+    if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
+  }
   const browser = await pw[browserName].launch({ headless: true });
   const ev = createLeagueEvidenceDir(path.join(dir, 'evidence'));
   const names = ['Ava', 'Ben', 'Cara', 'Dev', 'Eli', 'Fay', 'Gus', 'Hana'];
@@ -740,20 +752,11 @@ async function leagueRun() {
   try {
     let host = seats[0];
     if (fixture) {
-      const secrets = fixture.participants.map(() => randomBytes(16).toString('hex'));
-      const run = fixtureRunFrom({
-        state: JSON.parse(fs.readFileSync(path.join(dir, 'run.json'), 'utf8')),
-        init: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor-init.json'), 'utf8')),
-        supervisor: JSON.parse(fs.readFileSync(path.join(dir, 'supervisor.json'), 'utf8')),
-      });
-      await applyLeagueFixture({ entry: fixture, run, secrets });
-      code = fixture.code;
-      if (!state.lobbies.includes(code)) { state.lobbies.push(code); saveState(dir, state); }
       for (let index = 0; index < seats.length; index++) {
         const seat = seats[index];
         await seat.context.addInitScript(({ code, secret, name }) => {
           localStorage.setItem('bab:mp:v1', JSON.stringify({ v: 1, code, secret, name }));
-        }, { code, secret: secrets[index], name: seat.name });
+        }, { code, secret: fixtureSecrets[index], name: seat.name });
         await seat.page.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
       }
       await startFromPreview(host, seats, true);
@@ -797,11 +800,13 @@ async function leagueRun() {
         break;
       }
       if (await visible(host, 'playoff-gate')) {
-        gateSeen = true;
-        gateReadySeats = [];
-        for (const seat of active()) {
-          const button = seat.page.getByTestId('playoff-gate').getByRole('button', { name: 'Ready', exact: true });
-          if (await button.isVisible().catch(() => false)) gateReadySeats.push(seat.seat);
+        if (!gateSeen) {
+          gateSeen = true;
+          gateReadySeats = [];
+          for (const seat of active()) {
+            const button = seat.page.getByTestId('playoff-gate').getByRole('button', { name: 'Ready', exact: true });
+            if (await button.isVisible().catch(() => false)) gateReadySeats.push(seat.seat);
+          }
         }
         const record = await verifyStage(`gate-${checkpoint}`, null);
         stages.push(record);
@@ -1113,18 +1118,18 @@ async function leagueRun() {
       evidence: ev,
     });
     summary.reload = reloadRecord(reloadSeat !== null, reload);
+    let fixtureError = null;
     if (fixture) {
-      const expectedClass = fixture.qualifyingSeats.length > 0 ? 'qualifying' : 'all-eliminated';
       const classified = classifyFixture({ gateSeen, gateReadySeats, allEliminatedObserved: reload.allEliminatedObserved, recap: marks.some((entry) => entry.label === 'recap') });
-      summary.fixture = { id: fixture.id, expectedClass, observedClass: classified.observedClass, qualifyingSeats: classified.qualifyingSeats };
-      if (classified.observedClass !== expectedClass || JSON.stringify(classified.qualifyingSeats) !== JSON.stringify(fixture.qualifyingSeats)) {
-        throw new Error(`fixture ${fixture.id} observed ${classified.observedClass} ${JSON.stringify(classified.qualifyingSeats)}, expected ${expectedClass} ${JSON.stringify(fixture.qualifyingSeats)}`);
-      }
+      const verdict = fixtureVerdict({ entry: fixture, classified });
+      summary.fixture = verdict.record;
+      fixtureError = verdict.error;
     }
     summary.lifecycle = lifecycle;
     fs.writeFileSync(path.join(ev, 'summary.json'), JSON.stringify(summary, null, 2));
     summaryWritten = true;
     console.log(JSON.stringify({ code, players, mode, era, device: o.device ?? 'iphone', viewport, chaos, reload: summary.reload, stages: stages.filter((entry) => entry.phase).length, phaseDurations, actions, gateWaitTotals, apiLatency, champion, playAgain, rematchNote, secondGameLog, errors: summary.errors.filter((entry) => entry.errors.length), evidence: ev, summary: path.join(ev, 'summary.json') }, null, 2));
+    if (fixtureError) throw new Error(fixtureError);
     const allEliminatedNoBoundary = fixture != null && fixture.qualifyingSeats.length === 0 && reloadSeat !== null && summary.reload.classification === 'no-held-boundary' && marks.some((entry) => entry.label === 'recap') && playAgain;
     if (fixture != null && fixture.qualifyingSeats.length === 0 && reloadSeat !== null && summary.reload.classification !== 'no-held-boundary') {
       throw new Error(`all-eliminated fixture reload classification is ${summary.reload.classification}`);

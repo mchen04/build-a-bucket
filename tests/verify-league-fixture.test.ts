@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { applyLeagueFixture, classifyFixture, defaultConnect, fixtureOptions, fixtureRunFrom, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
+import { applyLeagueFixture, classifyFixture, defaultConnect, fixtureOptions, fixtureRunFrom, fixtureVerdict, guardOwnedRun } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import type { FixtureRunner, FixtureTarget } from '../.claude/skills/verify-build-a-bucket/scripts/league-fixture.mjs';
 import { createRunner } from '../.claude/skills/verify-build-a-bucket/scripts/meter/local-pg.mjs';
 import { hashSecret } from '../src/shared/mp/codes.js';
@@ -116,6 +116,13 @@ describe('league fixture guard binds the target', () => {
     await applyLeagueFixture({ entry, run: validRun, connect, secrets });
     expect(targets).toEqual([{ socketDir: '/owned/socket', port: 55434, database: 'bab' }]);
   });
+
+  it('refuses a run carrying base with zero connects', async () => {
+    const { calls, targets, connect } = connectStub();
+    await expect(applyLeagueFixture({ entry, run: { ...validRun, base: 'http://localhost:3000' }, connect, secrets })).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+    expect(targets).toHaveLength(0);
+  });
 });
 
 describe('fixture run from state', () => {
@@ -174,6 +181,37 @@ describe('fixture options', () => {
 
   it('refuses an era mismatch', () => {
     expect(() => fixtureOptions(entry, { era: entry.era === 'current' ? 'alltime' : 'current' })).toThrow();
+  });
+
+  it('refuses an invalid expectedClass', () => {
+    expect(() => fixtureOptions({ ...entry, expectedClass: 'other' })).toThrow();
+  });
+
+  it('refuses an expectedClass that disagrees with qualifyingSeats', () => {
+    expect(() => fixtureOptions({ ...entry, expectedClass: entry.qualifyingSeats.length > 0 ? 'all-eliminated' : 'qualifying' })).toThrow();
+  });
+});
+
+describe('fixture verdict', () => {
+  it('returns no error on a match', () => {
+    expect(fixtureVerdict({ entry, classified: { observedClass: entry.expectedClass, qualifyingSeats: entry.qualifyingSeats } })).toEqual({ record: { id: entry.id, expectedClass: entry.expectedClass, observedClass: entry.expectedClass, qualifyingSeats: entry.qualifyingSeats }, error: null });
+  });
+
+  it('returns an error on a wrong class', () => {
+    const verdict = fixtureVerdict({ entry, classified: { observedClass: entry.expectedClass === 'qualifying' ? 'all-eliminated' : 'qualifying', qualifyingSeats: entry.qualifyingSeats } });
+    expect(verdict.error).toBeTruthy();
+    expect(verdict.record.observedClass).not.toBe(entry.expectedClass);
+  });
+
+  it('returns an error on wrong seats', () => {
+    const verdict = fixtureVerdict({ entry, classified: { observedClass: entry.expectedClass, qualifyingSeats: [...entry.qualifyingSeats, 99] } });
+    expect(verdict.error).toBeTruthy();
+  });
+
+  it('returns an error on unknown', () => {
+    const verdict = fixtureVerdict({ entry, classified: { observedClass: 'unknown', qualifyingSeats: [] } });
+    expect(verdict.error).toBeTruthy();
+    expect(verdict.record.observedClass).toBe('unknown');
   });
 });
 
